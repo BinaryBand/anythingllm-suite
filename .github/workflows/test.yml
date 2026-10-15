@@ -1,0 +1,45 @@
+# The OS matrix lefthook can't give: the type-check and every part's tests on Linux, macOS and
+# Windows, and the e2e (a throwaway AnythingLLM in a container) on Linux, where runners have one.
+# The hooks stay the gate before a push; this is the same scripts on the OSes a laptop isn't.
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run shared:test
+      - run: npm run bridge:test
+      - run: npm run control:test
+      - run: npm run skills:test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/package-lock.json
+      - run: npm ci
+        working-directory: packages
+      - run: tools/e2e
