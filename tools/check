@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
-# tools/check [bridge|mcp|skills|app ...]: the tests of each part; no argument: all.
-# For skills this will be the old anythingllm-lean tools/check (unit tests, then a throwaway
-# AnythingLLM at $IMAGE in podman or Docker).
+# tools/check [skills|bridge|mcp|app ...]: the tests of each part; no argument: all, stopping at the
+# first part that fails. Only skills is written: its type-check, then its unit tests (which build
+# the bundles first).
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-not_yet check
+
+[ $# -gt 0 ] || set -- skills bridge mcp app
+for part in "$@"; do
+  case "$part" in
+    skills)
+      echo "[skills] type-check, then unit tests"
+      npm --prefix "$ROOT/packages/skills" run -s typecheck
+      npm --prefix "$ROOT/packages/skills" test
+      ;;
+    bridge|mcp|app) not_yet "check $part" ;;
+    *) echo "tools/check: no such part: $part (one of: skills bridge mcp app)" >&2; exit 2 ;;
+  esac
+done

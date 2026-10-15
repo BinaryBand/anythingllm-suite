@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# tools/boundaries: fails when one part imports another, or a skill's deliverable reaches outside its
-# own folder. The parts are packages/bridge, packages/mcp, each packages/skills/<name> and app.
-#
-# Python and JavaScript are checked with ast-grep (rules in tools/boundaries.d/rules, run through uvx
-# so nothing is installed). Dart has no ast-grep grammar here, so the app is checked with grep.
-# Not covered: dynamic imports (importlib, require of a built path), which are why the skills'
-# require(path.join(process.cwd(), ...)) of AnythingLLM's own modules is allowed.
+# tools/boundaries: fails when the bridge and mcp import each other, or the app imports a path into
+# another part. Python is checked with ast-grep (rules in tools/boundaries.d/rules, run through uvx so
+# nothing is installed); Dart has no ast-grep grammar here, so the app is checked with grep. A skill's
+# imports are checked when it is built (packages/skills/build.mjs). Not covered: dynamic imports.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cd "$ROOT"

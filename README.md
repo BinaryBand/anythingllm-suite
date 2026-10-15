@@ -20,13 +20,13 @@ packages/skills/    one folder per skill; each ships as its own zip
 app/                the Flutter app
 contract/           endpoints.md, default-allow.txt, versions.env: read by every part
 tools/              check, package, install, boundaries
-docs/               architecture.md; notes/ for repo-wide decisions
+docs/               architecture.md; notes/ for decisions, repo-wide and per part
 dist/               build output, ignored
 ```
 
 ## Rules
 
-- **No part imports another.** `tools/boundaries` fails when one does. Parts share the contract and the tooling, never modules.
+- **No part imports another.** `tools/boundaries` fails when one does, and a skill's build fails if its bundle takes in anything outside its own `src/` and `shared/`. Parts share the contract and the tooling, never modules.
 - **One version of AnythingLLM under test.** `contract/versions.env` pins the image every check uses.
 - **Parts version and release on their own.** Tags are prefixed: `skills/memory-lean-v0.2.0`, `app-v1.4.0`.
 

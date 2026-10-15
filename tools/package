@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
-# tools/package <bridge|mcp|skill-name>: builds a part into dist/ (a wheel, or a skill's zip).
+# tools/package <skill>: builds a skill and zips build/<hubId> for the Community Hub, its files at the
+# zip's root. Prints the zip's path. (The bridge and mcp are not packaged here yet.)
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-not_yet package
+load_skill "${1:-}"
+node "$ROOT/packages/skills/build.mjs" "$1" >&2
+built="$SKILL_DIR/build/$HUB_ID"
+[ -d "$built" ] || { echo "tools/package: the build left no $built" >&2; exit 1; }
+out="$ROOT/dist/$HUB_ID-$(plugin_field version).zip"
+mkdir -p "$ROOT/dist"
+rm -f "$out"
+python3 - "$out" "$built" <<'PY'
+import sys, zipfile, pathlib
+root = pathlib.Path(sys.argv[2])
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    for f in sorted(root.rglob("*")):
+        if f.is_file():
+            z.write(f, f.relative_to(root).as_posix())
+PY
+echo "$out"
