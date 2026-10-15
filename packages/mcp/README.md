@@ -31,7 +31,7 @@ stdout is the MCP channel, so nothing else prints to it.
 - `test_world.py` runs `world` against a mock transport: the request it sends (route, method, key), what each refusal becomes for the agent, and that every route it calls is passed by `contract/default-allow.txt`, read with the bridge's own rules (`allow.mts`). A server that starts calling a route the list lacks fails here, before the bridge answers 403.
 - `test_world_stdio.py` starts `world` over stdio against a stand-in bridge on a free port, so the address and key come from the environment and the call crosses real HTTP.
 
-Not covered: the real bridge in front of a real AnythingLLM.
+`tools/e2e` (`make e2e`) is the real thing, and not part of `tools/check`: it starts a throwaway AnythingLLM (the image in `contract/versions.env`) and the bridge built from `packages/bridge` with the default `BRIDGE_ALLOW`, makes a developer key and a workspace, and runs `e2e/` against them. It checks that `world` lists the real workspace, says a refused key and an absent bridge in words, and that the bridge passes `GET /workspaces` and refuses `GET /system/api-keys`. Everything it starts is removed afterwards, pass or fail, and what already runs on the machine is left alone. It needs podman or docker, Node 22.18+ and uv. `e2e/` is outside `testpaths`, and its tests skip themselves when run on their own.
 
 ## Growing it
 

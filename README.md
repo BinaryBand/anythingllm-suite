@@ -34,7 +34,7 @@ dist/               build output, ignored
 
 ## Checks
 
-There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the skills and mcp. `make lint` and `make test` run those hooks on every file; `make check` tests everything. Nothing here tests Windows or macOS.
+There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the skills and mcp. `make lint` and `make test` run those hooks on every file; `make check` tests everything. `make e2e` (`tools/e2e`) is not a hook: it starts a throwaway AnythingLLM in a container and the built bridge in front of it, and runs the MCP servers against them (about 15 seconds once the image is pulled). Nothing here tests Windows or macOS.
 
 ## Status
 

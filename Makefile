@@ -2,14 +2,14 @@
 # implemented here, so `make` and the scripts never disagree.
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks lint test boundaries check routes package install-skill
+.PHONY: help hooks lint test boundaries check e2e routes package install-skill
 
 PART  ?=# bridge, mcp, skills or app; empty: all
 SKILL ?=# a skill's folder name under packages/skills
 DIR   ?=# the agent-skills folder to install it into
 
 help: ## List the commands
-	@awk -F':.*## ' '/^[a-z-]+:.*## /{printf "  make %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk -F':.*## ' '/^[a-z0-9-]+:.*## /{printf "  make %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 hooks: ## Install the git hooks, once per clone
 	@command -v lefthook >/dev/null || { \
@@ -32,6 +32,9 @@ boundaries: ## Fail if the app imports a path into another part
 
 check: ## Test a part (PART=mcp) or, with no PART, all of them
 	tools/check $(PART)
+
+e2e: ## Run the MCP servers against a throwaway AnythingLLM and the built bridge (needs podman or docker)
+	tools/e2e
 
 routes: ## Fail if AnythingLLM stopped declaring a route the default list names (needs the image)
 	tools/routes

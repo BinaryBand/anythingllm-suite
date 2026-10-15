@@ -28,5 +28,6 @@ addopts = "-v --tb=short --import-mode=importlib"
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint.per-file-ignores]
-# A test asserts, takes the fixtures it needs, and compares against literals.
-"tests/**" = ["S101", "ANN", "INP001", "PLR2004"]
+# A test (and an e2e test, which tools/e2e runs) asserts, takes the fixtures it needs, and
+# compares against literals.
+"{tests,e2e}/**" = ["S101", "ANN", "INP001", "PLR2004"]
