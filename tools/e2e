@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
-# tools/e2e: the MCP servers against the real thing. Starts a throwaway AnythingLLM (the image in
-# contract/versions.env) on a free port, the built bridge in front of it on another, makes a
-# developer key and a workspace, and runs packages/mcp/e2e against the bridge. Everything lives in
-# a temporary folder and a container of its own; both are removed on the way out, pass or fail, and
-# nothing running on this machine (an AnythingLLM on :3001, a bridge on :8467, the user's systemd)
-# is touched.
+# tools/e2e: the suite against the real thing. Starts a throwaway AnythingLLM (the image in
+# contract/versions.env) on a free port with its storage bind-mounted from a temporary folder, as
+# AnythingLLM's Docker instructions do; runs the built `anythingllm-suite install --bridge` into that
+# storage, the bridge's `serve` on another free port, makes a developer key and a workspace, and runs
+# tools/e2e.test.mts. Everything lives in the temporary folder and a container of its own; both are
+# removed on the way out, pass or fail, and nothing running on this machine (an AnythingLLM on
+# :3001, a bridge on :8467, the user's settings or service manager) is touched.
 #
-# With podman it also runs the control server's `install` against the container's storage and has
-# AnythingLLM load the server through the socket, with systemd-socket-activate in systemd's place.
-# Needs podman or docker, Node 22.18 or later, and uv; the first run pulls the image.
+# The storage must be writable from both sides: with podman the container's user is the host user
+# (keep-id); with docker the container makes it world-writable once AnythingLLM has made it.
+# Needs podman or docker, curl and Node 22.18 or later; the first run pulls the image.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 engine=$(command -v podman || command -v docker) || { echo "tools/e2e: needs podman or docker" >&2; exit 2; }
+podman=$([ "$(basename "$engine")" = podman ] && echo 1 || true)
 work=$(mktemp -d)
 name="allm-e2e-$$"
 bridge_pid=
-socket_pid=
+
+# open_storage: lets the host user change what the container's user made (docker only).
+open_storage() { [ -n "$podman" ] || "$engine" exec -u root "$name" chmod -R a+rwX "$INNER_STORAGE" 2>/dev/null || true; }
 
 cleanup() {
   status=$?
   [ -z "$bridge_pid" ] || kill "$bridge_pid" 2>/dev/null || true
-  [ -z "$socket_pid" ] || kill "$socket_pid" 2>/dev/null || true
+  open_storage
   "$engine" stop -t 1 "$name" >/dev/null 2>&1 || true
   if [ "$status" -ne 0 ] && [ -s "$work/bridge.log" ]; then
     echo "--- the bridge's log" >&2
@@ -33,7 +37,7 @@ cleanup() {
 trap cleanup EXIT
 
 # free_port: a port nothing listens on now.
-free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+free_port() { node -e 'const s = require("net").createServer().listen(0, "127.0.0.1", () => { console.log(s.address().port); s.close(); });'; }
 
 # json <expression>: reads JSON on stdin as `j` and prints the expression.
 json() { node -e "let s = ''; process.stdin.on('data', (d) => (s += d)).on('end', () => { const j = JSON.parse(s); console.log($1); });"; }
@@ -53,37 +57,32 @@ bridge_port=$(free_port)
 password=$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
 allm="http://127.0.0.1:$allm_port"
 bridge="http://127.0.0.1:$bridge_port"
+storage="$work/storage"
+mkdir "$storage"
+# The password in the storage's .env, where the bridge reads it, as with AnythingLLM's Docker setup.
+printf 'AUTH_TOKEN=%s\n' "$password" >"$storage/.env"
+user=()
+[ -z "$podman" ] || user=(--userns=keep-id:uid=1000,gid=1000)
 
-# With podman, storage is mounted and the container's user is the host user (keep-id), so a socket
-# in it is reachable at mode 0600 and nothing in it needs podman to delete. Docker has no keep-id.
-mounted=()
-install_into=
-if [ "$(basename "$engine")" = podman ] && command -v systemd-socket-activate >/dev/null; then
-  install_into="$work/storage"
-  mkdir "$install_into"
-  mounted=(--userns=keep-id:uid=1000,gid=1000 -v "$install_into:$INNER_STORAGE")
-fi
-
-echo "[e2e] AnythingLLM ($IMAGE) on :$allm_port"
-"$engine" run -d --rm --name "$name" -p "127.0.0.1:$allm_port:$INNER_PORT" ${mounted[@]+"${mounted[@]}"} \
-  -e AUTH_TOKEN="$password" -e JWT_SECRET="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" \
-  -e STORAGE_DIR="$INNER_STORAGE" "$IMAGE" >/dev/null
+echo "[e2e] AnythingLLM ($IMAGE) on :$allm_port, its storage in $storage"
+"$engine" run -d --rm --name "$name" -p "127.0.0.1:$allm_port:$INNER_PORT" ${user[@]+"${user[@]}"} \
+  -v "$storage:$INNER_STORAGE" -e STORAGE_DIR="$INNER_STORAGE" -e AUTH_TOKEN="$password" \
+  -e JWT_SECRET="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" "$IMAGE" >/dev/null
 wait_for "$allm/api/ping" "AnythingLLM"
+open_storage
 
-# The bridge logs in with the password it reads from an .env, as it does from AnythingLLM's own.
-printf 'AUTH_TOKEN=%s\n' "$password" >"$work/allm.env"
-: >"$work/bridge.env"
-allow=$(grep -v '^[[:space:]]*#' "$ROOT/contract/default-allow.txt" | sed '/^[[:space:]]*$/d' | paste -sd, -)
-
-echo "[e2e] the bridge, built from packages/bridge, on :$bridge_port"
+echo "[e2e] anythingllm-suite install --bridge, built from packages/"
 (cd "$ROOT/packages" && node build.mjs bridge >/dev/null)
-BRIDGE_ENV_FILE="$work/bridge.env" MCP_ENV_DIR="$work/mcp" BRIDGE_PORT="$bridge_port" \
-  ANYTHINGLLM_URL="$allm" ANYTHINGLLM_ENV="$work/allm.env" BRIDGE_ALLOW="$allow" \
-  node "$ROOT/packages/bridge/dist/anythingllm-bridge.cjs" serve >"$work/bridge.log" 2>&1 &
+cli="$ROOT/packages/bridge/dist/anythingllm-suite.cjs"
+export BRIDGE_ENV_FILE="$work/bridge.env" BRIDGE_PORT="$bridge_port" ANYTHINGLLM_URL="$allm"
+node "$cli" install --storage "$storage" --roles chat,schedule --bridge --no-start >"$work/install.log"
+
+echo "[e2e] the bridge on :$bridge_port"
+node "$cli" serve >"$work/bridge.log" 2>&1 &
 bridge_pid=$!
 wait_for "$bridge/health" "the bridge"
 
-# A developer key, as the settings page makes one, and a workspace for the servers to find.
+# A developer key, as the settings page makes one, and a workspace for the tests to find.
 token=$(curl -fs -X POST "$allm/api/request-token" -H 'Content-Type: application/json' \
   -d "{\"password\":\"$password\"}" | json 'j.token')
 key=$(curl -fs -X POST "$allm/api/system/generate-api-key" -H "Authorization: Bearer $token" \
@@ -91,25 +90,8 @@ key=$(curl -fs -X POST "$allm/api/system/generate-api-key" -H "Authorization: Be
 workspace=$(curl -fs -X POST "$allm/api/v1/workspace/new" -H "Authorization: Bearer $key" \
   -H 'Content-Type: application/json' -d '{"name":"E2E Workspace"}' | json 'j.workspace.slug')
 
-mcp=(uv run --locked --directory "$ROOT/packages/mcp")
-if [ -n "$install_into" ]; then
-  echo "[e2e] anythingllm-mcp-control install, into the container's storage"
-  settings=(ANYTHINGLLM_BRIDGE_URL="$bridge" ANYTHINGLLM_DEVELOPER_KEY="$key" ANYTHINGLLM_MCP_ROLES=chat,schedule)
-  mkdir "$work/mcp"
-  printf '%s\n' "${settings[@]}" >"$work/mcp/control.env"
-  XDG_CONFIG_HOME="$work/config" MCP_ENV_DIR="$work/mcp" \
-    "${mcp[@]}" anythingllm-mcp-control install --storage "$install_into" --no-start
-  python=$("${mcp[@]}" python -c 'import sys; print(sys.executable)')
-  # What the socket unit and the service template do, without installing either: the socket is
-  # the one install wrote into the unit, and the server has the settings the unit would give it.
-  socket=$(sed -n 's/^ListenStream=//p' "$work/config/systemd/user/anythingllm-mcp-control.socket")
-  systemd-socket-activate --accept --inetd -l "$socket" \
-    env "${settings[@]}" "$python" -m control_mcp >"$work/socket.log" 2>&1 &
-  socket_pid=$!
-fi
-
-echo "[e2e] packages/mcp/e2e"
-E2E_BRIDGE_URL="$bridge" E2E_DEVELOPER_KEY="$key" E2E_WORKSPACE="$workspace" \
-  E2E_ALLM_URL="${install_into:+$allm}" E2E_ALLM_TOKEN="$token" \
-  uv run --locked --directory "$ROOT/packages/mcp" pytest e2e -q
+echo "[e2e] tools/e2e.test.mts"
+E2E_ENGINE="$engine" E2E_CONTAINER="$name" E2E_CONTROL="$INNER_STORAGE/anythingllm-suite/control.cjs" E2E_ALLM_URL="$allm" E2E_PASSWORD="$password" \
+  E2E_BRIDGE_URL="$bridge" E2E_KEY="$key" E2E_WORKSPACE="$workspace" E2E_CLI="$cli" \
+  node --test "$ROOT/tools/e2e.test.mts"
 echo "tools/e2e: ok"
