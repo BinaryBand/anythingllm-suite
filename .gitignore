@@ -16,3 +16,5 @@ app/pubspec.lock.bak
 
 .DS_Store
 packages/skills/*/build/
+
+docs/.*

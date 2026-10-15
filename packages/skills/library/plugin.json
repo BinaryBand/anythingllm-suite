@@ -1,0 +1,39 @@
+{
+  "active": true,
+  "hubId": "library-lean",
+  "name": "Library",
+  "schema": "skill-1.0.0",
+  "version": "0.0.1",
+  "description": "The user's own library of API toolkits: for a service, the agent researches its API, asks the user for the key it needs (never seeing it), and saves small JavaScript functions that call it, to run again on request or on a schedule. Call guide first, for how. Not ready yet: only guide works.",
+  "author": "anythingllm-suite",
+  "license": "MIT",
+  "imported": true,
+  "setup_args": {},
+  "examples": [
+    {
+      "prompt": "How do I add a service to my library?",
+      "call": "{\"action\": \"guide\"}"
+    },
+    {
+      "prompt": "Show me how library functions are written",
+      "call": "{\"action\": \"guide\", \"topic\": \"functions\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {
+        "type": "string",
+        "description": "guide: how the library works; topic for one part of it, snippet for a worked example."
+      },
+      "topic": {
+        "type": "string",
+        "description": "guide's topic, as guide lists them."
+      },
+      "snippet": {
+        "type": "string",
+        "description": "guide's worked example, as guide's snippets topic lists them."
+      }
+    }
+  }
+}

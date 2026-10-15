@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { bundle } from "./build.mjs";
+import { bundle, staticFiles } from "./build.mjs";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-build-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -48,4 +48,22 @@ test("a prefix is a folder, not a name that starts the same way", async () => {
   fs.writeFileSync(path.join(tmp, "a", "src-old", "x.ts"), "export const x = 3;\n");
   fs.writeFileSync(path.join(tmp, "a", "src", "main4.ts"), 'import { x } from "../src-old/x.ts";\nconsole.log(x);\n');
   await assert.rejects(bundle(options("out4", ["a/src/"], "a/src/main4.ts")), /a\/src-old\/x\.ts/);
+});
+
+test("a package is bundled only when its folder is allowed, as VENDORED allows one", async () => {
+  fs.mkdirSync(path.join(tmp, "node_modules", "pkg"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, "node_modules", "pkg", "package.json"), '{"name":"pkg","main":"index.js"}');
+  fs.writeFileSync(path.join(tmp, "node_modules", "pkg", "index.js"), "module.exports = 5;\n");
+  fs.writeFileSync(path.join(tmp, "a", "src", "main5.ts"), 'import pkg from "pkg";\nconsole.log(pkg);\n');
+  await assert.rejects(bundle(options("out5", ["a/src/"], "a/src/main5.ts")), /node_modules\/pkg\/index\.js/);
+  await bundle(options("out6", ["a/src/", "node_modules/pkg/"], "a/src/main5.ts"));
+});
+
+test("a static folder is every file under it as text, by its path there; none is {}", () => {
+  const dir = path.join(tmp, "a", "static");
+  fs.mkdirSync(path.join(dir, "guide"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "guide", "index.md"), "# Guide\n");
+  fs.writeFileSync(path.join(dir, "helper.js"), "kit.x = () => 1;\n"); // text, not a module
+  assert.deepEqual(staticFiles(dir), { "guide/index.md": "# Guide\n", "helper.js": "kit.x = () => 1;\n" });
+  assert.deepEqual(staticFiles(path.join(tmp, "none")), {});
 });

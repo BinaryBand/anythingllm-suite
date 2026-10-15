@@ -4,12 +4,9 @@
 // each fact is one document in it under an id this skill chooses, so it can be removed again.
 
 import crypto from "crypto";
-import path from "path";
+import { serverDir, serverRequire } from "#shared/anythingllm";
 import { GLOBAL, MemoryError, type Fact, type Scope } from "./facts";
 import type { DocId, Embedder, Helpers, VectorDb, VectorsModel } from "./host";
-
-/** AnythingLLM's server folder: MEMORY_LEAN_SERVER_DIR, else the folder it runs in. */
-const serverDir = (): string => process.env.MEMORY_LEAN_SERVER_DIR || process.cwd();
 
 const namespaceOf = (scope: Scope): string => (scope === GLOBAL ? "memory-lean-g" : `memory-lean-w-${scope}`);
 
@@ -28,7 +25,7 @@ export const fingerprint = (): string =>
 /** One of AnythingLLM's own modules, by its path under the server folder. */
 function load<T>(what: string): T {
   try {
-    return require(path.join(serverDir(), what)) as T;
+    return serverRequire<T>(what);
   } catch (e) {
     throw new MemoryError(`AnythingLLM's ${what} couldn't be loaded from ${serverDir()}: ${(e as Error).message}`);
   }

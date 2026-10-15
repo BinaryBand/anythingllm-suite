@@ -1,6 +1,6 @@
 // The skill as the agent uses it: the built handler.js (build/memory-lean, what AnythingLLM loads),
 // the index in storage, and the vectors in AnythingLLM's vector database, which is the stand-in in
-// fixtures/server (MEMORY_LEAN_SERVER_DIR): a database in memory and an embedder that hashes
+// fixtures/server (ANYTHINGLLM_SERVER_DIR): a database in memory and an embedder that hashes
 // words, so texts that share words are close. `npm test` builds the bundle first.
 
 import test from "node:test";
@@ -21,7 +21,7 @@ type Stored = { next: number; synced: Record<string, string>; facts: { id: numbe
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "memory-lean-"));
 const storage = path.join(tmp, "storage");
 process.env.STORAGE_DIR = storage;
-process.env.MEMORY_LEAN_SERVER_DIR = path.join(testsDir, "fixtures", "server");
+process.env.ANYTHINGLLM_SERVER_DIR = path.join(testsDir, "fixtures", "server");
 process.env.EMBEDDING_ENGINE = "stand-in";
 process.env.EMBEDDING_MODEL_PREF = "words-1";
 process.env.VECTOR_DB = "stand-in";
@@ -115,7 +115,7 @@ test("the workspace comes from the invocation: the model can't name another, and
 
 test("the index outlives a module reload and a restart of the process's state", async () => {
   await call({ action: "remember", text: "Keeps bees." });
-  delete (globalThis as { __memoryLeanLock?: unknown }).__memoryLeanLock;
+  delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("anythingllm-suite.serial.memory-lean.index")];
   assert.match(await call({ action: "recall", query: "bees" }), /m1 \[/);
   assert.match(await call({ action: "remember", text: "Plays the oboe." }), /^Remembered: m2 /, "ids go on");
 });
@@ -218,7 +218,7 @@ test("calls made at once each get their own id", async () => {
 test("list answers while a change holds the lock", async () => {
   await call({ action: "remember", text: "Keeps bees." });
   // Holds the lock the way the skill takes it: by chaining onto the tail kept on globalThis.
-  const state = (globalThis as unknown as { __memoryLeanLock: { tail: Promise<unknown> } }).__memoryLeanLock;
+  const state = (globalThis as unknown as Record<symbol, { tail: Promise<unknown> }>)[Symbol.for("anythingllm-suite.serial.memory-lean.index")];
   let release!: () => void;
   const held = state.tail.then(() => new Promise<void>((r) => (release = r)));
   state.tail = held;

@@ -6,24 +6,14 @@
 
 import fs from "fs";
 import path from "path";
+import { serial, storageDir } from "#shared/anythingllm";
 import { writeAtomic } from "#shared/atomic";
 import { MemoryError, type Index } from "./facts";
 
-/** AnythingLLM's storage folder: STORAGE_DIR, else the folder three above the bundled handler.js
- *  (storage/plugins/agent-skills/memory-lean); that fallback holds only for the bundle's location. */
-const storageDir = (): string => process.env.STORAGE_DIR || path.resolve(__dirname, "..", "..", "..");
 const file = (): string => path.join(storageDir(), "memory-lean", "memory.json");
 
-type LockState = { tail: Promise<unknown> };
-
 /** Runs `fn` after every earlier `lock` call has finished. */
-export function lock<T>(fn: () => Promise<T> | T): Promise<T> {
-  const g = globalThis as { __memoryLeanLock?: LockState };
-  const state = (g.__memoryLeanLock ||= { tail: Promise.resolve() });
-  const run = state.tail.then(fn);
-  state.tail = run.catch(() => {});
-  return run;
-}
+export const lock = <T,>(fn: () => Promise<T> | T): Promise<T> => serial("memory-lean.index", fn);
 
 /** The index as it is on disk; an empty one when there is none. A file that can't be read is an
  *  error, never replaced: it holds what the user asked to have remembered. */

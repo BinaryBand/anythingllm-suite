@@ -1,4 +1,4 @@
-// Stands in for AnythingLLM's utils/helpers in the tests (MEMORY_LEAN_SERVER_DIR points here): a
+// Stands in for AnythingLLM's utils/helpers in the tests (ANYTHINGLLM_SERVER_DIR points here): a
 // vector database in memory with the methods of AnythingLLM's own (add and delete a document,
 // similarity search, delete a namespace), and an embedder that hashes a text's words into a
 // vector, so texts that share words are close. `fake` is the state a test looks at and changes,

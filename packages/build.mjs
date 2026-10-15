@@ -13,9 +13,11 @@
 //   skills  each skill's src/handler.ts -> <skill>/build/<hubId>/handler.js plus plugin.json, the
 //           folder AnythingLLM unpacks, for Node 18. esbuild folds src/ and shared/ (helpers both
 //           parts use) into the one handler.js, which then requires only Node's own modules (and
-//           AnythingLLM's, by a path built at run time). Allowed: the skill's src/ and shared/.
-//           Files a skill ships beyond those two (a guide, JSON data) are not handled yet; add
-//           them here when apps and browser move in.
+//           AnythingLLM's, by a path built at run time). Allowed: the skill's src/ and shared/,
+//           and the packages VENDORED names for it. A skill's static/ folder (guides, pages,
+//           snippets: what is tuned rather than coded) is inlined as text, as STATIC_FILES
+//           ({ "guide/index.md": "...", ... }), so the skill still ships two files, which the
+//           Hub's upload and install's text payload both need.
 //
 // usage: node build.mjs [bridge | control | skills [skill ...]]   (no argument: every part)
 import { build } from "esbuild";
@@ -25,6 +27,26 @@ import { fileURLToPath } from "node:url";
 
 const self = fileURLToPath(import.meta.url);
 const here = path.dirname(self);
+
+/** The packages a skill may bundle besides its own code, by the skill's folder name. Each is a
+ *  decision (docs/notes/README.md): library bundles QuickJS, the engine its functions run in.
+ *  @type {Record<string, string[]>} */
+const VENDORED = {
+  library: ["node_modules/quickjs-emscripten-core/", "node_modules/@jitl/quickjs-ffi-types/", "node_modules/@jitl/quickjs-singlefile-cjs-release-sync/"],
+};
+
+/** The text of every file under `dir`, by its path there with forward slashes; {} with no `dir`.
+ *  @param {string} dir
+ *  @returns {Record<string, string>} */
+export function staticFiles(dir) {
+  if (!fs.existsSync(dir)) return {};
+  const names = fs
+    .readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+    .sort();
+  return Object.fromEntries(names.map((name) => [name, fs.readFileSync(path.join(dir, name), "utf8")]));
+}
 
 /**
  * Bundles `entry` into `outfile`; `allowed` are path prefixes relative to `cwd`, as esbuild's
@@ -105,7 +127,8 @@ async function buildSkills(names) {
       entry: path.join(dir, "src", "handler.ts"),
       outfile: path.join(out, entrypoint.file),
       target: "node18",
-      allowed: [`skills/${name}/src/`, "shared/"],
+      define: { STATIC_FILES: JSON.stringify(staticFiles(path.join(dir, "static"))) },
+      allowed: [`skills/${name}/src/`, "shared/", ...(VENDORED[name] || [])],
       label: name,
       clean: out,
     });
