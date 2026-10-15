@@ -1,0 +1,19 @@
+{
+  "name": "anythingllm-skills",
+  "private": true,
+  "description": "AnythingLLM agent skills, each built and shipped as its own standalone package",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc -p shared",
+    "test": "node --test \"shared/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "typescript": "^7.0.2"
+  },
+  "imports": {
+    "#shared/*": "./shared/*.ts"
+  }
+}

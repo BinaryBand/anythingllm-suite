@@ -1,7 +1,7 @@
 # Git hooks, the only gate this repository has (there is no hosted CI). Install once per clone:
 #   lefthook install
 # A hook runs only when a staged or pushed file matches its glob, so the empty scaffolding commits
-# freely. tools/check and tools/boundaries are stubs until the parts are moved in.
+# freely. tools/check is a stub until the parts are moved in, and tools/boundaries has no TypeScript rules yet.
 
 pre-commit:
   parallel: true
@@ -26,7 +26,7 @@ pre-push:
       glob: "packages/mcp/**/*.py"
       run: tools/check mcp
     skills:
-      glob: "packages/skills/**/*.js"
+      glob: "packages/skills/**/*.{js,ts,json}"
       run: tools/check skills
     app:
       glob: "app/**/*.dart"
