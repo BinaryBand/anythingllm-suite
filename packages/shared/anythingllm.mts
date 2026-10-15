@@ -40,6 +40,11 @@ export function serial<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
   return run;
 }
 
+/** Where a skill's description (in its plugin.json, which AnythingLLM reads for each agent run)
+ *  ends and what the skill holds now begins: the skill writes that part, so the model sees it on
+ *  every turn, and install keeps it when it updates the skill. */
+export const SAVED_NOW = "\n\nSaved now:";
+
 /** What of `this` in a skill's handler tells where it was called from. */
 export interface Invoked {
   super?: { handlerProps?: { invocation?: { workspace?: { slug?: string } | null } } };

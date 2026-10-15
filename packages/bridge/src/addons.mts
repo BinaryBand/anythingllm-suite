@@ -12,6 +12,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { SAVED_NOW } from "#shared/anythingllm";
 import { sameText } from "#shared/atomic";
 import { invalid } from "#shared/errors";
 import { DEFAULT_ROLES, ROLES_ENV } from "#shared/roles";
@@ -77,9 +79,9 @@ function writable<T>(file: string, operation: () => T): T {
   }
 }
 
-/** Writes `text` unless the file holds it already; whether it wrote. */
+/** Writes `text` unless the file holds it already (holds); whether it wrote. */
 function write(file: string, text: string): boolean {
-  if (sameText(file, text)) return false;
+  if (holds(file, text)) return false;
   writable(file, () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, text);
@@ -122,6 +124,38 @@ export function setEntry(storage: string, wanted: Obj | null): string {
   return `${wanted ? "set" : "dropped"} ${NAME} in ${file}`;
 }
 
+/** A skill's file as install writes it over `file`: a plugin.json keeps what AnythingLLM saved in
+ *  the one installed, whether the skill is on and its settings' values (setup_args' `value`), and
+ *  what the skill wrote at the end of its description (SAVED_NOW). */
+function skillFile(file: string, text: string): string {
+  if (path.basename(file) !== "plugin.json") return text;
+  let old: Obj;
+  try {
+    old = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return text; // none yet, or not JSON
+  }
+  const next = JSON.parse(text) as Obj;
+  if (typeof old.active === "boolean") next.active = old.active;
+  const saved = String(old.description ?? "").split(SAVED_NOW)[1];
+  if (saved !== undefined && typeof next.description === "string") next.description = next.description.split(SAVED_NOW)[0] + SAVED_NOW + saved;
+  const args = (next.setup_args ?? {}) as Record<string, Obj>;
+  for (const [name, arg] of Object.entries((old.setup_args ?? {}) as Record<string, Obj | null>)) if (args[name] && arg?.value !== undefined) args[name].value = arg.value;
+  return `${JSON.stringify(next, null, 2)}\n`;
+}
+
+/** Whether `file` holds `text`, or for JSON the same value however it's laid out (AnythingLLM
+ *  writes plugin.json again when a setting changes). */
+function holds(file: string, text: string): boolean {
+  if (sameText(file, text)) return true;
+  if (!file.endsWith(".json") || !fs.existsSync(file)) return false;
+  try {
+    return isDeepStrictEqual(JSON.parse(fs.readFileSync(file, "utf8")), JSON.parse(text));
+  } catch {
+    return false;
+  }
+}
+
 /** The skills `names` asks for ("all" or none given for every one); an unknown name is refused. */
 export function chosen(payload: Payload, names?: string[]): Skill[] {
   if (!names || names.includes("all")) return payload.skills;
@@ -135,7 +169,10 @@ export function put(storage: string, payload: Payload, wantedEntry: Obj, skills:
   const done = [write(controlFile(storage), payload.control) ? `wrote the control server: ${controlFile(storage)}` : `unchanged: ${controlFile(storage)}`];
   done.push(setEntry(storage, wantedEntry));
   for (const skill of skills) {
-    const changed = Object.entries(skill.files).filter(([name, text]) => write(path.join(skillDir(storage, skill), name), text));
+    const changed = Object.entries(skill.files).filter(([name, text]) => {
+      const file = path.join(skillDir(storage, skill), name);
+      return write(file, skillFile(file, text));
+    });
     done.push(`${changed.length ? "wrote" : "unchanged:"} the ${skill.name} skill: ${skillDir(storage, skill)}`);
   }
   return done;
@@ -166,7 +203,10 @@ export function checks(storage: string, payload: Payload): Check[] {
   const found: Check[] = [["the control server", !control, control && `${control}: run install again`], listed];
   for (const skill of payload.skills) {
     if (!fs.existsSync(skillDir(storage, skill))) continue; // not chosen
-    const stale = Object.entries(skill.files).filter(([name, text]) => same(path.join(skillDir(storage, skill), name), text));
+    const stale = Object.entries(skill.files).filter(([name, text]) => {
+      const file = path.join(skillDir(storage, skill), name);
+      return !holds(file, skillFile(file, text));
+    });
     found.push([`the ${skill.name} skill`, !stale.length, stale.length ? `${stale.map(([n]) => n).join(", ")} not this version's: run install again` : ""]);
   }
   return found;

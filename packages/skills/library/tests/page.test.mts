@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { call, card, library, pageConfig, pageState, post, publicDir, reset, seal, skillDir } from "./harness.mts";
+import { call, giveKey, library, pageConfig, pageState, post, publicDir, reset, seal, skillDir } from "./harness.mts";
 
 const KEY = "page-key-0123456789";
 test.beforeEach(reset);
@@ -20,7 +20,7 @@ test("library ends with the page's link: relative, or absolute with ANYTHINGLLM_
 });
 
 test("the page shows a saved key by name only, never its value", async () => {
-  await call({ action: "secret", site: "api.example.com", label: "ex" }, { card: card(KEY) });
+  await giveKey("ex", "api.example.com", KEY);
   await call({ action: "library" });
   const state = pageState();
   assert.deepEqual(state.secrets, [{ label: "ex", site: "api.example.com", kind: "key", status: "saved" }]);
@@ -28,9 +28,9 @@ test("the page shows a saved key by name only, never its value", async () => {
   assert.ok(!fs.readFileSync(path.join(publicDir, "library-lean", `${pageConfig().token}.html`), "utf8").includes(KEY));
 });
 
-test("from a chat with no card, a key is asked for on the page, given there, and the agent is told", async () => {
+test("a key is asked for on the page, given there, and the agent is told", async () => {
   const asked = await call({ action: "secret", site: "api.example.com", label: "ex" });
-  assert.match(asked, /This chat can't show a question card, so the user gives the key on the Library page: \/library-lean\/[\w-]+\.html\n/);
+  assert.match(asked, /^The user gives the key on the Library page: \/library-lean\/[\w-]+\.html\n/);
   assert.deepEqual(pageState().needs, [{ label: "ex", site: "api.example.com", kind: "key" }]);
   post({ secret: pageConfig().secret, ev: "key-save", label: "ex", site: "api.example.com", sealed: seal(KEY) });
   await call({ action: "library" });
@@ -47,7 +47,7 @@ test("an event without the page's secret (an old link's, or a forgery) is droppe
 });
 
 test("the user deletes a key, a function or a toolkit on the page", async () => {
-  await call({ action: "secret", site: "api.example.com", label: "ex" }, { card: card(KEY) });
+  await giveKey("ex", "api.example.com", KEY);
   await call({ action: "save", service: "ex", toolkit: { base_urls: ["https://api.example.com"] }, function: { name: "one", description: "One.", source: "async function main() { return 1; }" } });
   await call({ action: "save", service: "ex", function: { name: "two", description: "Two.", source: "async function main() { return 2; }" } });
   await call({ action: "library" });
@@ -99,7 +99,7 @@ test("every event the pages post is one the skill applies", () => {
 });
 
 test("every field the page reads from its state is one the skill writes", async () => {
-  await call({ action: "secret", site: "api.example.com", label: "ex" }, { card: card(KEY) });
+  await giveKey("ex", "api.example.com", KEY);
   await call({ action: "save", service: "ex", toolkit: { base_urls: ["https://api.example.com"] }, function: { name: "one", description: "One.", source: "async function main() { return 1; }" }, test: {} });
   await call({ action: "library" });
   const state = pageState();

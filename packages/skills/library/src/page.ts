@@ -2,8 +2,8 @@
 // its public folder (#shared/pages). It shows the secrets by name (never their values) and lets the
 // user add a key or an OAuth client, sealed on their device with the vault's public key; it shows
 // the toolkits, their functions' sources and the recent runs, and lets the user delete a function or
-// a toolkit. It's how a key is given from a chat with no question card (AnywhereLLM Lite): the agent
-// asks, the need shows at the top of the page, and the user enters it there. What the user does is
+// a toolkit. It's where the user gives a key or an OAuth client, from any chat (AnywhereLLM Lite
+// too): the agent asks, the need shows at the top of the page, and the user enters it there. What the user does is
 // applied at once while the page is open, and at the start of the agent's next call; library then
 // shows it (a key saved, a sign-in signed in).
 //
@@ -20,6 +20,7 @@ import { Told } from "#shared/errors";
 import { embed, listPublic, pageKey, publicDir, removePublic, take, watch } from "#shared/pages";
 import * as vault from "#shared/vault";
 import { LibraryError } from "./errors";
+import * as listing from "./listing";
 import { OAUTH_PAGE, PENDING_MS, finish, redirectFor, waiting } from "./oauth";
 import * as secrets from "./secrets";
 import * as store from "./store";
@@ -117,8 +118,9 @@ export const need = (label: string, site: string, kind: Need["kind"]): Promise<v
 const sameSecret = (a: unknown, b: string) => typeof a === "string" && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const text = (v: unknown, n = 500) => String(v ?? "").trim().slice(0, n);
 
-/** What applying an event did to the page itself: a need it met, or a new link. */
-type Applied = { met?: string; rotate?: true } | null;
+/** What applying an event did beyond the vault and the store: a need it met, a new link, or a
+ *  function gone from the skill's description. */
+type Applied = { met?: string; rotate?: true; relist?: true } | null;
 
 /** Applies one event the page posted. */
 async function apply(e: Record<string, unknown>, secret: string): Promise<Applied> {
@@ -146,11 +148,11 @@ async function apply(e: Record<string, unknown>, secret: string): Promise<Applie
     case "fn-delete": {
       const { service, name } = store.qualified(e.fn);
       store.removeFn(service, name);
-      return null;
+      return { relist: true };
     }
     case "toolkit-delete":
       store.removeToolkit(store.serviceOf(e.service));
-      return null;
+      return { relist: true };
     case "rotate":
       return { rotate: true };
     default:
@@ -174,6 +176,7 @@ export async function drain(base: string | null): Promise<void> {
   }
   const met = new Set(applied.flatMap((a) => (a?.met ? [a.met] : [])));
   const rotate = applied.some((a) => a?.rotate);
+  if (applied.some((a) => a?.relist)) listing.refresh();
   const now = await change((p) => {
     p.needs = p.needs.filter((n) => !met.has(n.label));
     if (rotate) Object.assign(p, { token: random(), secret: random() });

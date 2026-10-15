@@ -32,30 +32,28 @@ const handler = (): ((this: unknown, args: Record<string, unknown>) => Promise<s
   return require(bundle).runtime.handler;
 };
 
-export type Card = { asked: unknown[]; surveys: unknown[]; answers: (string | null)[] };
-
-/** A question card that answers `answers`, in order (null: the user closes it). */
-export const card = (...answers: (string | null)[]): Card => ({ asked: [], surveys: [], answers });
+/** The question cards the skill showed: none, ever (a card shows its answers in the chat). */
+export const cardsShown: unknown[] = [];
 
 export interface Call {
   slug?: string | null;
-  card?: Card;
   base?: string;
 }
 
-/** Calls the skill as AnythingLLM's agent would: from workspace `slug` (null: none, as a job), with
- *  a question card when one is given, and ANYTHINGLLM_URL set to `base`. */
-export function call(args: Record<string, unknown>, { slug = "work", card: c, base }: Call = {}): Promise<string> {
-  const ask = c && {
-    requestUserClarification: async (q: { questions: unknown[] }) => {
-      c.asked.push(q);
-      const given = c.answers.splice(0, q.questions.length);
-      return given[0] === null ? { skipped: true } : { answers: given.map((answer) => ({ answer })) };
-    },
-    addClarifyingQuestionSurvey: (s: unknown) => void c.surveys.push(s),
-  };
-  const self = { super: { handlerProps: { invocation: slug ? { workspace: { slug }, thread_id: 3 } : {} }, ...ask }, runtimeArgs: base ? { ANYTHINGLLM_URL: base } : {}, logger: () => {} };
+/** Calls the skill as AnythingLLM's agent would: from workspace `slug` (null: none, as a job), in a
+ *  chat that could show a question card, and with ANYTHINGLLM_URL set to `base`. */
+export function call(args: Record<string, unknown>, { slug = "work", base }: Call = {}): Promise<string> {
+  const card = { requestUserClarification: async (q: unknown) => (cardsShown.push(q), { skipped: true }), addClarifyingQuestionSurvey: () => {} };
+  const self = { super: { handlerProps: { invocation: slug ? { workspace: { slug }, thread_id: 3 } : {} }, ...card }, runtimeArgs: base ? { ANYTHINGLLM_URL: base } : {}, logger: () => {} };
   return handler().call(self, args);
+}
+
+/** Asks for the key `label` for `site`, and gives it on the page, as the user does. */
+export async function giveKey(label: string, site: string, value: string): Promise<string> {
+  const asked = await call({ action: "secret", site, label });
+  post({ secret: pageConfig().secret, ev: "key-save", label, site, sealed: seal(value) });
+  await call({ action: "library" });
+  return asked;
 }
 
 /** Forgets the library, the vault and the page between tests. */

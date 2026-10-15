@@ -5,7 +5,7 @@
 // workspace and every scheduled job shares it. What is tuned rather than coded (the guide, the
 // snippets, the prelude every function runs after, the pages) is in static/, which the user can
 // override file by file on their instance. The Library page (page.ts) is the user's own view of it,
-// and where a key or an OAuth client is given from a chat with no question card.
+// and where they give a key or an OAuth client.
 //
 // esbuild bundles this into the one handler.js AnythingLLM loads.
 
@@ -16,6 +16,7 @@ import { checkUrl } from "#shared/fence";
 import type { StaticFiles } from "#shared/static";
 import { LibraryError } from "./errors";
 import type { HandlerContext } from "./host";
+import * as listing from "./listing";
 import { define, redirectFor, start as startSignIn } from "./oauth";
 import * as page from "./page";
 import { check } from "./policy";
@@ -126,45 +127,36 @@ function listingLines(saved: Saved): string[] {
   return lines;
 }
 
-/** Asks the user for a key, or sets up and starts an OAuth sign-in; what the user gives is kept
- *  unseen, on the question card or on the Library page. */
+/** Asks the user for a key, or sets up and starts an OAuth sign-in. What the user gives, they give
+ *  on the Library page, sealed on their device: AnythingLLM's question card would show it in the
+ *  chat once answered. */
 async function secret(args: Args, self: HandlerContext): Promise<string> {
   const kind = clean(args.kind).toLowerCase() || "key";
   if (kind === "oauth") return signIn(args, self);
   if (kind !== "key") throw new LibraryError('secret\'s kind is "key" (an API key or token) or "oauth" (a sign-in)');
   const site = secrets.siteChecked(args.site);
   const label = secrets.labelOf(clean(args.label) || site);
-  if (!secrets.canAsk(self)) {
-    await page.need(label, site, "key");
-    const link = await page.show(baseOf(self));
-    return `This chat can't show a question card, so the user gives the key on the Library page: ${link}\nTell them to open it and enter the key for ${site} there (it's saved without you seeing it), and to tell you when it's done. Never ask for the key in the chat.`;
-  }
-  await secrets.askKey(self, site, label);
-  return `Saved the key the user gave for ${site} as "${label}". It's hidden from you and goes only to ${site}. Name it in the toolkit's secrets, as { "label": "${label}", "as": "bearer" } or however the API's docs say it goes; call with auth { "key": "${label}", "as": ... } to try it.`;
+  await page.need(label, site, "key");
+  return `The user gives the key on the Library page: ${await page.show(baseOf(self))}\nTell them to open it and enter the key for ${site} there, at the top of Keys (it's saved without you seeing it), and to tell you when it's done; then call library: "${label}" shows as saved. Never ask for the key in the chat. Name it in the toolkit's secrets as { "label": "${label}", "as": "bearer" } or however the API's docs say it goes.`;
 }
 
 /** An OAuth sign-in, one step at a time. A call that gives the definition saves it and says what
- *  client the user makes at the provider; a later one takes the client (on the card, or on the
- *  Library page in a chat with none), and once there's one, answers the sign-in link. */
+ *  client the user makes at the provider and gives on the Library page; a later one, once there's
+ *  a client, answers the sign-in link. */
 async function signIn(args: Args, self: HandlerContext): Promise<string> {
   const label = secrets.labelOf(args.label);
   const base = baseOf(self);
   const redirect = redirectFor(base);
-  const defined = args.definition !== undefined;
-  if (defined) {
+  if (args.definition !== undefined) {
     const def = objectOf(args.definition, "definition");
     await secrets.saveSignIn(secrets.siteChecked(def.site ?? args.site), label, define(def));
   }
   const found = secrets.signIn(label);
   if (!found) throw new LibraryError(`there's no sign-in "${label}": give its definition { site, authorize_url, token_url, scopes, params } (guide topic secrets)`);
+  if (!redirect) return `The sign-in "${label}" is saved, but the Library skill's ANYTHINGLLM_URL is empty, and the redirect address the provider sends the user back to depends on it. Ask the user to set it in AnythingLLM (Settings, Agent Skills, Library) to the address they open AnythingLLM at, like https://anythingllm.example.com, then call secret again with kind "oauth" and label "${label}". Give no redirect address until then.`;
   if (!found.client_id) {
-    const make = `"${label}" needs the user's own OAuth client at the provider (${new URL(found.oauth.authorize_url).host}). Tell them to make one in its developer console: a web application client, with this redirect address registered: ${redirect}\nIf the provider asks for a consent screen, they can keep it in testing and add themselves as a test user.`;
-    if (!secrets.canAsk(self)) {
-      await page.need(label, found.site, "client");
-      return `${make}\nThen they enter its client ID and secret on the Library page, under Sign-ins: ${await page.show(base)}\nWhen they say it's done, call secret again with kind "oauth" and label "${label}".`;
-    }
-    if (defined) return `${make}\nWhen they have its client ID and secret, call secret again with kind "oauth" and label "${label}": a card asks for them.`;
-    await secrets.askClient(self, label, redirect);
+    await page.need(label, found.site, "client");
+    return `"${label}" needs the user's own OAuth client at the provider (${new URL(found.oauth.authorize_url).host}). Tell them to make one in its developer console: a web application client, with this redirect address registered: ${redirect}\nIf the provider asks for a consent screen, they can keep it in testing and add themselves as a test user.\nThen they enter its client ID and secret on the Library page, under Sign-ins: ${await page.show(base)}\nNever ask for them in the chat. When they say it's done, call secret again with kind "oauth" and label "${label}".`;
   }
   const { url, state } = await startSignIn(label, redirect);
   await page.oauthPage(state);
@@ -260,7 +252,9 @@ export const runtime = {
     if (!act) return `The library's action is ${Object.keys(ACTIONS).join(", ")}, not "${clean(args.action)}".`;
     try {
       await fromPage(this);
-      return await act(args, this);
+      const answer = await act(args, this);
+      if (action === "save") listing.refresh(this.logger);
+      return answer;
     } catch (e) {
       if (e instanceof Told) return `Library: ${e.message}.`;
       this.logger?.(`library-lean ${action} failed: ${(e as Error)?.stack || e}`);

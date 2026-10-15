@@ -1,8 +1,8 @@
 // What the library calls with, kept in the instance's vault (#shared/vault), whose values the model
 // never reads: an API key (kind "key": the site it may go to, a name, its value) or an OAuth sign-in
 // (kind "oauth", oauth.ts: how to sign in, the user's client and the tokens it got). The user gives a
-// key or a client on AnythingLLM's question card, whose answers come to this skill, not the model, or
-// on the Library page (page.ts). A secret goes with a request only to its own site (or a site under
+// key or a client on the Library page (page.ts), sealed on their device; not on AnythingLLM's question
+// card, which shows its answers in the chat. A secret goes with a request only to its own site (or a site under
 // it), only over https (or plain http to a host the user lets through), put where the API wants it
 // (as a bearer token, by HTTP Basic, in a header or in the query), and at most PER_MINUTE times a
 // minute from one process (a scheduled job's child process counts its own).
@@ -13,7 +13,6 @@ import { allowedHosts, bareHost, onSite, secureFor, siteOf } from "#shared/fence
 import type { Headers } from "#shared/net";
 import * as vault from "#shared/vault";
 import { LibraryError } from "./errors";
-import type { HandlerContext } from "./host";
 import { accessToken, isSignIn, type Definition, type SignIn } from "./oauth";
 
 /** How a secret goes with a request: as a bearer token, by HTTP Basic (the key the password, with a
@@ -21,7 +20,6 @@ import { accessToken, isSignIn, type Definition, type SignIn } from "./oauth";
 const AS = /^(bearer|basic(:[^:\s]{1,100})?|authorization:[A-Za-z][\w-]{0,30}|header:[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}|query:[\w.-]{1,64})$/i;
 const LABEL = /^[\w .@:-]{1,60}$/;
 const PER_MINUTE = 60;
-const ASK_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** A saved secret as the agent and the page see it: never its value. */
 export interface Secret {
@@ -113,9 +111,13 @@ export async function saveKey(site: string, label: string, value: string): Promi
 }
 
 /** Saves how a sign-in signs in; one of the same name keeps its client, and its tokens while how
- *  it signs in is unchanged. */
+ *  it signs in is unchanged. One sign-in per provider: a new name for a provider signed in at
+ *  already is refused, naming the one there. */
 export async function saveSignIn(site: string, label: string, oauth: Definition): Promise<void> {
   await vault.update((v) => {
+    const host = new URL(oauth.authorize_url).host;
+    const other = v.entries.find((e) => isSignIn(e) && !named(label)(e) && new URL(e.oauth.authorize_url).host === host) as SignIn | undefined;
+    if (other) throw new LibraryError(`there's a sign-in at ${host} already: "${other.user}" (${status(other)}; scopes: ${other.oauth.scopes || "none"}). Use it: call secret with kind "oauth" and label "${other.user}"; to change its scopes, give the definition again with that label. For another account, the user deletes it on the Library page first`);
     const same = v.entries.find(named(label));
     const kept = same && isSignIn(same) ? same : null;
     const unchanged = kept && JSON.stringify(kept.oauth) === JSON.stringify(oauth);
@@ -144,39 +146,6 @@ export const removeSecret = (label: string): Promise<boolean> =>
     v.entries = v.entries.filter((e) => !named(label)(e));
     return v.entries.length < before;
   });
-
-/** Whether this chat can show AnythingLLM's question card (only its own chat window can). */
-export const canAsk = (self: HandlerContext): boolean => typeof self.super?.requestUserClarification === "function";
-
-/** Asks the user on AnythingLLM's question card; the answers come to this skill only, and the card
- *  is kept in the chat with every answer hidden. */
-async function ask(self: HandlerContext, questions: { question: string; placeholder: string }[]): Promise<string[]> {
-  const agent = self.super!;
-  const asked = questions.map((q) => ({ kind: "input", inputType: "text", ...q }));
-  const result = await agent.requestUserClarification!({ questions: asked, allowSkip: true, timeoutMs: ASK_TIMEOUT_MS });
-  agent.addClarifyingQuestionSurvey?.({ questions: asked, result: { ...result, answers: (result.answers || []).map((a) => (a.answer ? { ...a, answer: "•••" } : a)) } });
-  if (result.timedOut) throw new LibraryError("the user didn't answer the card in time; nothing was saved");
-  if (result.skipped) throw new LibraryError("the user closed the card; nothing was saved");
-  return questions.map((_, i) => String(result.answers?.[i]?.answer ?? "").trim());
-}
-
-/** Asks the user for a key on the card and saves it. */
-export async function askKey(self: HandlerContext, site: string, label: string): Promise<void> {
-  self.super?.introspect?.(`Asking the user for a key for ${site}`);
-  const [value] = await ask(self, [{ question: `An API key or token for ${site}`, placeholder: `Kept in the vault and sent only to ${site}; the model never sees it` }]);
-  if (!value) throw new LibraryError("the user gave no key; nothing was saved");
-  await saveKey(site, label, value);
-}
-
-/** Asks the user for their OAuth client on the card and saves it. */
-export async function askClient(self: HandlerContext, label: string, redirect: string): Promise<void> {
-  self.super?.introspect?.(`Asking the user for the OAuth client for ${label}`);
-  const [id, secret] = await ask(self, [
-    { question: `The client ID of your OAuth client for "${label}"`, placeholder: `Its redirect address must be ${redirect}` },
-    { question: "Its client secret (leave empty if it has none)", placeholder: "Kept in the vault; the model never sees it" },
-  ]);
-  await saveClient(label, id, secret || null);
-}
 
 /** Whether a secret for `site` may go to `url`: on its site, over https (or plain http to a host
  *  the user lets through). */

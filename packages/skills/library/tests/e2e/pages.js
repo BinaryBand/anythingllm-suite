@@ -2,7 +2,8 @@
 // notes): the Library page as AnythingLLM really serves it and really takes what it posts. The skill
 // makes its page key through AnythingLLM's own model; the page and its state are fetched from the
 // server; a key is given through the real browser-extension upload (the collector writes the event)
-// and lands in the vault; then an OAuth sign-in against a stand-in provider, its code posted the way
+// and lands in the vault; then an OAuth sign-in against a stand-in provider, its client given on the
+// page and its code posted the way
 // oauth.html posts it, with the key from the file the server serves for that sign-in.
 // Prints "ok" or throws.
 const assert = require("assert");
@@ -38,20 +39,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
   await new Promise((r) => server.listen(PORT, "127.0.0.1", r));
-  const plugin = ImportedPlugin.loadPluginByHubId(HUB_ID).plugin({});
-  const call = async (args, answers = null) => {
+  const plugin = ImportedPlugin.loadPluginByHubId(HUB_ID).plugin({ ANYTHINGLLM_URL: SERVER }); // the skill's setting, as AnythingLLM passes it
+  const call = async (args) => {
     let fn;
     const agent = {
       handlerProps: { invocation: { workspace: { slug: "check" }, thread_id: 1 }, log: (m) => console.error(m) },
-      introspect: () => {},
-      ...(answers ? { requestUserClarification: async (q) => ({ answers: answers.splice(0, q.questions.length).map((answer) => ({ answer })) }), addClarifyingQuestionSurvey: () => {} } : {}),
       function: (def) => (fn = def),
     };
     plugin.setup(agent);
     return fn.handler.call(fn, args);
   };
 
-  // A key, given on the page from a chat with no card.
+  // A key, given on the page.
   const asked = await call({ action: "secret", site: "api.example.com", label: "ex" });
   const pagePath = asked.match(/(\/library-lean\/[\w-]+\.html)/)[1];
   const html = await (await fetch(SERVER + pagePath)).text();
@@ -61,7 +60,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepEqual(state.needs, [{ label: "ex", site: "api.example.com", kind: "key" }], "the server serves the page's state");
 
   const pub = crypto.createPublicKey({ key: Buffer.from(cfg.pub, "base64"), format: "der", type: "spki" });
-  const sealed = crypto.publicEncrypt({ key: pub, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from("e2e-api-key")).toString("base64");
+  // Sealed as the page seals it, with the vault's public key.
+  const seal = (text) => crypto.publicEncrypt({ key: pub, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(text)).toString("base64");
+  const sealed = seal("e2e-api-key");
   const postEvent = (key, event) =>
     fetch(SERVER + "/api/browser-extension/upload-content", {
       method: "POST",
@@ -81,9 +82,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // An OAuth sign-in, its code posted as oauth.html posts it.
   const definition = { site: "127.0.0.1", authorize_url: `http://127.0.0.1:${PORT}/authorize`, token_url: `http://127.0.0.1:${PORT}/token`, scopes: "me" };
-  await call({ action: "secret", kind: "oauth", label: "demo", definition }, []);
-  const linkAnswer = await call({ action: "secret", kind: "oauth", label: "demo" }, ["e2e-client", "e2e-secret"]);
-  const link = new URL(linkAnswer.match(/^(http\S+)$/m)[1]);
+  await call({ action: "secret", kind: "oauth", label: "demo", definition });
+  assert.equal((await postEvent(cfg.key, { secret: cfg.secret, ev: "oauth-client", label: "demo", client_id: "e2e-client", sealed: seal("e2e-secret") })).status, 200);
+  let linkAnswer = "";
+  for (let i = 0; i < 40 && !/^http/m.test(linkAnswer); i++) {
+    await sleep(250);
+    linkAnswer = await call({ action: "secret", kind: "oauth", label: "demo" });
+  }
+  const linkLine = linkAnswer.match(/^(http\S+)$/m);
+  assert.ok(linkLine, `a sign-in link, not: ${linkAnswer}`);
+  const link = new URL(linkLine[1]);
   provider.challenge = link.searchParams.get("code_challenge");
   const state2 = link.searchParams.get("state");
   const sFile = await (await fetch(`${SERVER}/library-lean/s-${state2}.json`)).json();

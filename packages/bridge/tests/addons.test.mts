@@ -48,6 +48,23 @@ test("put writes the server, the entry and the skills, and a second put changes 
   assert.ok(put(dir, PAYLOAD, ENTRY, PAYLOAD.skills.slice(0, 1)).every((line) => line.startsWith("unchanged")));
 });
 
+test("a skill's update keeps what AnythingLLM and the skill saved in its plugin.json: on or off, its settings, what it lists", () => {
+  const dir = storage();
+  const manifest = (url?: string, active = true, saved = "") => `${JSON.stringify({ active, version: "1", description: `Does things.${saved}`, setup_args: { URL: { type: "string", ...(url ? { value: url } : {}) } } }, null, 2)}\n`;
+  const skill = { name: "lib", hubId: "lib-lean", files: { "plugin.json": manifest() } };
+  const file = path.join(dir, "plugins", "agent-skills", "lib-lean", "plugin.json");
+  put(dir, { ...PAYLOAD, skills: [skill] }, ENTRY, [skill]);
+  fs.writeFileSync(file, JSON.stringify(JSON.parse(manifest("https://llm.example.com", false, "\n\nSaved now: a.b (One.)")))); // as AnythingLLM saves it, and the skill lists what it holds
+  assert.ok(checks(dir, { ...PAYLOAD, skills: [skill] }).every(([, ok]) => ok), "still this version's");
+  const next = { ...skill, files: { "plugin.json": manifest().replace('"version": "1"', '"version": "2"') } };
+  put(dir, { ...PAYLOAD, skills: [next] }, ENTRY, [next]);
+  const found = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.equal(found.version, "2");
+  assert.equal(found.active, false);
+  assert.equal(found.setup_args.URL.value, "https://llm.example.com");
+  assert.equal(found.description, "Does things.\n\nSaved now: a.b (One.)");
+});
+
 test("the servers file keeps other servers and AnythingLLM's settings in ours, and is written in place", () => {
   const dir = storage();
   const theirs = { command: "npx", args: ["some-server"] };

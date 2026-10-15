@@ -97,8 +97,9 @@ export function define(given: Record<string, unknown>): Definition {
   return { authorize_url: secureUrl(given.authorize_url, "authorize_url"), token_url: secureUrl(given.token_url, "token_url"), scopes, pkce: given.pkce !== false, params: params as Record<string, string>, client_auth: clientAuth };
 }
 
-/** The redirect address to register for the client, for AnythingLLM's address `base`. */
-export const redirectFor = (base: string | null): string => (base?.startsWith("https://") ? `${base}/${OAUTH_PAGE}` : LOOPBACK);
+/** The redirect address to register for the client, for AnythingLLM's address `base`; null while
+ *  it isn't set, since the address depends on it. */
+export const redirectFor = (base: string | null): string | null => (!base ? null : base.startsWith("https://") ? `${base}/${OAUTH_PAGE}` : LOOPBACK);
 
 /** The states of the sign-ins waiting for the provider, in every process. */
 export const waiting = (): string[] =>

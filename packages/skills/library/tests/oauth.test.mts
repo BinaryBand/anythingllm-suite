@@ -1,5 +1,5 @@
 // OAuth sign-ins, against a stand-in provider on 127.0.0.1: the definition, the user's client on the
-// card, the sign-in link (PKCE), the code coming back through oauth.html's event, the tokens sent by
+// Library page, the sign-in link (PKCE), the code coming back through oauth.html's event, the tokens sent by
 // a function and renewed once as they run out, and the paste fallback.
 
 import assert from "node:assert/strict";
@@ -9,7 +9,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import test from "node:test";
-import { call, card, pageState, post, publicDir, reset, storage } from "./harness.mts";
+import { call, cardsShown, pageConfig, pageState, post, publicDir, reset, seal, storage } from "./harness.mts";
 
 // The provider: a token endpoint that checks the client and PKCE and rotates refresh tokens, and an
 // API that wants the current access token.
@@ -51,16 +51,17 @@ test.beforeEach(() => {
   Object.assign(provider, { challenge: "", refreshes: 0, access: "", refresh: "", lifetime: 3600, spent: new Set() });
 });
 
-/** Defines the sign-in "demo", gives its client on the card, and answers the sign-in link; `base`
- *  is AnythingLLM's address, or null for none set. */
-async function link(base: string | null = LLM): Promise<URL> {
-  const first = await call({ action: "secret", kind: "oauth", label: "demo", definition }, { base: base ?? undefined, card: card() });
+/** Defines the sign-in "demo", gives its client on the page, and answers the sign-in link; `base`
+ *  is AnythingLLM's address. */
+async function link(base: string = LLM): Promise<URL> {
+  const first = await call({ action: "secret", kind: "oauth", label: "demo", definition }, { base });
   assert.match(first, /"demo" needs the user's own OAuth client at the provider \(127\.0\.0\.1:\d+\)/);
-  assert.ok(first.includes(base?.startsWith("https://") ? `${LLM}/library-lean/oauth.html` : "http://127.0.0.1/library-lean/oauth"), "the redirect address to register");
-  const c = card("client-1", "shh-secret");
-  const second = await call({ action: "secret", kind: "oauth", label: "demo" }, { base: base ?? undefined, card: c });
-  assert.equal(c.asked.length, 1, "the client asked for on one card");
-  assert.ok(!JSON.stringify(c.surveys).includes("shh-secret"));
+  assert.ok(first.includes(base.startsWith("https://") ? `${LLM}/library-lean/oauth.html` : "http://127.0.0.1/library-lean/oauth"), "the redirect address to register");
+  assert.deepEqual(pageState().needs, [{ label: "demo", site: "127.0.0.1", kind: "client" }], "asked for on the page");
+  post({ secret: pageConfig().secret, ev: "oauth-client", label: "demo", client_id: "client-1", sealed: seal("shh-secret") });
+  const second = await call({ action: "secret", kind: "oauth", label: "demo" }, { base });
+  assert.equal(cardsShown.length, 0, "never on a card");
+  assert.ok(!second.includes("shh-secret"));
   const url = new URL(second.match(/^(http\S+)$/m)![1]);
   provider.challenge = url.searchParams.get("code_challenge")!;
   return url;
@@ -122,8 +123,23 @@ test("a code for a sign-in nobody waits for is ignored, and a refused sign-in sa
   assert.match(JSON.stringify(pageState().secrets), /"status":"its last sign-in didn't finish: the provider didn't give a code: access_denied"/, "and why a sign-in didn't finish is shown");
 });
 
+test("with ANYTHINGLLM_URL unset, the answer says so and gives no redirect address", async () => {
+  const said = await call({ action: "secret", kind: "oauth", label: "demo", definition });
+  assert.match(said, /ANYTHINGLLM_URL is empty/);
+  assert.ok(!said.includes("/library-lean/oauth"), "no redirect address");
+  await call({ action: "library" });
+  assert.equal(pageState().redirect, null, "nor on the page");
+});
+
+test("one sign-in per provider: a definition under another name points to the one there", async () => {
+  await call({ action: "secret", kind: "oauth", label: "demo", definition }, { base: LLM });
+  const said = await call({ action: "secret", kind: "oauth", label: "demo-2", definition }, { base: LLM });
+  assert.match(said, /^Library: there's a sign-in at 127\.0\.0\.1:\d+ already: "demo"/);
+  assert.deepEqual(pageState().secrets.map((s: { label: string }) => s.label), ["demo"]);
+});
+
 test("without an https address, the sign-in ends on 127.0.0.1, and the user pastes that address into the page", async () => {
-  const q = Object.fromEntries((await link(null)).searchParams);
+  const q = Object.fromEntries((await link("http://192.168.1.5:3001")).searchParams);
   assert.equal(q.redirect_uri, "http://127.0.0.1/library-lean/oauth");
   post({ ev: "oauth-code", state: q.state, code: "good-code" }); // as the page's paste form posts it
   await call({ action: "library" });

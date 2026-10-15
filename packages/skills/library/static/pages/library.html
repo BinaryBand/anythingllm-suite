@@ -94,7 +94,10 @@
   }
 
   /** A labelled input: the label holds it, and `inputs[name]` keeps it for the form to read. */
-  const field = (inputs, name, label, type = "text") => el("label", { textContent: label }, (inputs[name] = el("input", { type, autocomplete: "off" })));
+  // Not a login form: a password field asks for a new value (so the browser fills in no saved
+  // password, nor a user name beside it), and names hold nothing a browser reads as a login.
+  const field = (inputs, name, label, type = "text") =>
+    el("label", { textContent: label }, (inputs[name] = el("input", { type, name: `lib-${name}-${Math.random().toString(36).slice(2, 8)}`, autocomplete: type === "password" ? "new-password" : "off", spellcheck: false })));
 
   function form(title, fields, submit, onsubmit, need = false) {
     const inputs = {};
@@ -120,13 +123,32 @@
       !!need,
     );
 
-  const clientForm = (signIn, redirect) =>
-    form(
-      el("p", { className: "cap", textContent: `Register this redirect address for the client: ${redirect}` }),
+  const saveClient = async (signIn, id, secret) => post("oauth-client", { label: signIn.label, client_id: id, sealed: secret ? await seal(secret) : "" });
+
+  // The JSON file a provider's console gives for a client (Google's client_secret_….json: { web:
+  // { client_id, client_secret, redirect_uris } }), read here: only its ID and sealed secret are sent.
+  async function loadClient(signIn, redirect, file) {
+    let c;
+    try {
+      const j = JSON.parse(await file.text());
+      c = j.web || j.installed || j;
+    } catch {}
+    if (!c?.client_id) return toast("That file has no client_id");
+    if (Array.isArray(c.redirect_uris) && !c.redirect_uris.includes(redirect)) return toast(`This client's redirect addresses don't include ${redirect}: add it at the provider, then load the file again`);
+    await saveClient(signIn, c.client_id, c.client_secret || "");
+  }
+
+  const clientForm = (signIn, redirect) => {
+    const node = form(
+      el("p", { className: "cap", textContent: redirect ? `Register this redirect address for the client: ${redirect}` : "Set the Library skill's ANYTHINGLLM_URL (AnythingLLM's Agent Skills) to the address you open AnythingLLM at first: the redirect address depends on it." }),
       [["id", "Client ID"], ["secret", "Client secret (leave empty to keep it, or if it has none)", "password"]],
       "Save the client",
-      async (v) => (v.id ? post("oauth-client", { label: signIn.label, client_id: v.id, sealed: v.secret ? await seal(v.secret) : "" }) : (toast("Give the client ID"), false)),
+      async (v) => (v.id ? saveClient(signIn, v.id, v.secret) : (toast("Give the client ID"), false)),
     );
+    const file = el("input", { type: "file", accept: ".json,application/json", hidden: true, onchange: () => file.files[0] && loadClient(signIn, redirect, file.files[0]).finally(() => (file.value = "")) });
+    node.append(file, el("button", { className: "act quiet", type: "button", textContent: "Load the client's JSON file", onclick: () => file.click() }));
+    return node;
+  };
 
   // Without an https address, the provider sends the user to a 127.0.0.1 address that doesn't load:
   // its code and state are posted as oauth.html would post them.
@@ -162,7 +184,7 @@
         el("p", { className: "cap", textContent: `Signs in at ${o.authorize}; sends to ${o.site}${o.scopes ? `; scopes: ${o.scopes}` : ""}` }),
         clientForm(o, s.redirect), remove("Delete", "key-delete", { label: o.label })));
     }
-    if (!s.redirect.startsWith("https://") && oauth.length) signins.append(pasteForm());
+    if (s.redirect && !s.redirect.startsWith("https://") && oauth.length) signins.append(pasteForm());
 
     toolkits.replaceChildren(...(s.toolkits.length ? [] : [el("p", { className: "cap", textContent: "No toolkits yet." })]));
     for (const t of s.toolkits) {

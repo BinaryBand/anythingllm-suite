@@ -9,9 +9,9 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { check } from "../src/sandbox.ts";
-import { type Card, call as called, card, library, reset, skillDir, storage } from "./harness.mts";
+import { call as called, cardsShown, giveKey, library, reset, skillDir, storage } from "./harness.mts";
 
-const call = (args: Record<string, unknown>, slug: string | null = "work", c?: Card) => called(args, { slug, card: c });
+const call = (args: Record<string, unknown>, slug: string | null = "work") => called(args, { slug });
 
 const KEY = "tok-1234567890";
 
@@ -44,7 +44,7 @@ const ISSUES = `async function main(input, kit) {
 
 /** A toolkit "demo" on the stand-in API, its key saved, and its list_issues function. */
 async function demo(): Promise<void> {
-  assert.match(await call({ action: "secret", site: "127.0.0.1", label: "demo" }, "work", card(KEY)), /^Saved the key the user gave for 127\.0\.0\.1 as "demo"/);
+  await giveKey("demo", "127.0.0.1", KEY);
   const toolkit = { title: "Demo API", base_urls: [BASE], secrets: [{ label: "demo", as: "bearer" }], notes: "Issues include pull requests." };
   const fn = { name: "list_issues", description: "The open issues.", inputs: { state: { type: "string" } }, source: ISSUES };
   assert.match(await call({ action: "save", service: "demo", toolkit, function: fn }), /Saved demo\.list_issues, version 1/);
@@ -52,12 +52,11 @@ async function demo(): Promise<void> {
 
 test.beforeEach(reset);
 
-test("the user's key is asked for on the card, kept unseen, and goes with a function's requests", async () => {
-  const c = card(KEY);
-  const said = await call({ action: "secret", site: "https://127.0.0.1/", label: "demo" }, "work", c);
+test("the user's key is given on the Library page, never on the card, kept unseen, and goes with a function's requests", async () => {
+  const said = await giveKey("demo", "https://127.0.0.1/", KEY);
+  assert.match(said, /^The user gives the key on the Library page: \/library-lean\/[\w-]+\.html\n/);
   assert.ok(!said.includes(KEY));
-  assert.equal(c.asked.length, 1);
-  assert.ok(!JSON.stringify(c.surveys).includes(KEY), "the chat keeps the card with its answer hidden");
+  assert.equal(cardsShown.length, 0, "a question card would show the key in the chat once answered");
   assert.ok(!fs.readFileSync(path.join(storage, "vault-lean", "vault.json"), "utf8").includes(KEY), "the vault holds it encrypted");
   await call({ action: "save", service: "demo", toolkit: { base_urls: [BASE], secrets: [{ label: "demo", as: "bearer" }] }, function: { name: "list_issues", description: "The open issues.", source: ISSUES } });
   const ran = await call({ action: "run", name: "demo.list_issues", inputs: {} });
@@ -67,10 +66,8 @@ test("the user's key is asked for on the card, kept unseen, and goes with a func
   assert.match(ran, /- GET 127\.0\.0\.1:\d+\/issues: 200/);
 });
 
-test("without a card, or with the card closed, nothing is saved", async () => {
-  assert.match(await call({ action: "secret", site: "api.example.com", label: "x" }), /can't show a question card/);
-  assert.match(await call({ action: "secret", site: "api.example.com", label: "x" }, "work", card(null)), /closed the card; nothing was saved/);
-  assert.match(await call({ action: "secret", site: "localhost", label: "x" }, "work", card("k")), /a key needs site/);
+test("a key's site is checked before it's asked for", async () => {
+  assert.match(await call({ action: "secret", site: "localhost", label: "x" }), /a key needs site/);
 });
 
 test("a key never shows: not in a run's result, its log, or call's answer, even when the API echoes it", async () => {
@@ -249,4 +246,22 @@ test("the bundle ships two text files, QuickJS and the static folder inside hand
   assert.ok(bytes.toString("utf8").includes("cursor-pagination.js"));
   assert.ok(bytes.length > 500_000, "QuickJS's wasm is inlined");
   assert.ok(!bytes.includes(0), "text, which install's payload and the Hub's upload both carry");
+});
+
+test("the installed skill's description ends with the functions saved now, for the model to see on every turn", async () => {
+  const installed = path.join(storage, "plugins", "agent-skills", "library-lean");
+  fs.mkdirSync(installed, { recursive: true });
+  const file = path.join(installed, "plugin.json");
+  const shippedDescription = JSON.parse(fs.readFileSync(path.join(skillDir, "plugin.json"), "utf8")).description;
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(skillDir, "plugin.json"), "utf8")), active: false }));
+  const description = () => JSON.parse(fs.readFileSync(file, "utf8")).description;
+  try {
+    await demo();
+    assert.equal(description(), `${shippedDescription}\n\nSaved now: demo.list_issues (The open issues.). When one does what's asked, run it (run, name) rather than searching the web.`);
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).active, false, "the rest of plugin.json as AnythingLLM saved it");
+    await call({ action: "save", service: "demo", remove: "list_issues" });
+    assert.equal(description(), shippedDescription, "nothing listed once nothing is saved");
+  } finally {
+    fs.rmSync(path.join(storage, "plugins"), { recursive: true, force: true });
+  }
 });

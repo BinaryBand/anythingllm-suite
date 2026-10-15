@@ -1,6 +1,6 @@
 # library-lean
 
-The user's own library of API toolkits, as one AnythingLLM agent skill. For a service, the agent reads its API's docs, asks the user for its key on AnythingLLM's question card (the model never sees it), and saves a toolkit: where the API is, which keys it calls with, what the agent learned of it, and small JavaScript functions that call it. A function runs again on request, and runs other functions as a flow, even across services. Nothing knows any one service.
+The user's own library of API toolkits, as one AnythingLLM agent skill. For a service, the agent reads its API's docs, asks the user for its key, which they give on the Library page (the model never sees it), and saves a toolkit: where the API is, which keys it calls with, what the agent learned of it, and small JavaScript functions that call it. A function runs again on request, and runs other functions as a flow, even across services. Nothing knows any one service.
 
 Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process: a function sees its input and `kit`, never a file, a key or AnythingLLM. `kit.http` reaches only its toolkit's hosts, through the fence (public addresses only), with its toolkit's keys added outside the script. Why QuickJS, and what was measured: [docs/notes/skills/library](../../../docs/notes/skills/library/README.md).
 
@@ -8,7 +8,7 @@ Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process:
 | --- | --- |
 | `guide` | how the library works, by topic (`static/guide/`), and worked examples (`static/snippets/`) |
 | `library` | the toolkits at a glance, or one (`service`) in full |
-| `secret` | asks the user for a key (`site`, `label`), on the card or the Library page, or sets up and starts an OAuth sign-in (`kind` oauth, `definition`) |
+| `secret` | asks the user for a key (`site`, `label`), given on the Library page, or sets up and starts an OAuth sign-in (`kind` oauth, `definition`) |
 | `call` | one request to an API, with a key (`auth`), to read its docs, spec or answers |
 | `save` | a toolkit, a function (compiled first) or both; `test` runs what was saved; `remove` |
 | `run` | a function (`name`, `inputs`), or a run again (`run_id`) |
@@ -24,8 +24,8 @@ Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process:
 
 ## Using it
 
-`anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Library under Agent Skills, set its ANYTHINGLLM_URL to the address you open AnythingLLM at (https, for sign-ins to come straight back), and ask the agent to connect a service. `library` ends with the Library page's link: your own view of the keys, sign-ins, toolkits and runs, where you also give a key from a chat with no question card. For an address on your own network (a NAS, a home server), add its host to `FENCE_ALLOW` in AnythingLLM's environment.
+`anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Library under Agent Skills, set its ANYTHINGLLM_URL to the address you open AnythingLLM at (https, for sign-ins to come straight back), and ask the agent to connect a service. `library` ends with the Library page's link: your own view of the keys, sign-ins, toolkits and runs, where you also give a key or an OAuth client when the agent asks. For an address on your own network (a NAS, a home server), add its host to `FENCE_ALLOW` in AnythingLLM's environment.
 
-For an OAuth sign-in (Google, Microsoft, Slack...), the agent tells you what client to make at the provider and the redirect address to register; you give the client's ID and secret on the card or the page, open the link it gives, and agree.
+For an OAuth sign-in (Google, Microsoft, Slack...), the agent tells you what client to make at the provider and the redirect address to register; you give the client's ID and secret on the Library page, open the link it gives, and agree.
 
 Not yet: runs that outlast the chat, and scheduling.
