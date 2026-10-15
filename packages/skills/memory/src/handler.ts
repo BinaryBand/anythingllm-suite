@@ -6,16 +6,13 @@
 // esbuild bundles this into the one handler.js AnythingLLM loads, so there are no sibling modules
 // for AnythingLLM to keep cached between runs.
 
+import { workspaceOf } from "#shared/anythingllm";
 import * as f from "./facts";
 import { MemoryError } from "./facts";
 import { bank } from "./bank";
 import type { HandlerContext } from "./host";
 
 type Args = Record<string, unknown>;
-
-/** The workspace a call came from, from AnythingLLM's invocation, never from what the model
- *  says; null for a call with none (a scheduled job). */
-const workspaceOf = (self: HandlerContext): string | null => self?.super?.handlerProps?.invocation?.workspace?.slug || null;
 
 // Reads see the workspace's facts and the global ones, or the one scope the call names; update and
 // forget find a fact in either; remember keeps a fact in the scope it names, global by default.

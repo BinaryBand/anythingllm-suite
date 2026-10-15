@@ -39,3 +39,12 @@ export function serial<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
   queue.tail = run.catch(() => {});
   return run;
 }
+
+/** What of `this` in a skill's handler tells where it was called from. */
+export interface Invoked {
+  super?: { handlerProps?: { invocation?: { workspace?: { slug?: string } | null } } };
+}
+
+/** The workspace a skill was called from, from AnythingLLM's invocation, never from what the model
+ *  says; null for a call with none (a scheduled job's). */
+export const workspaceOf = (self: Invoked | undefined): string | null => self?.super?.handlerProps?.invocation?.workspace?.slug || null;

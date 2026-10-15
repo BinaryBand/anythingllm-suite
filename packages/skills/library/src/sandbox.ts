@@ -13,6 +13,7 @@
 import { newQuickJSWASMModuleFromVariant, type QuickJSContext, type QuickJSDeferredPromise, type QuickJSHandle, type QuickJSWASMModule } from "quickjs-emscripten-core";
 import variant from "@jitl/quickjs-singlefile-cjs-release-sync";
 import { perProcess } from "#shared/anythingllm";
+import { Told } from "#shared/errors";
 
 export const LIMITS = {
   memoryBytes: 32 * 1024 * 1024,
@@ -22,12 +23,12 @@ export const LIMITS = {
   sourceChars: 32 * 1024,
 };
 
-/** What a script's kit offers: each takes JSON values and answers one, or a promise of one. A
- *  KitError's message reaches the script as its error's; any other error's as "kit.<name> failed". */
-export type Kit = Record<string, (...args: unknown[]) => unknown>;
-
-/** An error a kit function means the script to see, message and all. */
-export class KitError extends Error {}
+/** What a script's kit offers: functions that take JSON values and answer one, or a promise of one,
+ *  and groups of them (kit.state.get). An error that is Told reaches the script by its name and
+ *  message; any other only as "kit.<name> failed", so nothing of the host leaks into it. */
+export interface Kit {
+  [name: string]: ((...args: unknown[]) => unknown) | Kit;
+}
 
 /** A script that went wrong: what the agent is shown. `line` is the script's own, when known. */
 export interface Failure {
@@ -119,17 +120,22 @@ export async function run({ source, input, kit, prelude = {}, deadline, stop = n
       text.dispose();
       return ctx.unwrapResult(parsed);
     };
+    /** The kit as the script's own object: each function calls the host's, each group is an object. */
+    const install = (target: QuickJSHandle, fns: Kit, prefix: string): void => {
+      for (const [name, fn] of Object.entries(fns)) {
+        const handle = typeof fn === "function" ? ctx.newFunction(name, (...args) => callHost(`${prefix}${name}`, fn, args.map((a) => ctx.dump(a)))) : ctx.newObject();
+        if (typeof fn !== "function") install(handle, fn, `${prefix}${name}.`);
+        ctx.setProp(target, name, handle);
+        handle.dispose();
+      }
+    };
     const kitHandle = ctx.newObject();
-    for (const [name, fn] of Object.entries(kit)) {
-      const handle = ctx.newFunction(name, (...args) => callHost(name, fn, args.map((a) => ctx.dump(a))));
-      ctx.setProp(kitHandle, name, handle);
-      handle.dispose();
-    }
+    install(kitHandle, kit, "");
     ctx.setProp(ctx.global, "kit", kitHandle);
     kitHandle.dispose();
 
     /** A host function's answer as the script sees it: a value, or a promise the host settles. */
-    function callHost(name: string, fn: Kit[string], args: unknown[]): QuickJSHandle | { error: QuickJSHandle } {
+    function callHost(name: string, fn: (...args: unknown[]) => unknown, args: unknown[]): QuickJSHandle | { error: QuickJSHandle } {
       let answer: unknown;
       try {
         answer = fn(...args);
@@ -216,7 +222,7 @@ export async function run({ source, input, kit, prelude = {}, deadline, stop = n
 }
 
 function hostMessage(name: string, e: unknown): { name: string; message: string } {
-  return e instanceof KitError ? { name: "KitError", message: e.message } : { name: "KitError", message: `kit.${name} failed` };
+  return e instanceof Told ? { name: e.name === "Error" ? "KitError" : e.name, message: e.message } : { name: "KitError", message: `kit.${name} failed` };
 }
 
 /** The answer as JSON the host keeps, within LIMITS.resultChars. */

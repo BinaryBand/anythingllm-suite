@@ -9,9 +9,10 @@
 
 import dns from "node:dns";
 import net from "node:net";
+import { Told } from "./errors.mts";
 
-/** A refusal or failure to show the agent as it is: a fenced address, an unreachable server. */
-export class NetError extends Error {}
+/** A request refused or failed, said as it is: a fenced address, a bad header, an unreachable server. */
+export class NetError extends Told {}
 
 /** What the agent is told whenever the fence refuses an address. */
 export const FENCED = "That's final: don't reach it another way, with another tool or another address for the same place.";

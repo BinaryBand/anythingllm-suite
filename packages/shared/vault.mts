@@ -21,9 +21,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { perProcess, serial, storageDir } from "./anythingllm.mts";
 import { writeAtomic } from "./atomic.mts";
+import { Told } from "./errors.mts";
 
 /** A refusal to show the agent or the user as it is. */
-export class VaultError extends Error {}
+export class VaultError extends Told {}
 
 export interface Entry {
   id: string;
@@ -149,6 +150,9 @@ function current(dir: string): Cached {
 
 /** The vault, opened, as a copy: what's changed in it isn't kept (that's update's). */
 export const load = (dir: string = vaultDir()): Vault => structuredClone(current(dir).vault);
+
+/** The vault's entries as they are now, without a copy: only to read. */
+export const entries = (dir: string = vaultDir()): readonly Readonly<Entry>[] => current(dir).vault.entries;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

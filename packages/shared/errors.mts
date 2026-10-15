@@ -1,3 +1,8 @@
+/** A failure whose message is meant for whoever asked (the agent, a function's script, the user):
+ *  safe to show as it is. Every part's own refusals extend it, so a catch tells them from a bug by
+ *  this one class. */
+export class Told extends Error {}
+
 // The bridge's own failures, each with the status a client sees: 400 a bad request, 401 no
 // accepted key, 403 a route not allowed, 405 another method, 413 a body too large, 502 AnythingLLM
 // can't be reached or refused the login.

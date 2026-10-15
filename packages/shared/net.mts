@@ -16,6 +16,11 @@ import type { LookupFunction } from "node:net";
 import zlib from "node:zlib";
 import { FENCED, NetError, addressesRefused, allowedHosts, bareHost, hostRefused, httpUrl } from "./fence.mts";
 
+/** A server that didn't answer, or whose answer couldn't be read: worth trying again later. */
+export class Unreachable extends NetError {
+  override name = "Unreachable";
+}
+
 const TIMEOUT_MS = 30 * 1000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
@@ -124,14 +129,14 @@ function once({ method, url, headers, body, timeout, maxBytes, allowed, resolve,
         req.destroy();
       });
       stream.on("end", () => done(false));
-      stream.on("error", (e: Error) => finish(reject, new NetError(`${parsed.origin}'s answer couldn't be read: ${e.message}`)));
+      stream.on("error", (e: Error) => finish(reject, new Unreachable(`${parsed.origin}'s answer couldn't be read: ${e.message}`)));
     });
     const timer = setTimeout(() => req.destroy(Object.assign(new Error(`no answer in ${Math.round(timeout / 1000)} s`), { code: "ETIMEDOUT" })), timeout);
     const onAbort = () => req.destroy(Object.assign(new Error("the run stopped"), { code: "EABORTED" }));
     signal?.addEventListener("abort", onAbort, { once: true });
     req.on("error", (e: NodeJS.ErrnoException) => {
       if (e.code === "EFENCED") return finish(reject, new NetError(`${parsed.origin} isn't reached: ${e.message}. ${FENCED}`));
-      return finish(reject, new NetError(`${parsed.origin} didn't answer: ${e.message}`));
+      return finish(reject, new Unreachable(`${parsed.origin} didn't answer: ${e.message}`));
     });
     req.end(body);
   });

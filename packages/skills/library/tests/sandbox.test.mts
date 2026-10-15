@@ -1,7 +1,8 @@
 // The sandbox functions run in: QuickJS, its kit, its limits.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { KitError, LIMITS, check, run, type Kit } from "../src/sandbox.ts";
+import { Told } from "#shared/errors";
+import { LIMITS, check, run, type Kit } from "../src/sandbox.ts";
 
 const soon = (ms = 2000) => Date.now() + ms;
 const later = <T,>(value: T, ms = 10) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
@@ -26,7 +27,7 @@ test("a function awaits the host's kit and answers what it returns", async () =>
 
 test("a kit error reaches the script as an error it can catch, with only the message the host chose", async () => {
   const kit: Kit = {
-    refused: () => Promise.reject(new KitError("api.example.com isn't one of this toolkit's hosts")),
+    refused: () => Promise.reject(new Told("api.example.com isn't one of this toolkit's hosts")),
     broken: () => {
       throw new Error("a secret detail of the host");
     },
