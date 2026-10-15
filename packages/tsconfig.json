@@ -18,6 +18,8 @@
     "erasableSyntaxOnly": true
   },
   "include": [
+    "control/src",
+    "control/tests",
     "bridge/src",
     "bridge/tests",
     "shared",

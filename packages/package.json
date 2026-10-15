@@ -9,6 +9,7 @@
     "typecheck": "tsc -p .",
     "shared:test": "node --test \"shared/*.test.mts\" \"*.test.mts\"",
     "bridge:test": "node build.mjs bridge && node --test \"bridge/tests/*.test.mts\"",
+    "control:test": "node build.mjs control && node --test \"control/tests/*.test.mts\"",
     "skills:test": "node build.mjs skills && node --test \"skills/*/tests/*.test.mts\""
   },
   "devDependencies": {
