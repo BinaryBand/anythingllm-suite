@@ -12,8 +12,8 @@
 
 import http from "node:http";
 import { METHODS, route, show, type Rule } from "./allow.mts";
-import { BridgeError, invalid, notAllowed, tooLarge, unauthorized } from "./errors.mts";
-import type { Upstream } from "./upstream.mts";
+import { BridgeError, invalid, notAllowed, tooLarge, unauthorized } from "#shared/errors";
+import type { Upstream } from "#shared/upstream";
 
 const SERVICE = "anythingllm-bridge";
 const BRIDGE_TIMEOUT = 120_000; // a route may wait on a provider or an MCP server (AnythingLLM's 30 s)

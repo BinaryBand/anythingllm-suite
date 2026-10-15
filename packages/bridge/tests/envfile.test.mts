@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { readEnv, saveEnv } from "../src/envfile.mts";
+import { readEnv, saveEnv } from "#shared/envfile";
 import { tempDir } from "./fakes/tmp.mts";
 
 const tmp = tempDir("env");
@@ -20,7 +20,7 @@ test("a new file gets the header and mode 600, in a folder made for it", () => {
   const lines = fs.readFileSync(file, "utf8").split("\n");
   assert.match(lines[0], /^# anythingllm-bridge's settings/);
   assert.equal(lines.at(-2), "A=1");
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600); // Windows has no modes
   saveEnv(path.join(tmp, "own.env"), { A: "1" }, ["# mine"]);
   assert.equal(fs.readFileSync(path.join(tmp, "own.env"), "utf8"), "# mine\nA=1\n");
 });

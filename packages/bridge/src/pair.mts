@@ -4,8 +4,8 @@
 // name: it is what the app reads. Plain http is allowed only to a private host.
 
 import net from "node:net";
-import { invalid, upstream as upstreamError } from "./errors.mts";
-import { expect, type Upstream } from "./upstream.mts";
+import { invalid, upstream as upstreamError } from "#shared/errors";
+import { expect, type Upstream } from "#shared/upstream";
 
 const KEY_NAME = "AnywhereLLM";
 

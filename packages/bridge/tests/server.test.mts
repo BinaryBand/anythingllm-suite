@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import consumers from "node:stream/consumers";
 import { parseRules } from "../src/allow.mts";
 import { createServer } from "../src/server.mts";
-import { Upstream } from "../src/upstream.mts";
+import { passwordIn, Upstream } from "#shared/upstream";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { close, listen } from "./fakes/net.mts";
 import { tempDir } from "./fakes/tmp.mts";
@@ -21,7 +21,7 @@ const tmp = tempDir("server");
 
 async function start(allow: string, envFile: string | null = null): Promise<void> {
   logged = [];
-  bridge = createServer({ rules: parseRules(allow), upstream: new Upstream(fake.url, envFile), log: (l) => logged.push(l) });
+  bridge = createServer({ rules: parseRules(allow), upstream: new Upstream(fake.url, envFile ? passwordIn(envFile) : null), log: (l) => logged.push(l) });
   url = `http://127.0.0.1:${await listen(bridge)}`;
 }
 

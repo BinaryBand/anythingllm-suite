@@ -2,9 +2,10 @@
 // for what the developer API (/api/v1) doesn't have; and the developer API only to ask whether a
 // client's key is good.
 //
-// It logs in as the pages do: `POST /api/request-token` with the password, which is AUTH_TOKEN in
-// AnythingLLM's .env (ANYTHINGLLM_ENV), read afresh at each login so a changed password needs no
-// restart. The token is kept and the login made again after a 401. With no password set,
+// It logs in as the pages do: `POST /api/request-token` with the password, which is AUTH_TOKEN: in
+// AnythingLLM's .env for the bridge (ANYTHINGLLM_ENV), in the environment for a process AnythingLLM
+// starts itself (the control server). It is read afresh at each login so a changed password needs
+// no restart. The token is kept and the login made again after a 401. With no password set,
 // AnythingLLM asks for none, and none is sent. Multi-user mode isn't supported. No error text holds
 // a token or a key.
 
@@ -12,6 +13,8 @@ import crypto from "node:crypto";
 import { upstream as upstreamError } from "./errors.mts";
 import { readEnv } from "./envfile.mts";
 
+/** AnythingLLM's port when SERVER_PORT doesn't say another (contract/versions.env INNER_PORT). */
+export const ANYTHINGLLM_PORT = 3001;
 const DEFAULT_TIMEOUT = 30_000; // how long a call to AnythingLLM may take, in ms
 const KEY_TIMEOUT = 10_000; // and the question about a key
 const OK_FOR = 60_000; // a key AnythingLLM took is remembered this long (ms)
@@ -33,7 +36,8 @@ interface Options {
   signal?: AbortSignal;
 }
 
-const said = (found: unknown): string | null => {
+/** The reason an answer gives, its `error` or `message`, or null. */
+export const said = (found: unknown): string | null => {
   const f = found as { error?: unknown; message?: unknown } | null;
   const reason = f && typeof f === "object" ? f.error || f.message : null;
   return reason && reason !== true ? String(reason) : null;
@@ -69,6 +73,15 @@ export function expect({ status, json }: Reply): unknown {
   throw upstreamError(`AnythingLLM answered ${status}${reason ? `: ${reason}` : ""}`);
 }
 
+/** Where the password comes from: `read` gives it (empty for none), `where` names it in errors. */
+export interface Password {
+  read: () => string;
+  where: string;
+}
+
+/** The password in an .env file, as AUTH_TOKEN. */
+export const passwordIn = (envFile: string): Password => ({ read: () => readEnv(envFile).AUTH_TOKEN || "", where: `the password in ${envFile}` });
+
 interface Held {
   ok: Promise<boolean>;
   /** Infinity while the question is out. */
@@ -77,29 +90,30 @@ interface Held {
 
 export class Upstream {
   readonly #base: string;
-  readonly #envFile: string | null;
+  readonly #password: Password | null;
   readonly #now: () => number;
   #token: Promise<string> | null = null;
   #seen = new Map<string, Held>();
 
-  constructor(baseUrl: string, envFile: string | null, now: () => number = () => performance.now()) {
+  /** `password` is null for none. */
+  constructor(baseUrl: string, password: Password | null, now: () => number = () => performance.now()) {
     this.#base = baseUrl.replace(/\/+$/, "");
-    this.#envFile = envFile;
+    this.#password = password;
     this.#now = now;
   }
 
   /** The bridge's view of AnythingLLM: its address and the .env that holds the password. */
   static of(settings: { anythingllmUrl: string; envFile: string | null }): Upstream {
-    return new Upstream(settings.anythingllmUrl, settings.envFile);
+    return new Upstream(settings.anythingllmUrl, settings.envFile ? passwordIn(settings.envFile) : null);
   }
 
   async #login(): Promise<string> {
-    const password = this.#envFile ? readEnv(this.#envFile).AUTH_TOKEN || "" : "";
+    const password = this.#password?.read() ?? "";
     if (!password) return "";
     const { status, json } = await request(`${this.#base}/api/request-token`, { method: "POST", body: { password } });
     const token = (json as { token?: unknown } | null)?.token;
     if (status !== 200 || !token) {
-      throw upstreamError(`AnythingLLM refused the bridge's login with the password in ${this.#envFile}: ${said(json) ?? status}`);
+      throw upstreamError(`AnythingLLM refused the login with ${this.#password?.where}: ${said(json) ?? status}`);
     }
     return String(token);
   }
@@ -126,7 +140,7 @@ export class Upstream {
     const reply = await request(url, { method, body, token, timeout, signal });
     if (reply.status !== 401 || !token) return reply; // with no password, a 401 is the route's own
     const again = await request(url, { method, body, token: await this.#tokenFor(first), timeout, signal });
-    if (again.status === 401) throw upstreamError("AnythingLLM refused the bridge's login (the password in its .env, ANYTHINGLLM_ENV)");
+    if (again.status === 401) throw upstreamError(`AnythingLLM refused the login (${this.#password?.where ?? "no password"})`);
     return again;
   }
 

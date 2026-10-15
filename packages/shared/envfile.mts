@@ -1,4 +1,4 @@
-// KEY=value files: the settings file, `~/.config/anythingllm-bridge/bridge.env`, which the runner's
+// KEY=value files: the settings file, `bridge.env` (settings.mts says where), which the runner's
 // service reads as its environment and every command reads too, and AnythingLLM's own .env, where
 // its password is.
 

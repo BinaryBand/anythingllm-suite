@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { Upstream } from "../src/upstream.mts";
+import { passwordIn, Upstream } from "#shared/upstream";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { tempDir } from "./fakes/tmp.mts";
 import { until } from "./fakes/until.mts";
@@ -26,7 +26,7 @@ function envWith(password: string): string {
 const refuses = (promise: Promise<unknown>, status: number, message: RegExp) => assert.rejects(promise, { status, message });
 
 test("it logs in once and sends the token", async () => {
-  const api = new Upstream(fake.url + "/", envWith("pw"));
+  const api = new Upstream(fake.url + "/", passwordIn(envWith("pw")));
   assert.deepEqual(await api.exchange("GET", "/scheduled-jobs"), { status: 200, json: { ok: true } });
   await api.exchange("GET", "/scheduled-jobs");
   assert.equal(fake.logins, 1);
@@ -34,23 +34,23 @@ test("it logs in once and sends the token", async () => {
 });
 
 test("calls made at once share one login", async () => {
-  const api = new Upstream(fake.url, envWith("pw"));
+  const api = new Upstream(fake.url, passwordIn(envWith("pw")));
   await Promise.all([api.exchange("GET", "/a"), api.exchange("GET", "/b"), api.exchange("GET", "/c")]);
   assert.equal(fake.logins, 1);
 });
 
 test("a 401 logs in again once", async () => {
-  const api = new Upstream(fake.url, envWith("pw"));
+  const api = new Upstream(fake.url, passwordIn(envWith("pw")));
   await api.exchange("GET", "/x");
   fake.expired.add("tok-1");
   assert.equal((await api.exchange("GET", "/x")).status, 200);
   assert.equal(fake.logins, 2);
   fake.expired.add("tok-2").add("tok-3");
-  await refuses(api.exchange("GET", "/x"), 502, /refused the bridge's login/);
+  await refuses(api.exchange("GET", "/x"), 502, /refused the login \(the password in /);
 });
 
 test("calls that are all refused at once share one new login", async () => {
-  const api = new Upstream(fake.url, envWith("pw"));
+  const api = new Upstream(fake.url, passwordIn(envWith("pw")));
   await api.exchange("GET", "/x");
   fake.expired.add("tok-1");
   await Promise.all([api.exchange("GET", "/a"), api.exchange("GET", "/b"), api.exchange("GET", "/c")]);
@@ -58,7 +58,7 @@ test("calls that are all refused at once share one new login", async () => {
 });
 
 test("without a password no token is sent, and a 401 is the route's own", async () => {
-  await new Upstream(fake.url, envWith("")).exchange("GET", "/x");
+  await new Upstream(fake.url, passwordIn(envWith(""))).exchange("GET", "/x");
   await new Upstream(fake.url, null).exchange("GET", "/x");
   assert.deepEqual(fake.calls.map((c) => c.token), ["", ""]);
   assert.equal(fake.logins, 0);
@@ -75,7 +75,7 @@ test("the status and body come back whatever they are", async () => {
 
 test("a wrong password is said, and a changed one is read at the next login", async () => {
   const file = envWith("nope");
-  const api = new Upstream(fake.url, file);
+  const api = new Upstream(fake.url, passwordIn(file));
   await refuses(api.exchange("GET", "/x"), 502, /Invalid password/);
   fs.writeFileSync(file, "AUTH_TOKEN=pw\n");
   assert.equal((await api.exchange("GET", "/x")).status, 200); // a failed login is tried again
