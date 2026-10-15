@@ -36,5 +36,7 @@ extend = "../../pyproject.toml"
 # A test (and an e2e test, which tools/e2e runs) asserts, takes the fixtures it needs, and
 # compares against literals.
 "{tests,e2e}/**" = ["S101", "ANN", "INP001", "PLR2004"]
+# Runs systemctl with fixed arguments, never a shell.
+"src/control_mcp/install.py" = ["S603"]
 # The stand-in for AnythingLLM is a router: one branch for each route.
 "tests/fakes.py" = ["C901", "PLR0911"]

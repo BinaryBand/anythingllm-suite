@@ -3,7 +3,11 @@
 # contract/versions.env) on a free port, the built bridge in front of it on another, makes a
 # developer key and a workspace, and runs packages/mcp/e2e against the bridge. Everything lives in
 # a temporary folder and a container of its own; both are removed on the way out, pass or fail, and
-# nothing running on this machine (an AnythingLLM on :3001, a bridge on :8467) is touched.
+# nothing running on this machine (an AnythingLLM on :3001, a bridge on :8467, the user's systemd)
+# is touched.
+#
+# With podman it also runs the control server's `install` against the container's storage and has
+# AnythingLLM load the server through the socket, with systemd-socket-activate in systemd's place.
 # Needs podman or docker, Node 22.18 or later, and uv; the first run pulls the image.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -12,10 +16,12 @@ engine=$(command -v podman || command -v docker) || { echo "tools/e2e: needs pod
 work=$(mktemp -d)
 name="allm-e2e-$$"
 bridge_pid=
+socket_pid=
 
 cleanup() {
   status=$?
   [ -z "$bridge_pid" ] || kill "$bridge_pid" 2>/dev/null || true
+  [ -z "$socket_pid" ] || kill "$socket_pid" 2>/dev/null || true
   "$engine" stop -t 1 "$name" >/dev/null 2>&1 || true
   if [ "$status" -ne 0 ] && [ -s "$work/bridge.log" ]; then
     echo "--- the bridge's log" >&2
@@ -48,10 +54,20 @@ password=$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
 allm="http://127.0.0.1:$allm_port"
 bridge="http://127.0.0.1:$bridge_port"
 
+# With podman, storage is mounted and the container's user is the host user (keep-id), so a socket
+# in it is reachable at mode 0600 and nothing in it needs podman to delete. Docker has no keep-id.
+mounted=()
+install_into=
+if [ "$(basename "$engine")" = podman ] && command -v systemd-socket-activate >/dev/null; then
+  install_into="$work/storage"
+  mkdir "$install_into"
+  mounted=(--userns=keep-id:uid=1000,gid=1000 -v "$install_into:$INNER_STORAGE")
+fi
+
 echo "[e2e] AnythingLLM ($IMAGE) on :$allm_port"
-"$engine" run -d --rm --name "$name" -p "127.0.0.1:$allm_port:$INNER_PORT" \
+"$engine" run -d --rm --name "$name" -p "127.0.0.1:$allm_port:$INNER_PORT" ${mounted[@]+"${mounted[@]}"} \
   -e AUTH_TOKEN="$password" -e JWT_SECRET="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" \
-  -e STORAGE_DIR=/app/server/storage "$IMAGE" >/dev/null
+  -e STORAGE_DIR="$INNER_STORAGE" "$IMAGE" >/dev/null
 wait_for "$allm/api/ping" "AnythingLLM"
 
 # The bridge logs in with the password it reads from an .env, as it does from AnythingLLM's own.
@@ -75,7 +91,25 @@ key=$(curl -fs -X POST "$allm/api/system/generate-api-key" -H "Authorization: Be
 workspace=$(curl -fs -X POST "$allm/api/v1/workspace/new" -H "Authorization: Bearer $key" \
   -H 'Content-Type: application/json' -d '{"name":"E2E Workspace"}' | json 'j.workspace.slug')
 
+mcp=(uv run --locked --directory "$ROOT/packages/mcp")
+if [ -n "$install_into" ]; then
+  echo "[e2e] anythingllm-mcp-control install, into the container's storage"
+  settings=(ANYTHINGLLM_BRIDGE_URL="$bridge" ANYTHINGLLM_DEVELOPER_KEY="$key" ANYTHINGLLM_MCP_ROLES=chat,schedule)
+  mkdir "$work/mcp"
+  printf '%s\n' "${settings[@]}" >"$work/mcp/control.env"
+  XDG_CONFIG_HOME="$work/config" MCP_ENV_DIR="$work/mcp" \
+    "${mcp[@]}" anythingllm-mcp-control install --storage "$install_into" --no-start
+  python=$("${mcp[@]}" python -c 'import sys; print(sys.executable)')
+  # What the socket unit and the service template do, without installing either: the socket is
+  # the one install wrote into the unit, and the server has the settings the unit would give it.
+  socket=$(sed -n 's/^ListenStream=//p' "$work/config/systemd/user/anythingllm-mcp-control.socket")
+  systemd-socket-activate --accept --inetd -l "$socket" \
+    env "${settings[@]}" "$python" -m control_mcp >"$work/socket.log" 2>&1 &
+  socket_pid=$!
+fi
+
 echo "[e2e] packages/mcp/e2e"
 E2E_BRIDGE_URL="$bridge" E2E_DEVELOPER_KEY="$key" E2E_WORKSPACE="$workspace" \
+  E2E_ALLM_URL="${install_into:+$allm}" E2E_ALLM_TOKEN="$token" \
   uv run --locked --directory "$ROOT/packages/mcp" pytest e2e -q
 echo "tools/e2e: ok"
