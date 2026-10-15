@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { readEnv } from "../src/envfile.mts";
-import { settingsFile } from "../src/settings.mts";
-import { health, install, uninstall, type Ctx } from "../src/install.mts";
+import { readEnv } from "#shared/envfile";
+import { desktopStorage } from "#shared/paths";
+import { Upstream } from "#shared/upstream";
+import { serversFile, type Payload } from "../src/addons.mts";
+import { health, install, uninstall, type Ctx, type Options } from "../src/install.mts";
 import { developerKey } from "../src/pair.mts";
-import { unitText } from "../src/service.mts";
-import { Upstream } from "../src/upstream.mts";
+import { settingsFile } from "../src/settings.mts";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { tempDir } from "./fakes/tmp.mts";
 
 const DEFAULT = "/workspaces, GET /scheduled-jobs, GET /workspace/*/threads, POST /workspace/*/thread/new";
+const PAYLOAD: Payload = { control: "// control\n", skills: [{ name: "memory", hubId: "memory-lean", files: { "handler.js": "// memory\n" } }] };
 const tmp = tempDir("install");
 
 let fake: FakeAnythingLLM;
@@ -26,84 +28,120 @@ beforeEach(async () => {
   storage = path.join(home, "storage");
   fs.mkdirSync(path.join(storage, "plugins"), { recursive: true });
   fs.writeFileSync(path.join(storage, ".env"), "AUTH_TOKEN='pw'\n");
-  fake.replies.set("GET /system/api-keys", { json: { apiKeys: [] } });
-  fake.replies.set("POST /system/generate-api-key", { json: { apiKey: { secret: "agent-secret" } } });
   printed = [];
   ctx = {
     home,
     env: { ANYTHINGLLM_URL: fake.url, BRIDGE_PORT: "1" },
     print: (l) => printed.push(l),
-    command: ["/usr/bin/node", "/x/bridge.js", "serve"],
+    command: ["/usr/bin/node", "/x/anythingllm-suite.cjs", "serve"],
+    node: "/opt/node/bin/node",
     defaultAllow: DEFAULT,
-    run: () => ({ status: 1, stdout: "" }), // no systemctl
+    payload: PAYLOAD,
+    platform: "linux", // paths and service manager as on Linux, whatever runs the tests
+    run: () => ({ status: 1, stdout: "" }), // no service manager answers
   };
 });
 afterEach(() => fake.stop());
 
-const settings = () => settingsFile(home);
-const mcpFile = (name: string) => path.join(home, ".config", "anythingllm-mcp", `${name}.env`);
-const opts = { agentTools: true, start: false };
+const settings = () => readEnv(settingsFile(ctx));
+const opts = (more: Partial<Options> = {}): Options => ({ storage, bridge: false, start: false, ...more });
+const control = () => JSON.parse(fs.readFileSync(serversFile(storage), "utf8")).mcpServers.control;
 
-test("install points the bridge at the storage and sets BRIDGE_ALLOW when none is", async () => {
-  await install(ctx, { ...opts, storage });
-  assert.deepEqual(readEnv(settings()), { ANYTHINGLLM_STORAGE: storage, BRIDGE_ALLOW: DEFAULT });
-});
-
-test("install makes the developer key once and writes it, mode 600, for the control server", async () => {
-  await install(ctx, { ...opts, storage });
-  assert.deepEqual(readEnv(mcpFile("control")), { ANYTHINGLLM_DEVELOPER_KEY: "agent-secret", ANYTHINGLLM_BRIDGE_URL: "http://127.0.0.1:1" });
-  assert.equal(fs.statSync(mcpFile("control")).mode & 0o777, 0o600);
-  assert.ok(!fs.existsSync(mcpFile("chat")) && !fs.existsSync(mcpFile("schedule")), "one file for the one server");
-  assert.ok(!printed.join("\n").includes("agent-secret"), "the key is never printed");
-  assert.ok(fake.calls.some((c) => c.method === "POST" && c.body && (c.body as { name: string }).name === "anythingllm-mcp"));
-});
-
-test("a key or address already in the server's file is the owner's and stays", async () => {
-  fs.mkdirSync(path.dirname(mcpFile("control")), { recursive: true });
-  fs.writeFileSync(mcpFile("control"), "ANYTHINGLLM_DEVELOPER_KEY=mine\n");
-  await install(ctx, { ...opts, storage });
-  assert.deepEqual(readEnv(mcpFile("control")), { ANYTHINGLLM_DEVELOPER_KEY: "mine", ANYTHINGLLM_BRIDGE_URL: "http://127.0.0.1:1" });
-});
-
-test("--no-agent-tools makes no key and no file", async () => {
-  await install(ctx, { ...opts, storage, agentTools: false });
-  assert.ok(!fs.existsSync(mcpFile("control")));
+test("install puts the server, its entry and the skills into the storage, and asks nothing of AnythingLLM", async () => {
+  await install(ctx, opts());
+  assert.equal(fs.readFileSync(path.join(storage, "anythingllm-suite", "control.cjs"), "utf8"), PAYLOAD.control);
+  assert.deepEqual(control(), { command: "node", args: ["/app/server/storage/anythingllm-suite/control.cjs"], env: { ANYTHINGLLM_MCP_ROLES: "chat" } });
+  assert.ok(fs.existsSync(path.join(storage, "plugins", "agent-skills", "memory-lean", "handler.js")));
+  assert.deepEqual(settings(), { ANYTHINGLLM_STORAGE: storage }, "no BRIDGE_ALLOW without --bridge");
   assert.deepEqual(fake.calls, []);
+  assert.equal(fake.logins, 0);
+  assert.match(printed.join("\n"), /refresh the MCP servers/);
 });
 
-test("an owner's BRIDGE_ALLOW stays, empty included, and install names the chat routes it lacks", async () => {
-  fs.mkdirSync(path.dirname(settings()), { recursive: true });
-  fs.writeFileSync(settings(), "BRIDGE_ALLOW=GET /scheduled-jobs\n");
-  await install(ctx, { ...opts, storage });
-  assert.equal(readEnv(settings()).BRIDGE_ALLOW, "GET /scheduled-jobs");
-  assert.match(printed.join("\n"), /lacks the chat routes.*GET \/workspace\/\*\/threads, POST \/workspace\/\*\/thread\/new/);
-  fs.writeFileSync(settings(), "BRIDGE_ALLOW=\n");
+test("with no --storage it takes AnythingLLM Desktop's, and runs the server natively with this node", async () => {
+  const desktop = desktopStorage(ctx);
+  fs.mkdirSync(path.join(desktop, "plugins"), { recursive: true });
+  await install(ctx, opts({ storage: undefined }));
+  const found = JSON.parse(fs.readFileSync(serversFile(desktop), "utf8")).mcpServers.control;
+  assert.deepEqual(found, { command: "/opt/node/bin/node", args: [path.join(desktop, "anythingllm-suite", "control.cjs")], env: { ANYTHINGLLM_MCP_ROLES: "chat" } });
+  assert.equal(settings().ANYTHINGLLM_STORAGE, desktop);
+  assert.match(printed.join("\n"), /run install again if that Node moves/);
+});
+
+test("with no storage to be found it says how to name one", async () => {
+  await assert.rejects(install(ctx, opts({ storage: undefined })), { status: 400, message: /--storage DIR.*mounted at \/app\/server\/storage.*bind mount.*Desktop's would be/ });
+  await assert.rejects(install(ctx, opts({ storage: home })), { status: 400, message: /doesn't look like AnythingLLM's storage/ });
+  fs.mkdirSync(path.join(home, "s2", "plugins"), { recursive: true });
+  await install(ctx, opts({ storage: "~/s2" }));
+  assert.equal(settings().ANYTHINGLLM_STORAGE, path.join(home, "s2"));
+});
+
+test("a second install keeps the storage, runtime and roles it was given, unless told others", async () => {
+  await install(ctx, opts({ runtime: "native", roles: ["chat", "schedule"] }));
+  await install(ctx, opts({ storage: undefined }));
+  assert.equal(control().command, "/opt/node/bin/node");
+  assert.equal(control().env.ANYTHINGLLM_MCP_ROLES, "chat,schedule");
+  await install(ctx, opts({ runtime: "container", roles: ["schedule"] }));
+  assert.deepEqual([control().command, control().env.ANYTHINGLLM_MCP_ROLES], ["node", "schedule"]);
+});
+
+test("an unknown runtime, role or skill is refused before anything is written", async () => {
+  await assert.rejects(install(ctx, opts({ runtime: "vm" as never })), /--runtime is container or native/);
+  await assert.rejects(install(ctx, opts({ roles: ["chat", "admin"] })), /--roles is one or more of chat, schedule, not admin/);
+  await assert.rejects(install(ctx, opts({ skills: ["nope"] })), /no such skill: nope/);
+  assert.ok(!fs.existsSync(serversFile(storage)));
+});
+
+test("--skills none puts in the server alone", async () => {
+  await install(ctx, opts({ skills: ["none"] }));
+  assert.ok(control());
+  assert.ok(!fs.existsSync(path.join(storage, "plugins", "agent-skills")));
+});
+
+test("--bridge sets BRIDGE_ALLOW when none is; an owner's stays, empty included", async () => {
+  await install(ctx, opts({ bridge: true }));
+  assert.deepEqual(settings(), { ANYTHINGLLM_STORAGE: storage, BRIDGE_ALLOW: DEFAULT });
+  assert.match(printed.join("\n"), /give the bridge an https address/);
+  fs.writeFileSync(settingsFile(ctx), "BRIDGE_ALLOW=\n");
   printed.length = 0;
-  await install(ctx, { ...opts, storage, agentTools: false });
-  assert.equal(readEnv(settings()).BRIDGE_ALLOW, "");
+  await install(ctx, opts({ bridge: true }));
+  assert.equal(settings().BRIDGE_ALLOW, "");
   assert.match(printed.join("\n"), /BRIDGE_ALLOW is empty/);
 });
 
-test("a folder that isn't AnythingLLM's storage is refused, and a failing login leaves the rest done", async () => {
-  await assert.rejects(install(ctx, { ...opts, storage: home }), { status: 400, message: /doesn't look like AnythingLLM's storage/ });
-  fake.password = "changed";
-  await install(ctx, { ...opts, storage });
-  assert.match(printed.join("\n"), /no developer key made.*Invalid password/);
-  assert.equal(readEnv(settings()).ANYTHINGLLM_STORAGE, storage);
-});
-
-test("uninstall forgets the storage", async () => {
-  await install(ctx, { ...opts, storage, agentTools: false });
+test("uninstall takes it all out and forgets the storage; the skill's data and BRIDGE_ALLOW stay", async () => {
+  await install(ctx, opts({ bridge: true }));
+  fs.mkdirSync(path.join(storage, "memory-lean"));
   uninstall(ctx);
-  assert.equal(readEnv(settings()).ANYTHINGLLM_STORAGE, undefined);
-  assert.equal(readEnv(settings()).BRIDGE_ALLOW, DEFAULT);
+  assert.deepEqual(JSON.parse(fs.readFileSync(serversFile(storage), "utf8")).mcpServers, {});
+  assert.ok(!fs.existsSync(path.join(storage, "anythingllm-suite")));
+  assert.ok(!fs.existsSync(path.join(storage, "plugins", "agent-skills", "memory-lean")));
+  assert.ok(fs.existsSync(path.join(storage, "memory-lean")));
+  assert.deepEqual(settings(), { BRIDGE_ALLOW: DEFAULT });
+  printed.length = 0;
+  uninstall(ctx);
+  assert.match(printed[0], /No storage is known/);
 });
 
-test("health fails when the bridge isn't answering, and says which check", async () => {
-  await install(ctx, { ...opts, storage });
+test("health checks what install put in, and the bridge only when there is one", async () => {
+  assert.equal(await health(ctx), false);
+  assert.match(printed.join("\n"), /FAIL AnythingLLM's storage: not set: run install/);
+  await install(ctx, opts());
+  printed.length = 0;
+  assert.equal(await health(ctx), true, printed.join("\n"));
+  assert.ok(!printed.some((l) => /bridge on :|BRIDGE_ALLOW/.test(l)), printed.join("\n"));
+  fs.writeFileSync(path.join(storage, "anythingllm-suite", "control.cjs"), "old");
+  printed.length = 0;
+  assert.equal(await health(ctx), false);
+  assert.match(printed.join("\n"), /FAIL the control server: not this version's/);
+});
+
+test("with the bridge, health fails when it isn't answering, and says which check", async () => {
+  await install(ctx, opts({ bridge: true }));
   printed.length = 0;
   assert.equal(await health(ctx), false);
   const report = printed.join("\n");
+  assert.match(report, /ok +the control server/);
   assert.match(report, /FAIL bridge on :1: no answer/);
   assert.match(report, /ok +AnythingLLM/);
   assert.match(report, /ok +the internal API's login/);
@@ -124,9 +162,3 @@ test("the named developer key is reused, and made when there is none", async () 
   await assert.rejects(developerKey(api), /answered 500: boom/);
 });
 
-test("the unit runs the command with the settings file as its environment", () => {
-  const text = unitText(["/usr/bin/node", "/opt/my apps/bridge.js", "serve"], "/h/bridge.env", 8467);
-  assert.match(text, /^EnvironmentFile=\/h\/bridge\.env$/m);
-  assert.match(text, /^ExecStart=\/usr\/bin\/node "\/opt\/my apps\/bridge\.js" serve$/m);
-  assert.match(text, /^WantedBy=default\.target$/m);
-});

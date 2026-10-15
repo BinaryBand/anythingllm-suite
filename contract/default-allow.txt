@@ -1,4 +1,6 @@
-# The default BRIDGE_ALLOW: the internal routes the phone app and the control server's chat and schedule roles call.
+# The default BRIDGE_ALLOW: the internal routes the phone app calls. The /workspace/* chat routes were
+# added for the control server, which now runs inside AnythingLLM and calls it directly; drop them
+# once the phone app's own list says it doesn't call them.
 # One entry per line, `[METHOD ]/path/prefix`; `#` lines and blank lines are ignored. A `*` takes any
 # one segment. Add a route here before a part calls it.
 #

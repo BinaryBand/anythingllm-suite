@@ -11,7 +11,7 @@
 // any one segment, for a route with the workspace in its middle: `POST /workspace/*/thread/*/update`.
 // The path is AnythingLLM's own, under `/api`.
 
-import { forbidden, invalid } from "./errors.mts";
+import { forbidden, invalid } from "#shared/errors";
 
 export const METHODS = ["GET", "POST", "PUT", "DELETE"];
 const WILDCARD = "*";
@@ -41,9 +41,6 @@ const matches = (prefix: string[], segments: string[]): boolean =>
 
 const permits = (rule: Rule, method: string, segments: string[]): boolean =>
   (rule.method === null ? METHODS.includes(method) : rule.method === method) && matches(rule.prefix, segments);
-
-/** Whether every request `other` permits is permitted by `rule` too. */
-const covers = (rule: Rule, other: Rule): boolean => (rule.method === null || rule.method === other.method) && matches(rule.prefix, other.prefix);
 
 /** The rules a BRIDGE_ALLOW text lists. */
 export function parseRules(text: string): Rule[] {
@@ -87,12 +84,6 @@ export function absentRules(rules: Rule[], declared: Declared[]): string[] {
     rule.prefix.every((want, i) => want === WILDCARD || route.segments[i].startsWith(":") || want === route.segments[i]);
   return rules.filter((rule) => !declared.some((route) => under(rule, route))).map(show);
 }
-
-/** The rules of `wanted` that nothing in `have` covers, as they are written. */
-export const missingRules = (have: Rule[], wanted: Rule[]): string[] => wanted.filter((r) => !have.some((h) => covers(h, r))).map(show);
-
-/** The chat routes of a default list: the rules that name a workspace, `/workspace/...`. */
-export const chatRoutes = (defaultAllow: string): Rule[] => parseRules(defaultAllow).filter((r) => r.prefix[0] === "workspace" && r.prefix.length > 1);
 
 /** Python's `quote(s, safe="")`, which JavaScript's encodeURIComponent differs from in `!'()*`. */
 const quote = (s: string): string => encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());

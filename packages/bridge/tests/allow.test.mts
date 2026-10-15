@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { absentRules, chatRoutes, defaultList, missingRules, parseRules, route, show } from "../src/allow.mts";
+import { absentRules, defaultList, parseRules, route, show } from "../src/allow.mts";
 
 // The default list the parts agree on (contract/default-allow.txt).
 const DEFAULT_FILE = fs.readFileSync(fileURLToPath(new URL("../../../contract/default-allow.txt", import.meta.url)), "utf8");
 const CLIENT_ALLOW = defaultList(DEFAULT_FILE);
-const CHAT = chatRoutes(CLIENT_ALLOW);
 
 const passes = (allow: string, method: string, path: string, query = ""): string => route(parseRules(allow), method, path, query);
 
@@ -99,24 +98,6 @@ test("a star cannot be used to climb out", () => {
 
 test("a star rule prints as written", () => {
   assert.deepEqual(parseRules("DELETE /workspace/*/thread/*").map(show), ["DELETE /workspace/*/thread/*"]);
-});
-
-test("the chat routes are the default's rules that name a workspace", () => {
-  assert.deepEqual(CHAT.map(show), [
-    "GET /workspace/*/threads", "GET /workspace/*/thread/*/chats", "POST /workspace/*/thread/new",
-    "POST /workspace/*/thread/*/update", "DELETE /workspace/*/thread/*",
-  ]);
-});
-
-test("missing rules are those nothing held covers", () => {
-  const lacking = (held: string) => missingRules(parseRules(held), CHAT);
-  assert.deepEqual(lacking(CLIENT_ALLOW), []);
-  assert.equal(lacking("/scheduled-jobs").length, 5);
-  assert.deepEqual(lacking("/workspace"), []); // a broader prefix
-  assert.notDeepEqual(lacking("GET /workspace"), []); // but not a method short
-  assert.deepEqual(lacking("/workspace/*/thread"), ["GET /workspace/*/threads"]);
-  // A wildcard held covers a name wanted, never the other way round.
-  assert.ok(lacking("GET /workspace/home/threads").includes("GET /workspace/*/threads"));
 });
 
 test("the default list file is an entry a line, with comments", () => {

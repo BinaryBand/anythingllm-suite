@@ -1,16 +1,18 @@
-// The built file, run as a person would run it: `node dist/anythingllm-bridge.cjs serve`.
+// The built file, run as a person would run it: `node dist/anythingllm-suite.cjs serve`.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
+import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { close, listen } from "./fakes/net.mts";
 import { tempDir } from "./fakes/tmp.mts";
 
-const bundle = fileURLToPath(new URL("../dist/anythingllm-bridge.cjs", import.meta.url));
+const bundle = fileURLToPath(new URL("../dist/anythingllm-suite.cjs", import.meta.url));
 const tmp = tempDir("bundle");
-const baseEnv = { PATH: process.env.PATH, HOME: tmp };
+// Its own home and settings file on every OS, so a run never reads or writes the real ones.
+const baseEnv = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: tmp, USERPROFILE: tmp, APPDATA: tmp, BRIDGE_ENV_FILE: path.join(tmp, "bridge.env") }; // SystemRoot: Node on Windows needs it
 
 const freePort = async () => {
   const probe = http.createServer();

@@ -1,5 +1,6 @@
-// The bridge's settings, read from its environment (which the settings file
-// `~/.config/anythingllm-bridge/bridge.env` fills).
+// The bridge's settings, read from its environment (which the settings file `bridge.env` fills, in
+// the user's settings folder: `~/.config/anythingllm-bridge` on Linux, `~/Library/Application
+// Support/anythingllm-bridge` on macOS, `%APPDATA%\anythingllm-bridge` on Windows).
 //
 // | Name                   | Default                           | Meaning                          |
 // | BRIDGE_PORT            | 8467                              | the port it listens on           |
@@ -11,16 +12,18 @@
 // | ANYTHINGLLM_URL        | http://127.0.0.1:3001             | AnythingLLM, from here           |
 // | ANYTHINGLLM_STORAGE    | (unset)                           | AnythingLLM's storage folder     |
 // | ANYTHINGLLM_ENV        | <storage>/.env                    | its .env, with the password      |
-// | MCP_ENV_DIR            | ~/.config/anythingllm-mcp         | anythingllm-mcp's env files      |
+// | BRIDGE_SERVICE         | (auto: the OS's own manager)      | systemd, launchd, windows or foreground |
 
 import path from "node:path";
+import { configDir, pathsOf, type Env, type Place } from "#shared/paths";
 import { parseRules, show, type Rule } from "./allow.mts";
-import { readEnv } from "./envfile.mts";
-import { invalid } from "./errors.mts";
+import { readEnv } from "#shared/envfile";
+import { ANYTHINGLLM_PORT } from "#shared/upstream";
+import { invalid } from "#shared/errors";
+import { parseKind, type Kind } from "./service/index.mts";
 import { phoneUrl } from "./pair.mts";
 
 const PORT = 8467;
-const ANYTHINGLLM_PORT = 3001;
 const ANYTHINGLLM_URL = `http://127.0.0.1:${ANYTHINGLLM_PORT}`;
 
 export interface Settings {
@@ -33,10 +36,9 @@ export interface Settings {
   anythingllmUrl: string;
   storage: string | null;
   envFile: string | null;
-  mcpEnvDir: string;
+  /** The service manager to run the bridge under; "" chooses by the OS. */
+  service: Kind | "";
 }
-
-export type Env = Record<string, string | undefined>;
 
 /** The settings as `settings` prints them. */
 export function shown(s: Settings): Record<string, string> {
@@ -50,12 +52,12 @@ export function shown(s: Settings): Record<string, string> {
     ANYTHINGLLM_URL: s.anythingllmUrl,
     ANYTHINGLLM_STORAGE: s.storage ?? "",
     ANYTHINGLLM_ENV: s.envFile ?? "",
-    MCP_ENV_DIR: s.mcpEnvDir,
+    BRIDGE_SERVICE: s.service || "auto",
   };
 }
 
-/** The settings from environment values; `home` is the user's home folder. */
-export function fromEnv(env: Env, home: string): Settings {
+/** The settings from environment values. */
+export function fromEnv(env: Env): Settings {
   const get = (name: string): string => (env[name] ?? "").trim();
   const url = (name: string, fallback: string | null): string | null => {
     const raw = get(name);
@@ -84,14 +86,15 @@ export function fromEnv(env: Env, home: string): Settings {
     anythingllmUrl,
     storage,
     envFile: get("ANYTHINGLLM_ENV") || (storage ? path.join(storage, ".env") : null),
-    mcpEnvDir: get("MCP_ENV_DIR") || path.join(home, ".config", "anythingllm-mcp"),
+    service: parseKind(get("BRIDGE_SERVICE")),
   };
 }
 
-export const settingsFile = (home: string): string => path.join(home, ".config", "anythingllm-bridge", "bridge.env");
+/** The user's settings file. */
+export const settingsFile = (place: Place): string => pathsOf(place.platform).join(configDir("anythingllm-bridge", place), "bridge.env");
 
 /** The settings file: BRIDGE_ENV_FILE when set (another file, to run a second bridge), else the user's. */
-export const fileFor = (env: Env, home: string): string => env.BRIDGE_ENV_FILE || settingsFile(home);
+export const fileFor = (place: Place): string => place.env.BRIDGE_ENV_FILE || settingsFile(place);
 
 /** The settings: the environment's own values over the settings file's. */
-export const loadSettings = (env: Env, home: string): Settings => fromEnv({ ...readEnv(fileFor(env, home)), ...env }, home);
+export const loadSettings = (place: Place): Settings => fromEnv({ ...readEnv(fileFor(place)), ...place.env });
