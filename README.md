@@ -32,7 +32,7 @@ dist/               build output, ignored
 
 ## Checks
 
-There is no hosted CI; `lefthook.yml` is the gate. After cloning, run `lefthook install`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. Run `tools/check` yourself to test everything. Nothing here tests Windows or macOS.
+There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `make lint` and `make test` run those hooks on every file; `make check` tests everything. Nothing here tests Windows or macOS.
 
 ## Status
 
