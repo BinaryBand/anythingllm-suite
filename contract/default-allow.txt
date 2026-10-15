@@ -1,0 +1,1 @@
+/workspaces, /memories, GET /admin/system-preferences-for, POST /admin/system-preferences, /scheduled-jobs, GET /workspace/*/threads, GET /workspace/*/thread/*/chats, POST /workspace/*/thread/new, POST /workspace/*/thread/*/update, DELETE /workspace/*/thread/*

@@ -1,0 +1,11 @@
+id: skill-requires-outside
+language: javascript
+severity: error
+message: A skill's deliverable must import nothing from outside its own folder (no "..", tools/, packages/ or another skill).
+files:
+  - packages/skills/*/skill/**/*.js
+rule:
+  pattern: require($ARG)
+constraints:
+  ARG:
+    regex: '^["''`](\.\.|.*/(tools|packages|skills)/)'

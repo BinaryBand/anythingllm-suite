@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# tools/check [bridge|mcp|skills|app ...]: the tests of each part; no argument: all.
+# For skills this will be the old anythingllm-lean tools/check (unit tests, then a throwaway
+# AnythingLLM at $IMAGE in podman or Docker).
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+not_yet check

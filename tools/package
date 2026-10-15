@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# tools/package <bridge|mcp|skill-name>: builds a part into dist/ (a wheel, or a skill's zip).
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+not_yet package

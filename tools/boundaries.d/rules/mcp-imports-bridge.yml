@@ -1,0 +1,11 @@
+id: mcp-imports-bridge
+language: python
+severity: error
+message: packages/mcp must not import packages/bridge; the parts share contract/, never modules.
+files:
+  - packages/mcp/**/*.py
+rule:
+  any:
+    - kind: import_statement
+    - kind: import_from_statement
+  regex: '^(from\s+|import\s+([\w.]+\s*,\s*)*)anythingllm_toolkit\b'

@@ -1,0 +1,33 @@
+# Git hooks, the only gate this repository has (there is no hosted CI). Install once per clone:
+#   lefthook install
+# A hook runs only when a staged or pushed file matches its glob, so the empty scaffolding commits
+# freely. tools/check and tools/boundaries are stubs until the parts are moved in.
+
+pre-commit:
+  parallel: true
+  commands:
+    ruff:
+      glob: "**/*.py"
+      run: uv run --locked ruff check {staged_files}
+    flutter-analyze:
+      glob: "app/**/*.dart"
+      root: app/
+      run: flutter analyze
+
+pre-push:
+  commands:
+    boundaries:
+      glob: "{packages,app}/**/*.{py,js,dart}"
+      run: tools/boundaries
+    bridge:
+      glob: "packages/bridge/**/*.py"
+      run: tools/check bridge
+    mcp:
+      glob: "packages/mcp/**/*.py"
+      run: tools/check mcp
+    skills:
+      glob: "packages/skills/**/*.js"
+      run: tools/check skills
+    app:
+      glob: "app/**/*.dart"
+      run: tools/check app

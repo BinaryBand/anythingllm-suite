@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# tools/boundaries: fails when one part imports another, or a skill's deliverable reaches outside its
+# own folder. The parts are packages/bridge, packages/mcp, each packages/skills/<name> and app.
+#
+# Python and JavaScript are checked with ast-grep (rules in tools/boundaries.d/rules, run through uvx
+# so nothing is installed). Dart has no ast-grep grammar here, so the app is checked with grep.
+# Not covered: dynamic imports (importlib, require of a built path), which are why the skills'
+# require(path.join(process.cwd(), ...)) of AnythingLLM's own modules is allowed.
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+cd "$ROOT"
+
+AST_GREP=0.50.0
+
+status=0
+
+# The rules are severity: error, so a match makes the scan exit non-zero.
+uvx --from "ast-grep-cli==$AST_GREP" ast-grep scan --config tools/boundaries.d/sgconfig.yml --color never packages || status=1
+
+# The app talks to the bridge over HTTP; it must not import a path into another part.
+if [ -d app ] && grep -rEn --include='*.dart' "^[[:space:]]*(import|export)[[:space:]]+['\"](\.\./)+.*(packages|contract|tools)/" app; then
+  echo "tools/boundaries: app/ imports a path into another part (above)" >&2
+  status=1
+fi
+
+[ "$status" -eq 0 ] && echo "tools/boundaries: ok"
+exit "$status"
