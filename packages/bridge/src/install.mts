@@ -2,7 +2,7 @@
 //
 // install     the runner pointed at an AnythingLLM's storage (its password), BRIDGE_ALLOW set to the
 //             clients' when none is, the runner started under systemd where there is one, and the
-//             developer key and settings of anythingllm-mcp's chat and schedule servers made
+//             developer key and settings of anythingllm-mcp's control server made
 // uninstall   the runner stopped and the storage forgotten
 // health      every check; false when one fails
 
@@ -31,7 +31,7 @@ export interface Ctx {
   startWait?: number;
 }
 
-const AGENT_SERVERS = ["chat", "schedule"]; // anythingllm-mcp's servers that call the bridge
+const AGENT_SERVER = "control"; // the one anythingllm-mcp server that calls the bridge (it has a chat and a schedule role)
 const AGENT_KEY_NAME = "anythingllm-mcp"; // the name of their one developer key
 const AGENT_KEY = "ANYTHINGLLM_DEVELOPER_KEY";
 const AGENT_URL = "ANYTHINGLLM_BRIDGE_URL";
@@ -40,10 +40,10 @@ const AGENT_HEADER = [
   "# it calls with. `anythingllm-bridge install` made them; the key is yours alone (mode 600).",
 ];
 
-const agentKeyMade = (settings: Settings): boolean =>
-  AGENT_SERVERS.some((n) => readEnv(path.join(settings.mcpEnvDir, `${n}.env`))[AGENT_KEY]);
+const agentFile = (settings: Settings): string => path.join(settings.mcpEnvDir, `${AGENT_SERVER}.env`);
+const agentKeyMade = (settings: Settings): boolean => Boolean(readEnv(agentFile(settings))[AGENT_KEY]);
 
-/** The chat routes BRIDGE_ALLOW lacks, or null while no chat or schedule server has a key to call them with. */
+/** The chat routes BRIDGE_ALLOW lacks, or null while no control server has a key to call them with. */
 const lackingChatRoutes = (ctx: Ctx, settings: Settings): string[] | null =>
   agentKeyMade(settings) ? missingRules(settings.allow, chatRoutes(ctx.defaultAllow)) : null;
 
@@ -92,8 +92,8 @@ async function start(ctx: Ctx, settings: Settings, file: string): Promise<void> 
   if (!(await waitFor(`http://127.0.0.1:${settings.port}/health`, ctx.startWait))) throw invalid(`the runner didn't answer; see \`journalctl --user -u ${service.UNIT}\``);
 }
 
-/** Gives anythingllm-mcp's chat and schedule servers the developer key named AGENT_KEY_NAME and
- *  the bridge's address, in `<MCP_ENV_DIR>/<server>.env`. A key or an address already there is the
+/** Gives anythingllm-mcp's control server the developer key named AGENT_KEY_NAME and
+ *  the bridge's address, in `<MCP_ENV_DIR>/control.env`. A key or an address already there is the
  *  owner's and stays. The key is never printed. */
 async function agentTools(ctx: Ctx, settings: Settings): Promise<void> {
   let key: string;
@@ -104,14 +104,12 @@ async function agentTools(ctx: Ctx, settings: Settings): Promise<void> {
     return;
   }
   const wanted = { [AGENT_KEY]: key, [AGENT_URL]: `http://127.0.0.1:${settings.port}` };
-  for (const name of AGENT_SERVERS) {
-    const file = path.join(settings.mcpEnvDir, `${name}.env`);
-    const have = readEnv(file);
-    const changes = Object.fromEntries(Object.entries(wanted).filter(([k]) => !have[k]));
-    if (Object.keys(changes).length) {
-      saveEnv(file, changes, AGENT_HEADER);
-      ctx.print(`anythingllm-mcp: ${file}: set ${Object.keys(changes).join(", ")}`);
-    }
+  const file = agentFile(settings);
+  const have = readEnv(file);
+  const changes = Object.fromEntries(Object.entries(wanted).filter(([k]) => !have[k]));
+  if (Object.keys(changes).length) {
+    saveEnv(file, changes, AGENT_HEADER);
+    ctx.print(`anythingllm-mcp: ${file}: set ${Object.keys(changes).join(", ")}`);
   }
 }
 
@@ -125,7 +123,7 @@ function leftForYou(ctx: Ctx, settings: Settings, file: string): void {
     ctx.print(`- BRIDGE_ALLOW is empty, so the bridge passes nothing: set it in ${file}.`);
   } else {
     const lacking = lackingChatRoutes(ctx, settings);
-    if (lacking?.length) ctx.print(`- BRIDGE_ALLOW is your own and lacks the chat routes, so the chat server gets 403: add ${lacking.join(", ")} to ${file}.`);
+    if (lacking?.length) ctx.print(`- BRIDGE_ALLOW is your own and lacks the chat routes, so the control server's chat role gets 403: add ${lacking.join(", ")} to ${file}.`);
   }
   ctx.print("- For clients: give the bridge an https address (README: Reach it from your devices).");
 }

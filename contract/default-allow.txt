@@ -1,4 +1,4 @@
-# The default BRIDGE_ALLOW: the internal routes the phone app and the chat and schedule servers call.
+# The default BRIDGE_ALLOW: the internal routes the phone app and the control server's chat and schedule roles call.
 # One entry per line, `[METHOD ]/path/prefix`; `#` lines and blank lines are ignored. A `*` takes any
 # one segment. Add a route here before a part calls it.
 #

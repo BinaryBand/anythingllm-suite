@@ -1,6 +1,6 @@
 # anythingllm-bridge
 
-A bridge to the parts of AnythingLLM that only its own settings pages reach: its **internal API** (`/api`), which the developer API (`/api/v1`) leaves out. A client such as AnywhereLLM Lite, or the chat and schedule servers of `packages/mcp`, calls the bridge with only a developer key; the bridge logs in to the internal API with AnythingLLM's password and passes on the routes you list.
+A bridge to the parts of AnythingLLM that only its own settings pages reach: its **internal API** (`/api`), which the developer API (`/api/v1`) leaves out. A client such as AnywhereLLM Lite, or the control server of `packages/mcp`, calls the bridge with only a developer key; the bridge logs in to the internal API with AnythingLLM's password and passes on the routes you list.
 
 It needs nothing from AnythingLLM beyond a stock instance, adds no skill and keeps no state. What each route does is AnythingLLM's own, so the caller knows the routes; [contract/endpoints.md](../../contract/endpoints.md) records the ones worth opening, with their shapes as AnythingLLM 1.16.2 gives them.
 
@@ -38,7 +38,7 @@ BRIDGE_ALLOW=GET /scheduled-jobs, GET /setup-complete, /workspaces, POST /system
 
 `/workspaces` passes `/workspaces/home/memories` but not `/workspaces-old`. `POST /workspace/*/thread/*/update` passes `/workspace/home/thread/abc/update` for any workspace and thread, and not `/workspace/home/update`: a route with the workspace in its middle can be allowed without allowing the whole `/workspace` tree, which also deletes a workspace and resets its vectors.
 
-`install` sets `BRIDGE_ALLOW` to the list in [contract/default-allow.txt](../../contract/default-allow.txt) (one entry per line there, joined with commas into the setting; `make routes` checks that AnythingLLM still has each route), what AnywhereLLM Lite and the chat and schedule servers call, unless the settings file sets it already, empty included. A list of your own stays; `install` and `health` then name the chat routes it lacks. The bridge logs in as AnythingLLM's pages do: `POST /api/request-token` with the password, which is `AUTH_TOKEN` in AnythingLLM's `.env`. It keeps the token, logs in again after a 401, reads the password afresh at each login, and sends none when none is set. Multi-user mode isn't supported.
+`install` sets `BRIDGE_ALLOW` to the list in [contract/default-allow.txt](../../contract/default-allow.txt) (one entry per line there, joined with commas into the setting; `make routes` checks that AnythingLLM still has each route), what AnywhereLLM Lite and the control server's chat and schedule roles call, unless the settings file sets it already, empty included. A list of your own stays; `install` and `health` then name the chat routes it lacks. The bridge logs in as AnythingLLM's pages do: `POST /api/request-token` with the password, which is `AUTH_TOKEN` in AnythingLLM's `.env`. It keeps the token, logs in again after a 401, reads the password afresh at each login, and sends none when none is set. Multi-user mode isn't supported.
 
 ## Settings
 
@@ -55,7 +55,7 @@ The settings file is `~/.config/anythingllm-bridge/bridge.env`, or the file `BRI
 | `ANYTHINGLLM_URL` | `http://127.0.0.1:3001` | AnythingLLM, from this machine |
 | `ANYTHINGLLM_STORAGE` | set by `install` | AnythingLLM's storage folder on this machine |
 | `ANYTHINGLLM_ENV` | `<storage>/.env` | AnythingLLM's `.env`, whose `AUTH_TOKEN` is the login |
-| `MCP_ENV_DIR` | `~/.config/anythingllm-mcp` | where `install` puts the settings of the chat and schedule servers |
+| `MCP_ENV_DIR` | `~/.config/anythingllm-mcp` | where `install` puts the control server's settings |
 
 This replaces the Python toolkit's `TOOLKIT_*` settings and `~/.config/anythingllm-toolkit/toolkit.env`; `TOOLKIT_DATA` and `TOOLKIT_SERVICE` have no equivalent.
 
@@ -63,11 +63,11 @@ This replaces the Python toolkit's `TOOLKIT_*` settings and `~/.config/anythingl
 
 1. Build it: `npm install` once in `packages/`, then `node build.mjs bridge` there. Copy `packages/bridge/dist/anythingllm-bridge.cjs` where you want it to live; the service points at that path.
 1. Run `node anythingllm-bridge.cjs install --storage <AnythingLLM's storage folder>`. It points the bridge at the storage, where the password is, sets `BRIDGE_ALLOW` when it isn't set, and, where the user's systemd manager answers (`systemctl --user is-system-running`), writes and starts the user unit `anythingllm-bridge.service`. `--no-start` stops there.
-   - It also makes a developer key named `anythingllm-mcp` and writes it, with the bridge's address, to `chat.env` and `schedule.env` in `MCP_ENV_DIR` (mode 600). A key or address already in a file is left alone, and the key is never printed. `--no-agent-tools` skips this. Deleting the key in AnythingLLM's settings disconnects both servers.
+   - It also makes a developer key named `anythingllm-mcp` and writes it, with the bridge's address, to `control.env` in `MCP_ENV_DIR` (mode 600). A key or address already in a file is left alone, and the key is never printed. `--no-agent-tools` skips this. Deleting the key in AnythingLLM's settings disconnects the server.
 1. Without systemd, run `node anythingllm-bridge.cjs serve` under your own supervisor: a terminal, tmux, a container or a process manager. It reads the same settings file.
 1. If AnythingLLM's `.env` isn't at `<storage>/.env`, set `ANYTHINGLLM_ENV` in the settings file.
 1. To pass other routes, change `BRIDGE_ALLOW` in the settings file and restart the service (`systemctl --user restart anythingllm-bridge`).
-1. Run `node anythingllm-bridge.cjs health`. It checks the service, the bridge, AnythingLLM, the bridge's login, that `BRIDGE_ALLOW` isn't empty (and has the chat routes once the servers have a key), and the public route.
+1. Run `node anythingllm-bridge.cjs health`. It checks the service, the bridge, AnythingLLM, the bridge's login, that `BRIDGE_ALLOW` isn't empty (and has the chat routes once the control server has a key), and the public route.
 1. To connect a phone, give AnythingLLM and the bridge addresses your devices reach (next section), then run `node anythingllm-bridge.cjs pair`. It prints a link, `anywherellm://connect?...`, that AnywhereLLM Lite opens. The link holds `url` (AnythingLLM's address), `key` (the developer key named `AnywhereLLM`, made the first time), and `toolkit` and `apps` (the bridge's and anythingllm-apps-v2's addresses, when known; the app still reads the first as `toolkit`). There is no QR code; any QR generator can draw the link. Each address must be https, or plain http to a private host.
 
 `uninstall` stops the service and forgets the storage. `settings` prints the settings in use.

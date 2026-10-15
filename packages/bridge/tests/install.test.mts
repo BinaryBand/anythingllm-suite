@@ -49,27 +49,25 @@ test("install points the bridge at the storage and sets BRIDGE_ALLOW when none i
   assert.deepEqual(readEnv(settings()), { ANYTHINGLLM_STORAGE: storage, BRIDGE_ALLOW: DEFAULT });
 });
 
-test("install makes the developer key once and writes it, mode 600, for the chat and schedule servers", async () => {
+test("install makes the developer key once and writes it, mode 600, for the control server", async () => {
   await install(ctx, { ...opts, storage });
-  for (const name of ["chat", "schedule"]) {
-    assert.deepEqual(readEnv(mcpFile(name)), { ANYTHINGLLM_DEVELOPER_KEY: "agent-secret", ANYTHINGLLM_BRIDGE_URL: "http://127.0.0.1:1" });
-    assert.equal(fs.statSync(mcpFile(name)).mode & 0o777, 0o600);
-  }
+  assert.deepEqual(readEnv(mcpFile("control")), { ANYTHINGLLM_DEVELOPER_KEY: "agent-secret", ANYTHINGLLM_BRIDGE_URL: "http://127.0.0.1:1" });
+  assert.equal(fs.statSync(mcpFile("control")).mode & 0o777, 0o600);
+  assert.ok(!fs.existsSync(mcpFile("chat")) && !fs.existsSync(mcpFile("schedule")), "one file for the one server");
   assert.ok(!printed.join("\n").includes("agent-secret"), "the key is never printed");
   assert.ok(fake.calls.some((c) => c.method === "POST" && c.body && (c.body as { name: string }).name === "anythingllm-mcp"));
 });
 
-test("a key or address already in a server's file is the owner's and stays", async () => {
-  fs.mkdirSync(path.dirname(mcpFile("chat")), { recursive: true });
-  fs.writeFileSync(mcpFile("chat"), "ANYTHINGLLM_DEVELOPER_KEY=mine\n");
+test("a key or address already in the server's file is the owner's and stays", async () => {
+  fs.mkdirSync(path.dirname(mcpFile("control")), { recursive: true });
+  fs.writeFileSync(mcpFile("control"), "ANYTHINGLLM_DEVELOPER_KEY=mine\n");
   await install(ctx, { ...opts, storage });
-  assert.deepEqual(readEnv(mcpFile("chat")), { ANYTHINGLLM_DEVELOPER_KEY: "mine", ANYTHINGLLM_BRIDGE_URL: "http://127.0.0.1:1" });
-  assert.equal(readEnv(mcpFile("schedule")).ANYTHINGLLM_DEVELOPER_KEY, "agent-secret");
+  assert.deepEqual(readEnv(mcpFile("control")), { ANYTHINGLLM_DEVELOPER_KEY: "mine", ANYTHINGLLM_BRIDGE_URL: "http://127.0.0.1:1" });
 });
 
 test("--no-agent-tools makes no key and no file", async () => {
   await install(ctx, { ...opts, storage, agentTools: false });
-  assert.ok(!fs.existsSync(mcpFile("chat")));
+  assert.ok(!fs.existsSync(mcpFile("control")));
   assert.deepEqual(fake.calls, []);
 });
 
