@@ -38,4 +38,4 @@ There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; th
 
 ## Status
 
-Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit, not yet run against a real AnythingLLM). `packages/mcp` holds only a `hello` server so far, a skeleton to grow from; the chat, schedule, memory and sandbox servers are still in `anythingllm-mcp` and call the bridge by the toolkit's old names (see the notes). Not yet: `app/` (holds a `.gitkeep`), the other skills, `tools/install`, and the container checks.
+Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit, not yet run against a real AnythingLLM). `packages/mcp` holds two skeleton servers so far, `hello` and `world` (which calls the bridge); the chat, schedule, memory and sandbox servers are still in `anythingllm-mcp` and call the bridge by the toolkit's old names (see the notes). Not yet: `app/` (holds a `.gitkeep`), the other skills, `tools/install`, and the container checks.

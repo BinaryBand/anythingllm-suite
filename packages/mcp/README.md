@@ -1,10 +1,11 @@
 # anythingllm-mcp
 
-MCP servers for MCP clients (Claude Desktop, Claude Code, an IDE), each its own process, started by the client over stdio. So far there is one, `hello`, the smallest server this repository builds: a skeleton to grow from.
+MCP servers for MCP clients (Claude Desktop, Claude Code, an IDE), each its own process, started by the client over stdio. So far there are two, each the smallest of its kind: a skeleton to grow from.
 
 | Server | Command | Tools |
 | --- | --- | --- |
 | hello | `anythingllm-mcp-hello` | `hello(name="world")` |
+| world | `anythingllm-mcp-world` | `world_workspaces()`: calls the bridge's `GET /workspaces` |
 
 ## Run it
 
@@ -20,12 +21,20 @@ An MCP client starts it with that command, for example in `mcpServers`:
 
 stdout is the MCP channel, so nothing else prints to it.
 
+`world` reads `ANYTHINGLLM_BRIDGE_URL` (default `http://127.0.0.1:8467`) and `ANYTHINGLLM_DEVELOPER_KEY` from its environment.
+
 ## Test it
 
-`tools/check mcp` runs ruff, then pytest. The one test starts the server as an MCP client does and calls its tool.
+`tools/check mcp` runs ruff, then pytest:
+
+- `test_stdio.py` starts `hello` as an MCP client does and calls its tool.
+- `test_world.py` runs `world` against a mock transport: the request it sends (route, method, key), what each refusal becomes for the agent, and that every route it calls is passed by `contract/default-allow.txt`, read with the bridge's own rules (`allow.mts`). A server that starts calling a route the list lacks fails here, before the bridge answers 403.
+- `test_world_stdio.py` starts `world` over stdio against a stand-in bridge on a free port, so the address and key come from the environment and the call crosses real HTTP.
+
+Not covered: the real bridge in front of a real AnythingLLM.
 
 ## Growing it
 
 - A server is a package under `src/` named `<name>_mcp`, with its `server.py` (`build_server()`), a `__main__.py`, a line in `[project.scripts]` and its name in `module-name`.
 - A server that talks to AnythingLLM goes through the bridge, with a developer key; the bridge's `BRIDGE_ALLOW` decides what passes, and a route a server calls is added to `contract/default-allow.txt` first. The bridge's address is `ANYTHINGLLM_BRIDGE_URL`, which `anythingllm-bridge install` writes with the key to `~/.config/anythingllm-mcp/<server>.env`.
-- Add import-linter when there are two packages to layer, and a `reported` wrapper (an error becomes the tool's message) when a tool can raise.
+- Add import-linter when a shared package (a bridge client) has servers over it to keep apart, and a `reported` wrapper (a shared error type becomes the tool's `ToolError`) when servers share that client; `world` raises `ToolError` itself until then.

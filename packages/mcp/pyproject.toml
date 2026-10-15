@@ -3,10 +3,11 @@ name = "anythingllm-mcp"
 version = "0.1.0"
 description = "MCP servers for MCP clients, started over stdio"
 requires-python = ">=3.13"
-dependencies = ["mcp>=2.3,<3"]
+dependencies = ["httpx>=0.28,<1", "mcp>=2.3,<3"]
 
 [project.scripts]
 anythingllm-mcp-hello = "hello_mcp.__main__:main"
+anythingllm-mcp-world = "world_mcp.__main__:main"
 
 [dependency-groups]
 dev = ["ruff", "pytest"]
@@ -16,7 +17,7 @@ requires = ["uv_build>=0.9,<0.12"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "hello_mcp"
+module-name = ["hello_mcp", "world_mcp"]
 
 [tool.pytest.ini_options]
 minversion = "9.1"
