@@ -1,0 +1,94 @@
+// What the library's tests share: AnythingLLM's storage, public folder and server modules standing
+// in, the built handler.js called as AnythingLLM's agent calls it, and what the Library page posts,
+// written as AnythingLLM's collector writes it.
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { after } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
+export const testsDir = path.dirname(fileURLToPath(import.meta.url));
+export const skillDir = path.join(testsDir, "..");
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "library-lean-"));
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+export const storage = path.join(tmp, "storage");
+export const publicDir = path.join(tmp, "public");
+export const library = path.join(storage, "library-lean");
+process.env.STORAGE_DIR = storage;
+process.env.ANYTHINGLLM_PUBLIC_DIR = publicDir;
+process.env.ANYTHINGLLM_SERVER_DIR = path.join(testsDir, "fixtures", "server");
+process.env.FENCE_ALLOW = "127.0.0.1";
+process.env.SIG_KEY = "test-sig-key";
+process.env.SIG_SALT = "test-sig-salt";
+
+const bundle = path.join(skillDir, "build", "library-lean", "handler.js");
+const handler = (): ((this: unknown, args: Record<string, unknown>) => Promise<string>) => {
+  delete require.cache[bundle];
+  return require(bundle).runtime.handler;
+};
+
+export type Card = { asked: unknown[]; surveys: unknown[]; answers: (string | null)[] };
+
+/** A question card that answers `answers`, in order (null: the user closes it). */
+export const card = (...answers: (string | null)[]): Card => ({ asked: [], surveys: [], answers });
+
+export interface Call {
+  slug?: string | null;
+  card?: Card;
+  base?: string;
+}
+
+/** Calls the skill as AnythingLLM's agent would: from workspace `slug` (null: none, as a job), with
+ *  a question card when one is given, and ANYTHINGLLM_URL set to `base`. */
+export function call(args: Record<string, unknown>, { slug = "work", card: c, base }: Call = {}): Promise<string> {
+  const ask = c && {
+    requestUserClarification: async (q: { questions: unknown[] }) => {
+      c.asked.push(q);
+      const given = c.answers.splice(0, q.questions.length);
+      return given[0] === null ? { skipped: true } : { answers: given.map((answer) => ({ answer })) };
+    },
+    addClarifyingQuestionSurvey: (s: unknown) => void c.surveys.push(s),
+  };
+  const self = { super: { handlerProps: { invocation: slug ? { workspace: { slug }, thread_id: 3 } : {} }, ...ask }, runtimeArgs: base ? { ANYTHINGLLM_URL: base } : {}, logger: () => {} };
+  return handler().call(self, args);
+}
+
+/** Forgets the library, the vault and the page between tests. */
+export function reset(): void {
+  for (const dir of [library, path.join(storage, "vault-lean"), path.join(storage, "documents"), publicDir]) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+let posts = 0;
+
+/** What the page posts, written as AnythingLLM's collector writes it; each after the one before, as
+ *  the page posts them one at a time. */
+export function post(event: Record<string, unknown>): void {
+  const dir = path.join(storage, "documents", "custom-documents");
+  fs.mkdirSync(dir, { recursive: true });
+  const id = crypto.randomUUID();
+  const file = path.join(dir, `raw-library-lean-event-${id}.json`);
+  fs.writeFileSync(file, JSON.stringify({ id, pageContent: JSON.stringify({ library_lean_event: 1, ...event }) }));
+  const at = new Date(Date.now() + ++posts * 10);
+  fs.utimesSync(file, at, at);
+}
+
+/** The page's own settings: its token and secret, and the key and public key it was written with. */
+export function pageConfig(): { token: string; secret: string; key: string; pub: string } {
+  const { token } = JSON.parse(fs.readFileSync(path.join(library, "page.json"), "utf8"));
+  const html = fs.readFileSync(path.join(publicDir, "library-lean", `${token}.html`), "utf8");
+  return JSON.parse(html.match(/const cfg = (\{.*?\});/)![1]);
+}
+
+/** What the page shows, as it reads it. */
+export const pageState = () => JSON.parse(fs.readFileSync(path.join(publicDir, "library-lean", `${pageConfig().token}.json`), "utf8"));
+
+/** `text` sealed as the page seals it, with the vault's public key. */
+export function seal(text: string): string {
+  const key = crypto.createPublicKey({ key: Buffer.from(pageConfig().pub, "base64"), format: "der", type: "spki" });
+  return crypto.publicEncrypt({ key, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(text)).toString("base64");
+}

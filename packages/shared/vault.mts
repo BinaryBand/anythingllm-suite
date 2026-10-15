@@ -19,8 +19,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { perProcess, serial, storageDir } from "./anythingllm.mts";
-import { writeAtomic } from "./atomic.mts";
+import { perProcess, storageDir } from "./anythingllm.mts";
+import { locked, writeAtomic } from "./atomic.mts";
 import { Told } from "./errors.mts";
 
 /** A refusal to show the agent or the user as it is. */
@@ -43,9 +43,6 @@ export interface Vault {
 
 const INFO = "anythingllm-suite vault v1";
 const MAX_ENTRIES = 500;
-const LOCK_WAIT_MS = 5 * 1000;
-const LOCK_STALE_MS = 10 * 1000;
-const LOCK_RETRY_MS = 20;
 const generateKeyPair = promisify(crypto.generateKeyPair);
 
 /** The vault's folder in AnythingLLM's storage. */
@@ -154,48 +151,15 @@ export const load = (dir: string = vaultDir()): Vault => structuredClone(current
 /** The vault's entries as they are now, without a copy: only to read. */
 export const entries = (dir: string = vaultDir()): readonly Readonly<Entry>[] => current(dir).vault.entries;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Takes the lock folder beside the vault, waiting for another process's turn; a lock older than
- *  LOCK_STALE_MS is one a process left behind when it died, and is broken. */
-async function acquire(dir: string): Promise<string> {
-  const lock = path.join(dir, "vault.lock");
-  fs.mkdirSync(dir, { recursive: true });
-  const until = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      fs.mkdirSync(lock);
-      return lock;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    }
-    try {
-      if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-        fs.rmSync(lock, { recursive: true, force: true });
-        continue;
-      }
-    } catch {
-      continue; // released meanwhile
-    }
-    if (Date.now() > until) throw new VaultError("the vault is busy; try again in a moment");
-    await sleep(LOCK_RETRY_MS);
-  }
-}
-
 /** Changes the vault: `change` gets it as the file holds it now and changes it in place; what it
  *  answers is answered. Nothing is written when it throws. One change at a time, across this
  *  process's skills and across processes. */
 export function update<T>(change: (vault: Vault) => T, dir: string = vaultDir()): Promise<T> {
-  return serial("vault", async () => {
-    const lock = await acquire(dir);
-    try {
-      const vault = read(dir);
-      const answer = change(vault);
-      store(dir, vault);
-      return answer;
-    } finally {
-      fs.rmSync(lock, { recursive: true, force: true });
-    }
+  return locked(path.join(dir, "vault.lock"), "the vault", () => {
+    const vault = read(dir);
+    const answer = change(vault);
+    store(dir, vault);
+    return answer;
   });
 }
 

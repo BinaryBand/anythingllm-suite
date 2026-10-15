@@ -16,6 +16,7 @@ import { objectOf } from "#shared/answer";
 import { storageDir } from "#shared/anythingllm";
 import { writeAtomic } from "#shared/atomic";
 import { checkUrl, hostOf } from "#shared/fence";
+import { staticFiles, type StaticFiles } from "#shared/static";
 import { LibraryError } from "./errors";
 import { asOf, labelOf, publicSite } from "./secrets";
 
@@ -83,6 +84,9 @@ export interface RunRecord {
 
 /** The library's folder in AnythingLLM's storage. */
 export const libraryDir = (): string => path.join(storageDir(), "library-lean");
+/** The skill's static files (guide, snippets, prelude, pages), as shipped or as tuned on this
+ *  instance, under <storage>/library-lean/static/. */
+export const statics = (): StaticFiles => staticFiles(STATIC_FILES, path.join(libraryDir(), "static"));
 const kitDir = (service: string) => path.join(libraryDir(), "toolkits", service);
 const fnFile = (service: string, name: string) => path.join(kitDir(service), "functions", `${name}.json`);
 const runsDir = () => path.join(libraryDir(), "runs");

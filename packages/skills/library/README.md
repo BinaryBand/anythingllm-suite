@@ -8,7 +8,7 @@ Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process:
 | --- | --- |
 | `guide` | how the library works, by topic (`static/guide/`), and worked examples (`static/snippets/`) |
 | `library` | the toolkits at a glance, or one (`service`) in full |
-| `secret` | asks the user for a key (`site`, `label`) and keeps it in the vault |
+| `secret` | asks the user for a key (`site`, `label`), on the card or the Library page, or sets up and starts an OAuth sign-in (`kind` oauth, `definition`) |
 | `call` | one request to an API, with a key (`auth`), to read its docs, spec or answers |
 | `save` | a toolkit, a function (compiled first) or both; `test` runs what was saved; `remove` |
 | `run` | a function (`name`, `inputs`), or a run again (`run_id`) |
@@ -18,11 +18,14 @@ Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process:
 | What | Where |
 | --- | --- |
 | Toolkits, functions (and their last 5 versions), what each keeps between runs, runs | `library-lean/` in AnythingLLM's storage |
-| Keys | `vault-lean/vault.json`, encrypted, shared with the browser skill |
+| Keys and sign-ins (OAuth clients and tokens) | `vault-lean/vault.json`, encrypted, shared with the browser skill |
+| The Library page | `public/library-lean/` beside AnythingLLM's server: the page, its state (nothing secret), `oauth.html`; `library-lean/page.json` holds its token and secret |
 | Your own versions of the guide, snippets and prelude | `library-lean/static/`, at the same paths as `static/`: they win over the shipped ones |
 
 ## Using it
 
-`anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Library under Agent Skills, and ask the agent to connect a service. For an address on your own network (a NAS, a home server), add its host to `FENCE_ALLOW` in AnythingLLM's environment.
+`anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Library under Agent Skills, set its ANYTHINGLLM_URL to the address you open AnythingLLM at (https, for sign-ins to come straight back), and ask the agent to connect a service. `library` ends with the Library page's link: your own view of the keys, sign-ins, toolkits and runs, where you also give a key from a chat with no question card. For an address on your own network (a NAS, a home server), add its host to `FENCE_ALLOW` in AnythingLLM's environment.
 
-Not yet: OAuth sign-ins, giving a key from a chat with no question card (the AnywhereLLM Lite app), runs that outlast the chat, and scheduling.
+For an OAuth sign-in (Google, Microsoft, Slack...), the agent tells you what client to make at the provider and the redirect address to register; you give the client's ID and secret on the card or the page, open the link it gives, and agree.
+
+Not yet: runs that outlast the chat, and scheduling.

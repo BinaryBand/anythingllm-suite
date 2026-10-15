@@ -1,7 +1,7 @@
 {
   "name": "anythingllm-packages",
   "private": true,
-  "description": "The JavaScript parts, the bridge and the skills: one install of the toolchain, one tsconfig, one build script. CommonJS by default, which the skills need (AnythingLLM requires them); the bridge's source and tests and the shared helper are .mts, so ESM by their extension. packages/mcp is Python and not part of it.",
+  "description": "The JavaScript parts, the bridge, the control server and the skills: one install of the toolchain, one tsconfig, one build script. CommonJS by default, which the skills need (AnythingLLM requires them); the bridge's and the control server's source, the shared helpers and the tests are .mts, so ESM by their extension.",
   "engines": {
     "node": ">=22.18"
   },

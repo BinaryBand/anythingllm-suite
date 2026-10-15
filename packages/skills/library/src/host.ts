@@ -23,5 +23,7 @@ export interface HandlerContext {
     requestUserClarification?: (ask: { questions: Question[]; allowSkip: boolean; timeoutMs: number }) => Promise<Clarification>;
     addClarifyingQuestionSurvey?: (survey: { questions: Question[]; result: Clarification }) => void;
   };
+  /** The skill's settings (plugin.json's setup_args), as the user set them in AnythingLLM. */
+  runtimeArgs?: Record<string, string | undefined>;
   logger?: (message: string) => void;
 }

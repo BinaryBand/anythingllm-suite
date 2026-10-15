@@ -3,19 +3,21 @@
 // model never reads) and small JavaScript functions it wrote, run in QuickJS (sandbox.ts, runs.ts).
 // One library for the whole AnythingLLM, kept in its storage (<storage>/library-lean/), so every
 // workspace and every scheduled job shares it. What is tuned rather than coded (the guide, the
-// snippets, the prelude every function runs after) is in static/, which the user can override file
-// by file on their instance.
+// snippets, the prelude every function runs after, the pages) is in static/, which the user can
+// override file by file on their instance. The Library page (page.ts) is the user's own view of it,
+// and where a key or an OAuth client is given from a chat with no question card.
 //
 // esbuild bundles this into the one handler.js AnythingLLM loads.
 
-import path from "node:path";
 import { workspaceOf } from "#shared/anythingllm";
 import { answerText, keepOf, objectOf, textOf } from "#shared/answer";
 import { Told } from "#shared/errors";
 import { checkUrl } from "#shared/fence";
-import { staticFiles, type StaticFiles } from "#shared/static";
+import type { StaticFiles } from "#shared/static";
 import { LibraryError } from "./errors";
 import type { HandlerContext } from "./host";
+import { define, redirectFor, start as startSignIn } from "./oauth";
+import * as page from "./page";
 import { check } from "./policy";
 import { send } from "./request";
 import { execute, runText } from "./runs";
@@ -27,8 +29,9 @@ type Args = Record<string, unknown>;
 
 const clean = (v: unknown): string => String(v ?? "").trim();
 
-/** The static files, as shipped or as tuned on this instance (<storage>/library-lean/static/). */
-const statics = (): StaticFiles => staticFiles(STATIC_FILES, path.join(store.libraryDir(), "static"));
+/** AnythingLLM's address, as the user set it for the skill (ANYTHINGLLM_URL); null when unset, and
+ *  then the page's links are relative, which only AnythingLLM's own chat opens. */
+const baseOf = (self: HandlerContext): string | null => clean(self.runtimeArgs?.ANYTHINGLLM_URL).replace(/\/+$/, "") || null;
 
 /** One of the static files the agent reads by name: a guide topic or a snippet, with where it
  *  lives when it's tuned on this instance, so a drift is visible. */
@@ -44,7 +47,7 @@ function entry(s: StaticFiles, folder: string, ext: string, what: string, raw: u
 }
 
 function guide(args: Args): string {
-  const s = statics();
+  const s = store.statics();
   if (clean(args.snippet)) {
     const { name, text } = entry(s, "snippets", ".js", "snippet", args.snippet);
     return `Snippet ${name} (a worked example: adapt it, don't save it as is):\n\n${text}`;
@@ -54,7 +57,7 @@ function guide(args: Args): string {
 
 /** The scripts every function runs after, by their names. */
 function prelude(): Record<string, string> {
-  const s = statics();
+  const s = store.statics();
   return Object.fromEntries(s.list("prelude/").map((f) => [`prelude/${f}`, s.get(`prelude/${f}`)!.text]));
 }
 
@@ -65,22 +68,35 @@ const ago = (iso: string): string => {
 
 const runLine = (r: store.RunRecord) => `- ${r.fn}: ${r.status}${r.error ? ` (${r.error.name}: ${r.error.message.slice(0, 80)})` : ""}, ${ago(r.ended)}${r.trigger === "job" ? ", from a scheduled job" : ""} [${r.id}]`;
 
-/** The toolkit's keys, each saved (its label in `saved`) or not. */
-function keyStatus(kit: store.Toolkit, saved: Set<string>): string {
-  return kit.secrets.length ? kit.secrets.map((s) => `${s.label} (${s.as}, ${saved.has(s.label.toLowerCase()) ? "saved" : "not saved: ask with secret"})`).join(", ") : "none";
+type Saved = Map<string, secrets.Secret>;
+
+/** The toolkit's secrets, each as it is: saved, signed in, or not yet. */
+function keyStatus(kit: store.Toolkit, saved: Saved): string {
+  const status = (label: string) => saved.get(label.toLowerCase())?.status ?? "not saved: ask for it with secret";
+  return kit.secrets.length ? kit.secrets.map((s) => `${s.label} (${s.as}, ${status(s.label)})`).join(", ") : "none";
 }
 
-/** The library at a glance, or one toolkit in full; its recent runs after. */
-function library(args: Args): string {
-  const saved = new Set(secrets.keys().map((k) => k.label.toLowerCase()));
+/** The library at a glance, or one toolkit in full; its recent runs, and the Library page's link. */
+async function library(args: Args, self: HandlerContext): Promise<string> {
+  const saved: Saved = new Map(secrets.secrets().map((s) => [s.label.toLowerCase(), s]));
   const service = clean(args.service) ? store.serviceOf(args.service) : "";
   const lines = service ? toolkitLines(service, saved) : listingLines(saved);
   const runs = store.recentRuns(5, service);
   if (runs.length && lines.length > 1) lines.push("", "Recent runs:", ...runs.map(runLine));
+  lines.push("", await pageLine(self));
   return lines.join("\n");
 }
 
-function toolkitLines(service: string, saved: Set<string>): string[] {
+/** The Library page's link to give the user, or why there's none where AnythingLLM runs. */
+async function pageLine(self: HandlerContext): Promise<string> {
+  try {
+    return `The Library page, the user's own view of it (keys, sign-ins, toolkits, runs): ${await page.show(baseOf(self))}`;
+  } catch (e) {
+    return `The Library page isn't available here: ${(e as Error).message}.`;
+  }
+}
+
+function toolkitLines(service: string, saved: Saved): string[] {
   const kit = store.toolkit(service);
   if (!kit) throw new LibraryError(`there's no toolkit "${service}"; the toolkits are: ${store.services().join(", ") || "none yet"}`);
   const fns = store.functions(service);
@@ -99,7 +115,7 @@ function toolkitLines(service: string, saved: Set<string>): string[] {
   ];
 }
 
-function listingLines(saved: Set<string>): string[] {
+function listingLines(saved: Saved): string[] {
   const services = store.services();
   if (!services.length) return ["The library is empty: no toolkit yet. guide says how to build one (topic toolkits)."];
   const lines = ["The library's toolkits (library with service for one in full):"];
@@ -110,14 +126,50 @@ function listingLines(saved: Set<string>): string[] {
   return lines;
 }
 
-/** Asks the user for a key and keeps it, unseen. */
+/** Asks the user for a key, or sets up and starts an OAuth sign-in; what the user gives is kept
+ *  unseen, on the question card or on the Library page. */
 async function secret(args: Args, self: HandlerContext): Promise<string> {
   const kind = clean(args.kind).toLowerCase() || "key";
-  if (kind !== "key") throw new LibraryError('secret\'s kind is "key" (an API key or token) for now; OAuth sign-ins come later');
+  if (kind === "oauth") return signIn(args, self);
+  if (kind !== "key") throw new LibraryError('secret\'s kind is "key" (an API key or token) or "oauth" (a sign-in)');
   const site = secrets.siteChecked(args.site);
   const label = secrets.labelOf(clean(args.label) || site);
+  if (!secrets.canAsk(self)) {
+    await page.need(label, site, "key");
+    const link = await page.show(baseOf(self));
+    return `This chat can't show a question card, so the user gives the key on the Library page: ${link}\nTell them to open it and enter the key for ${site} there (it's saved without you seeing it), and to tell you when it's done. Never ask for the key in the chat.`;
+  }
   await secrets.askKey(self, site, label);
   return `Saved the key the user gave for ${site} as "${label}". It's hidden from you and goes only to ${site}. Name it in the toolkit's secrets, as { "label": "${label}", "as": "bearer" } or however the API's docs say it goes; call with auth { "key": "${label}", "as": ... } to try it.`;
+}
+
+/** An OAuth sign-in, one step at a time. A call that gives the definition saves it and says what
+ *  client the user makes at the provider; a later one takes the client (on the card, or on the
+ *  Library page in a chat with none), and once there's one, answers the sign-in link. */
+async function signIn(args: Args, self: HandlerContext): Promise<string> {
+  const label = secrets.labelOf(args.label);
+  const base = baseOf(self);
+  const redirect = redirectFor(base);
+  const defined = args.definition !== undefined;
+  if (defined) {
+    const def = objectOf(args.definition, "definition");
+    await secrets.saveSignIn(secrets.siteChecked(def.site ?? args.site), label, define(def));
+  }
+  const found = secrets.signIn(label);
+  if (!found) throw new LibraryError(`there's no sign-in "${label}": give its definition { site, authorize_url, token_url, scopes, params } (guide topic secrets)`);
+  if (!found.client_id) {
+    const make = `"${label}" needs the user's own OAuth client at the provider (${new URL(found.oauth.authorize_url).host}). Tell them to make one in its developer console: a web application client, with this redirect address registered: ${redirect}\nIf the provider asks for a consent screen, they can keep it in testing and add themselves as a test user.`;
+    if (!secrets.canAsk(self)) {
+      await page.need(label, found.site, "client");
+      return `${make}\nThen they enter its client ID and secret on the Library page, under Sign-ins: ${await page.show(base)}\nWhen they say it's done, call secret again with kind "oauth" and label "${label}".`;
+    }
+    if (defined) return `${make}\nWhen they have its client ID and secret, call secret again with kind "oauth" and label "${label}": a card asks for them.`;
+    await secrets.askClient(self, label, redirect);
+  }
+  const { url, state } = await startSignIn(label, redirect);
+  await page.oauthPage(state);
+  const back = base?.startsWith("https://") ? "After they agree, the provider sends them to a page that says it was sent." : `After they agree, their browser lands on a 127.0.0.1 address that doesn't load: they copy that address into the Library page's Sign-ins tab (Finish a sign-in): ${await page.show(base)}`;
+  return `Give the user this sign-in link, to open in their browser; it's good for 10 minutes:\n${url}\n${back} When they say they're done, call library: "${label}" shows as signed in (or why it didn't finish). Name it in a toolkit's secrets as { "label": "${label}", "as": "bearer" }.`;
 }
 
 /** auth as call takes it: none, how the key saved for the address's site goes ("bearer"), or
@@ -189,12 +241,25 @@ async function run(args: Args, self: HandlerContext): Promise<string> {
 
 const ACTIONS: Record<string, (args: Args, self: HandlerContext) => Promise<string> | string> = { guide, library, secret, call, save, run };
 
+/** Applies what the user did on the Library page since the last call, before a call from a chat (a
+ *  scheduled job's leaves it to the chat's watch). With no public folder where AnythingLLM runs,
+ *  there's no page and nothing to apply. */
+async function fromPage(self: HandlerContext): Promise<void> {
+  if (!workspaceOf(self)) return;
+  try {
+    await page.drain(baseOf(self));
+  } catch (e) {
+    self.logger?.(`library-lean couldn't apply the Library page's events: ${(e as Error)?.message || e}`);
+  }
+}
+
 export const runtime = {
   handler: async function (this: HandlerContext, args: Args = {}): Promise<string> {
     const action = clean(args.action).toLowerCase() || "guide";
     const act = ACTIONS[action];
     if (!act) return `The library's action is ${Object.keys(ACTIONS).join(", ")}, not "${clean(args.action)}".`;
     try {
+      await fromPage(this);
       return await act(args, this);
     } catch (e) {
       if (e instanceof Told) return `Library: ${e.message}.`;

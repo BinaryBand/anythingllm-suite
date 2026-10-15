@@ -30,7 +30,7 @@ export async function send(target: URL, spec: Spec, key: { label: string; as: st
   const headers = headersOf(spec.headers);
   const body = bodyOf(method, spec.body, headers);
   check({ op: "http", fn, method, url: target.href, key: key?.label ?? null });
-  const cred = key ? credentialed(key.label, key.as, target.href, headers) : null;
+  const cred = key ? await credentialed(key.label, key.as, target.href, headers) : null;
   const answer = await net.send({ method, url: cred?.url ?? target.href, headers: cred?.headers ?? headers, body, signal, ...(cred ? { next: cred.next } : {}) });
   return { method, answer, secret: cred?.value ?? null };
 }

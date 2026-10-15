@@ -10,10 +10,6 @@
 
   // Out of the explorer: caches no one opens.
   "files.exclude": {
-    "**/.ruff_cache": true,
-    "**/.pytest_cache": true,
-    "**/.import_linter_cache": true,
-    "**/__pycache__": true,
     "**/.dart_tool": true
   },
 

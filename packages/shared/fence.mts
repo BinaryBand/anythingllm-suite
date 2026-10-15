@@ -58,6 +58,10 @@ export function privateName(host: string): boolean {
 /** A URL's host as the fence checks it: an IPv6 address without its brackets. */
 export const bareHost = (url: URL): string => url.hostname.replace(/^\[|\]$/g, "");
 
+/** Whether a secret may go to `url` by its scheme: https, or plain http to a host the user lets
+ *  through (FENCE_ALLOW). */
+export const secureFor = (url: URL): boolean => url.protocol === "https:" || (url.protocol === "http:" && allowedHosts().includes(bareHost(url).toLowerCase()));
+
 /** `url` parsed, when it's an http(s) address; a NetError saying why not otherwise. */
 export function httpUrl(url: string): URL {
   let parsed: URL;

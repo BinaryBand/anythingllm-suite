@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Signing in</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ecebe6; --muted: #9b9a93; } }
+  body { margin: 0; padding: 32px 16px; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center; }
+  p { color: var(--muted); max-width: 32em; margin: 8px auto; }
+</style>
+</head>
+<body>
+<h1 id="title">Signing in…</h1>
+<p id="text"></p>
+<script>
+// Where an OAuth provider sends the user back after they agree: posts the code it brought to
+// AnythingLLM, as an event the library takes only for the sign-in waiting with its state, then
+// clears it from the address bar and history.
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const say = (title, text) => ((document.getElementById("title").textContent = title), (document.getElementById("text").textContent = text));
+  history.replaceState(null, "", location.pathname);
+  const state = q.get("state") || "";
+  if (!/^[\w-]{10,200}$/.test(state)) return say("Not signed in", "This address has no sign-in in it.");
+  try {
+    const cfg = await (await fetch(`s-${state}.json`, { cache: "no-cache" })).json();
+    const event = { library_lean_event: 1, ev: "oauth-code", state, code: q.get("code") || "", error: q.get("error_description") || q.get("error") || "", t: new Date().toISOString() };
+    const r = await fetch("/api/browser-extension/upload-content", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
+      body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.title, docSource: "library-lean oauth page" } }),
+    });
+    if (!r.ok) throw new Error("AnythingLLM answered " + r.status);
+    say(q.get("code") ? "Sent to AnythingLLM" : "Not signed in", q.get("code") ? "It finishes the sign-in in a moment. Go back to the chat and tell the agent." : "The provider didn't give a code. Go back to the chat and tell the agent.");
+  } catch (e) {
+    say("Not signed in", "This sign-in isn't waited for any more (more than 10 minutes passed, or it was already used). Ask the agent to start it again.");
+  }
+})();
+</script>
+</body>
+</html>

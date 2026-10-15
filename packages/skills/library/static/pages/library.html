@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Library</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --card: #fff; --accent: #2f5bd3; --warn: #b5470b; --ok: #237a3c; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ecebe6; --muted: #9b9a93; --line: #2f2e2b; --card: #1f1e1c; --accent: #8aa8ff; --warn: #f0995c; --ok: #7bcf8f; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px 0; z-index: 1; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  nav { display: flex; gap: 4px; overflow-x: auto; }
+  nav button { border: 0; background: none; color: var(--muted); padding: 8px 10px; font: inherit; border-bottom: 2px solid transparent; cursor: pointer; }
+  nav button[aria-selected="true"] { color: var(--fg); border-color: var(--accent); }
+  main { padding: 16px; max-width: 760px; margin: 0 auto; }
+  section[hidden] { display: none; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
+  .need { border-color: var(--accent); }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .cap { color: var(--muted); font-size: 13px; }
+  .bad { color: var(--warn); } .good { color: var(--ok); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
+  input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }
+  button.act { margin-top: 10px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+  button.quiet { background: none; color: var(--warn); border-color: var(--line); }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; max-height: 360px; overflow: auto; }
+  details > summary { cursor: pointer; }
+  #toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; max-width: calc(100% - 32px); }
+  #toast[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Library</h1>
+  <nav role="tablist">
+    <button role="tab" data-tab="keys" aria-selected="true">Keys</button>
+    <button role="tab" data-tab="signins">Sign-ins</button>
+    <button role="tab" data-tab="toolkits">Toolkits</button>
+    <button role="tab" data-tab="runs">Runs</button>
+  </nav>
+</header>
+<main>
+  <section id="keys"></section>
+  <section id="signins" hidden></section>
+  <section id="toolkits" hidden></section>
+  <section id="runs" hidden></section>
+  <p class="cap">What you type for a key or a client is sealed on this device; the agent never sees it. Anyone with this page's link can see what it shows and act on it.
+    <button class="act quiet" id="rotate">New link</button></p>
+</main>
+<div id="toast" hidden></div>
+<script>
+(() => {
+  const cfg = /*CONFIG*/null;
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k !== null && k !== undefined)); return n; };
+  let toastTimer = 0;
+  const toast = (text) => { $("toast").textContent = text; $("toast").hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => ($("toast").hidden = true), 4000); };
+
+  // ---- Posting: each thing done here is an event, posted through AnythingLLM's upload.
+  async function post(ev, fields = {}) {
+    const event = { library_lean_event: 1, secret: cfg.secret, ev, ...fields, t: new Date().toISOString() };
+    try {
+      const res = await fetch("/api/browser-extension/upload-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
+        body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.title, docSource: "library-lean page" } }),
+      });
+      if (!res.ok) return toast(res.status === 403 ? "AnythingLLM refused this page's key: ask the agent for the Library page again" : "AnythingLLM answered " + res.status), false;
+      toast("Sent");
+      setTimeout(load, 1500);
+      return true;
+    } catch (e) {
+      toast("Can't reach AnythingLLM");
+      return false;
+    }
+  }
+
+  // RSA-OAEP seals at most 190 bytes; a longer value (a token, say) is sealed with a new AES-GCM
+  // key, itself sealed with RSA: "h1.<sealed key>.<iv>.<sealed value>".
+  const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+  let pubKey = null;
+  async function seal(text) {
+    const bytes = new TextEncoder().encode(text);
+    pubKey ||= await crypto.subtle.importKey("spki", Uint8Array.from(atob(cfg.pub), (c) => c.charCodeAt(0)), { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+    if (bytes.length <= 190) return b64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, bytes));
+    const aes = crypto.getRandomValues(new Uint8Array(32));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await crypto.subtle.importKey("raw", aes, "AES-GCM", false, ["encrypt"]);
+    const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes);
+    return ["h1", b64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, aes)), b64(iv), b64(sealed)].join(".");
+  }
+
+  /** A labelled input: the label holds it, and `inputs[name]` keeps it for the form to read. */
+  const field = (inputs, name, label, type = "text") => el("label", { textContent: label }, (inputs[name] = el("input", { type, autocomplete: "off" })));
+
+  function form(title, fields, submit, onsubmit, need = false) {
+    const inputs = {};
+    const node = el("form", { className: "card" + (need ? " need" : "") }, title, ...fields.map(([name, label, type]) => field(inputs, name, label, type)), el("button", { className: "act", type: "submit", textContent: submit }));
+    node.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value.trim()]));
+      if (await onsubmit(v)) node.reset();
+    };
+    return node;
+  }
+
+  const keyForm = (need) =>
+    form(
+      el("div", {}, el("strong", { textContent: need ? `The agent asks for a key: ${need.label}` : "Add a key" }), need ? el("p", { className: "cap", textContent: `It's sent only to ${need.site}.` }) : null),
+      [...(need ? [] : [["label", "Name, like github"], ["site", "The site it's sent to, like api.github.com"]]), ["value", "The key or token", "password"]],
+      "Save",
+      async (v) => {
+        const label = need ? need.label : v.label, site = need ? need.site : v.site;
+        if (!v.value || !label || !site) return toast("Fill in every field"), false;
+        return post("key-save", { label, site, sealed: await seal(v.value) });
+      },
+      !!need,
+    );
+
+  const clientForm = (signIn, redirect) =>
+    form(
+      el("p", { className: "cap", textContent: `Register this redirect address for the client: ${redirect}` }),
+      [["id", "Client ID"], ["secret", "Client secret (leave empty to keep it, or if it has none)", "password"]],
+      "Save the client",
+      async (v) => (v.id ? post("oauth-client", { label: signIn.label, client_id: v.id, sealed: v.secret ? await seal(v.secret) : "" }) : (toast("Give the client ID"), false)),
+    );
+
+  // Without an https address, the provider sends the user to a 127.0.0.1 address that doesn't load:
+  // its code and state are posted as oauth.html would post them.
+  const pasteForm = () =>
+    form(
+      el("div", {}, el("strong", { textContent: "Finish a sign-in" }), el("p", { className: "cap", textContent: "After signing in, your browser landed on a 127.0.0.1 address that didn't load: copy that whole address here." })),
+      [["url", "The address you landed on"]],
+      "Finish",
+      async (v) => {
+        let q;
+        try {
+          q = new URL(v.url).searchParams;
+        } catch {}
+        if (!q?.get("state")) return toast("That address has no state in it"), false;
+        return post("oauth-code", { state: q.get("state"), code: q.get("code") || "", error: q.get("error_description") || q.get("error") || "" });
+      },
+    );
+
+  const remove = (text, ev, fields) => el("button", { className: "act quiet", type: "button", textContent: text, onclick: () => confirm(`${text}?`) && post(ev, fields) });
+
+  function draw(s) {
+    const keys = $("keys"), signins = $("signins"), toolkits = $("toolkits"), runs = $("runs");
+    keys.replaceChildren(...s.needs.filter((n) => n.kind === "key").map((n) => keyForm(n)));
+    for (const k of s.secrets.filter((x) => x.kind === "key")) keys.append(el("div", { className: "card row" }, el("span", {}, el("strong", { textContent: k.label }), " ", el("span", { className: "cap", textContent: k.site })), remove("Delete", "key-delete", { label: k.label })));
+    keys.append(keyForm(null));
+
+    const oauth = s.secrets.filter((x) => x.kind === "oauth");
+    signins.replaceChildren(...(oauth.length ? [] : [el("p", { className: "cap", textContent: "No sign-ins yet. The agent adds one when a service signs in with OAuth." })]));
+    for (const o of oauth) {
+      const needed = s.needs.some((n) => n.kind === "client" && n.label === o.label);
+      signins.append(el("div", { className: "card" + (needed ? " need" : "") },
+        el("div", { className: "row" }, el("strong", { textContent: o.label }), el("span", { className: o.status === "signed in" ? "good" : "cap", textContent: o.status })),
+        el("p", { className: "cap", textContent: `Signs in at ${o.authorize}; sends to ${o.site}${o.scopes ? `; scopes: ${o.scopes}` : ""}` }),
+        clientForm(o, s.redirect), remove("Delete", "key-delete", { label: o.label })));
+    }
+    if (!s.redirect.startsWith("https://") && oauth.length) signins.append(pasteForm());
+
+    toolkits.replaceChildren(...(s.toolkits.length ? [] : [el("p", { className: "cap", textContent: "No toolkits yet." })]));
+    for (const t of s.toolkits) {
+      toolkits.append(el("div", { className: "card" },
+        el("div", { className: "row" }, el("strong", { textContent: t.title }), el("span", { className: "cap", textContent: t.service })),
+        el("p", { className: "cap", textContent: `${t.base_urls.join(", ")}; keys: ${t.secrets.join(", ") || "none"}` }),
+        ...t.functions.map((f) => el("details", {}, el("summary", { textContent: `${f.name}: ${f.description} (v${f.version})` }), el("pre", { textContent: f.source }), remove("Delete this function", "fn-delete", { fn: `${t.service}.${f.name}` }))),
+        remove("Delete the toolkit", "toolkit-delete", { service: t.service })));
+    }
+
+    runs.replaceChildren(...(s.runs.length ? [] : [el("p", { className: "cap", textContent: "No runs yet." })]));
+    for (const r of s.runs) {
+      runs.append(el("details", { className: "card" },
+        el("summary", {}, el("strong", { textContent: r.fn }), " ", el("span", { className: r.status === "ok" ? "good" : "bad", textContent: r.status }), " ", el("span", { className: "cap", textContent: new Date(r.ended).toLocaleString() })),
+        el("pre", { textContent: r.error || r.result || "" })));
+    }
+  }
+
+  let last = "";
+  async function load() {
+    try {
+      const res = await fetch(cfg.token + ".json", { cache: "no-cache" });
+      if (res.status === 404) return toast("This link was replaced: ask the agent for the Library page again");
+      const text = await res.text();
+      if (text !== last) (last = text), draw(JSON.parse(text));
+    } catch (e) {
+      toast("Can't reach AnythingLLM");
+    }
+  }
+
+  for (const b of document.querySelectorAll("nav button")) {
+    b.onclick = () => {
+      for (const x of document.querySelectorAll("nav button")) x.setAttribute("aria-selected", String(x === b));
+      for (const section of document.querySelectorAll("main section")) section.hidden = section.id !== b.dataset.tab;
+    };
+  }
+  $("rotate").onclick = () => confirm("Make a new link? This one stops working.") && post("rotate");
+  load();
+  setInterval(load, 5000);
+})();
+</script>
+</body>
+</html>

@@ -1,10 +1,4 @@
 dist/
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
-.import_linter_cache/
 node_modules/
 
 # Flutter / Dart

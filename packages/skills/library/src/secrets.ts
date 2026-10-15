@@ -1,29 +1,39 @@
-// The keys the library calls with: each an entry of kind "key" in the instance's vault (#shared/vault)
-// with the site it may go to, a name (its label) and its value, which the model never reads. The
-// user gives one on AnythingLLM's question card, whose answer comes to this skill, not the model. A
-// key goes with a request only to its own site (or a site under it), only over https (or plain http
-// to a host the user lets through), put where the API wants it (as a bearer token, by HTTP Basic,
-// in a header or in the query), and at most PER_MINUTE times a minute from one process (a scheduled
-// job's child process counts its own).
+// What the library calls with, kept in the instance's vault (#shared/vault), whose values the model
+// never reads: an API key (kind "key": the site it may go to, a name, its value) or an OAuth sign-in
+// (kind "oauth", oauth.ts: how to sign in, the user's client and the tokens it got). The user gives a
+// key or a client on AnythingLLM's question card, whose answers come to this skill, not the model, or
+// on the Library page (page.ts). A secret goes with a request only to its own site (or a site under
+// it), only over https (or plain http to a host the user lets through), put where the API wants it
+// (as a bearer token, by HTTP Basic, in a header or in the query), and at most PER_MINUTE times a
+// minute from one process (a scheduled job's child process counts its own).
 
 import { perProcess } from "#shared/anythingllm";
 import { NOT_SET } from "#shared/answer";
-import { allowedHosts, bareHost, onSite, siteOf } from "#shared/fence";
+import { allowedHosts, bareHost, onSite, secureFor, siteOf } from "#shared/fence";
 import type { Headers } from "#shared/net";
 import * as vault from "#shared/vault";
 import { LibraryError } from "./errors";
 import type { HandlerContext } from "./host";
+import { accessToken, isSignIn, type Definition, type SignIn } from "./oauth";
 
-/** How a key goes with a request: as a bearer token, by HTTP Basic (the key the password, with a
+/** How a secret goes with a request: as a bearer token, by HTTP Basic (the key the password, with a
  *  user name or none), as Authorization with another scheme, in a header, or in the query. */
 const AS = /^(bearer|basic(:[^:\s]{1,100})?|authorization:[A-Za-z][\w-]{0,30}|header:[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}|query:[\w.-]{1,64})$/i;
 const LABEL = /^[\w .@:-]{1,60}$/;
 const PER_MINUTE = 60;
 const ASK_TIMEOUT_MS = 5 * 60 * 1000;
 
-export interface Key {
+/** A saved secret as the agent and the page see it: never its value. */
+export interface Secret {
   site: string;
   label: string;
+  kind: "key" | "oauth";
+  /** "saved" (a key), or a sign-in's: "signed in", "ready to sign in", "waiting for its client",
+   *  or why its last sign-in didn't finish. */
+  status: string;
+  /** A sign-in's scopes, and the host it signs in at. */
+  scopes?: string;
+  authorize?: string;
 }
 
 /** `as`, checked. */
@@ -34,7 +44,7 @@ export function asOf(as: unknown): string {
   return text;
 }
 
-/** A key's name, checked. */
+/** A secret's name, checked. */
 export function labelOf(label: unknown): string {
   const name = String(label ?? "").trim();
   if (!LABEL.test(name)) throw new LibraryError("a key's name is letters, digits, spaces and . _ - @ :, at most 60");
@@ -48,23 +58,41 @@ export function publicSite(raw: unknown): string | null {
   return want && (/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(want) || allowedHosts().includes(want)) ? want : null;
 }
 
-/** The site a key goes to, checked. */
+/** The site a secret goes to, checked. */
 export function siteChecked(site: unknown): string {
   const want = publicSite(site);
   if (!want) throw new LibraryError('a key needs site, the site it is sent to, like "api.example.com"');
   return want;
 }
 
-/** Whether an entry is a key named `label` (any case), or any key. */
-const named = (label?: string) => (e: Readonly<vault.Entry>) => e.kind === "key" && (label === undefined || e.user.toLowerCase() === label.toLowerCase());
+/** Whether an entry is a secret (a key or a sign-in) named `label` (any case), or any secret. */
+const named = (label?: string) => (e: Readonly<vault.Entry>) => (e.kind === "key" || e.kind === "oauth") && (label === undefined || e.user.toLowerCase() === label.toLowerCase());
 
-/** The saved keys, without their values. */
-export const keys = (): Key[] => vault.entries().filter(named()).map((e) => ({ site: e.site, label: e.user }));
+/** Where a sign-in is. */
+function status(e: Readonly<SignIn>): string {
+  if (e.tokens?.access_token) return "signed in";
+  if (e.error) return `its last sign-in didn't finish: ${e.error}`;
+  return e.client_id ? "ready to sign in" : "waiting for its client";
+}
 
-/** The name of the key a request to `host` goes with when it names none: the one saved for the
+/** The saved secrets, without their values. */
+export const secrets = (): Secret[] =>
+  vault
+    .entries()
+    .filter(named())
+    .map((e) =>
+      isSignIn(e)
+        ? { site: e.site, label: e.user, kind: "oauth", status: status(e), scopes: e.oauth.scopes, authorize: new URL(e.oauth.authorize_url).host }
+        : { site: e.site, label: e.user, kind: "key", status: "saved" },
+    );
+
+/** The sign-in named `label`, as the vault keeps it; null when there's none. */
+export const signIn = (label: string): Readonly<SignIn> | null => (vault.entries().find((e) => named(label)(e) && isSignIn(e)) as SignIn | undefined) ?? null;
+
+/** The name of the secret a request to `host` goes with when it names none: the one saved for the
  *  host's site, the closest site first; a LibraryError when there's none, or no one. */
 export function labelForHost(host: string): string {
-  const found = keys()
+  const found = secrets()
     .filter((k) => onSite(host, k.site))
     .sort((a, b) => b.site.length - a.site.length);
   if (!found.length) throw new LibraryError(`no key is saved for ${host}: ask the user for one with secret`);
@@ -72,59 +100,110 @@ export function labelForHost(host: string): string {
   return found[0].label;
 }
 
-/** Saves a key under `label`, replacing the value of one of that name. */
+/** Saves `entry` under its label, replacing whole the secret of that name (keeping only its id). */
+function put(v: vault.Vault, entry: { kind: string; site: string; user: string; [field: string]: unknown }): void {
+  const at = v.entries.findIndex(named(entry.user));
+  if (at >= 0) v.entries[at] = { id: v.entries[at].id, ...entry };
+  else v.entries.push({ id: vault.newId(), ...entry });
+}
+
+/** Saves a key under `label`, replacing a secret of that name. */
 export async function saveKey(site: string, label: string, value: string): Promise<void> {
+  await vault.update((v) => put(v, { kind: "key", site, user: label, value }));
+}
+
+/** Saves how a sign-in signs in; one of the same name keeps its client, and its tokens while how
+ *  it signs in is unchanged. */
+export async function saveSignIn(site: string, label: string, oauth: Definition): Promise<void> {
   await vault.update((v) => {
     const same = v.entries.find(named(label));
-    if (same) Object.assign(same, { site, user: label, value });
-    else v.entries.push({ id: vault.newId(), kind: "key", site, user: label, value });
+    const kept = same && isSignIn(same) ? same : null;
+    const unchanged = kept && JSON.stringify(kept.oauth) === JSON.stringify(oauth);
+    put(v, { kind: "oauth", site, user: label, oauth, client_id: kept?.client_id ?? null, client_secret: kept?.client_secret ?? null, tokens: unchanged ? kept.tokens : null, pending: null, error: null });
   });
 }
 
-/** Asks the user for a key on AnythingLLM's question card and saves it; the answer comes to this
- *  skill only, and the card is kept in the chat with the answer hidden. */
-export async function askKey(self: HandlerContext, site: string, label: string): Promise<void> {
-  const agent = self.super;
-  if (typeof agent?.requestUserClarification !== "function") {
-    throw new LibraryError(`this chat can't show a question card (only AnythingLLM's own chat window can), so the user can't give the key for ${site} here yet: ask them to give it from AnythingLLM's chat window`);
-  }
-  agent.introspect?.(`Asking the user for a key for ${site}`);
-  const questions = [{ kind: "input", question: `An API key or token for ${site}`, inputType: "text", placeholder: `Kept in the vault and sent only to ${site}; the model never sees it` }];
-  const result = await agent.requestUserClarification({ questions, allowSkip: true, timeoutMs: ASK_TIMEOUT_MS });
-  agent.addClarifyingQuestionSurvey?.({ questions, result: { ...result, answers: (result.answers || []).map((a) => (a.answer ? { ...a, answer: "•••" } : a)) } });
+/** Keeps the user's OAuth client for a sign-in: its ID, and its secret (left as it was when none is
+ *  given). A new client drops the tokens the old one got. */
+export async function saveClient(label: string, clientId: string, clientSecret: string | null): Promise<void> {
+  const id = clientId.trim();
+  if (!id || id.length > 500) throw new LibraryError("an OAuth client needs its client ID");
+  await vault.update((v) => {
+    const found = v.entries.find(named(label));
+    if (!found || !isSignIn(found)) throw new LibraryError(`there's no sign-in "${label}"`);
+    if (found.client_id !== id) Object.assign(found, { tokens: null, error: null });
+    found.client_id = id;
+    if (clientSecret?.trim()) found.client_secret = clientSecret.trim();
+  });
+}
+
+/** Deletes a secret; whether there was one. */
+export const removeSecret = (label: string): Promise<boolean> =>
+  vault.update((v) => {
+    const before = v.entries.length;
+    v.entries = v.entries.filter((e) => !named(label)(e));
+    return v.entries.length < before;
+  });
+
+/** Whether this chat can show AnythingLLM's question card (only its own chat window can). */
+export const canAsk = (self: HandlerContext): boolean => typeof self.super?.requestUserClarification === "function";
+
+/** Asks the user on AnythingLLM's question card; the answers come to this skill only, and the card
+ *  is kept in the chat with every answer hidden. */
+async function ask(self: HandlerContext, questions: { question: string; placeholder: string }[]): Promise<string[]> {
+  const agent = self.super!;
+  const asked = questions.map((q) => ({ kind: "input", inputType: "text", ...q }));
+  const result = await agent.requestUserClarification!({ questions: asked, allowSkip: true, timeoutMs: ASK_TIMEOUT_MS });
+  agent.addClarifyingQuestionSurvey?.({ questions: asked, result: { ...result, answers: (result.answers || []).map((a) => (a.answer ? { ...a, answer: "•••" } : a)) } });
   if (result.timedOut) throw new LibraryError("the user didn't answer the card in time; nothing was saved");
-  const value = String(result.answers?.[0]?.answer ?? "").trim();
-  if (result.skipped || !value) throw new LibraryError("the user gave no key; nothing was saved");
+  if (result.skipped) throw new LibraryError("the user closed the card; nothing was saved");
+  return questions.map((_, i) => String(result.answers?.[i]?.answer ?? "").trim());
+}
+
+/** Asks the user for a key on the card and saves it. */
+export async function askKey(self: HandlerContext, site: string, label: string): Promise<void> {
+  self.super?.introspect?.(`Asking the user for a key for ${site}`);
+  const [value] = await ask(self, [{ question: `An API key or token for ${site}`, placeholder: `Kept in the vault and sent only to ${site}; the model never sees it` }]);
+  if (!value) throw new LibraryError("the user gave no key; nothing was saved");
   await saveKey(site, label, value);
 }
 
-/** Whether a key for `site` may go to `url`: on its site, over https (or plain http to a host the
- *  user lets through). */
-function mayGo(site: string, url: URL): boolean {
-  return onSite(bareHost(url), site) && (url.protocol === "https:" || allowedHosts().includes(bareHost(url).toLowerCase()));
+/** Asks the user for their OAuth client on the card and saves it. */
+export async function askClient(self: HandlerContext, label: string, redirect: string): Promise<void> {
+  self.super?.introspect?.(`Asking the user for the OAuth client for ${label}`);
+  const [id, secret] = await ask(self, [
+    { question: `The client ID of your OAuth client for "${label}"`, placeholder: `Its redirect address must be ${redirect}` },
+    { question: "Its client secret (leave empty if it has none)", placeholder: "Kept in the vault; the model never sees it" },
+  ]);
+  await saveClient(label, id, secret || null);
 }
+
+/** Whether a secret for `site` may go to `url`: on its site, over https (or plain http to a host
+ *  the user lets through). */
+const mayGo = (site: string, url: URL): boolean => onSite(bareHost(url), site) && secureFor(url);
 
 export interface Credentialed {
   url: string;
   headers: Headers;
-  /** The key's value, to hide in whatever is said of the answer. */
+  /** What was sent, to hide in whatever is said of the answer. */
   value: string;
-  /** The headers a redirect may go on with: the key's, only to where it may go. */
+  /** The headers a redirect may go on with: the secret's, only to where it may go. */
   next: (to: string) => Headers | null;
 }
 
-/** A request with the key `label` put where `as` says, when it may go to `url`. */
-export function credentialed(label: string, as: string, url: string, headers: Headers): Credentialed {
-  const key = vault.entries().find(named(label));
-  if (!key) throw new LibraryError(`no key named "${label}" is saved: ask the user for it with secret`);
+/** A request with the secret `label` put where `as` says, when it may go to `url`: a key's value, or
+ *  a sign-in's access token, renewed first when it runs out. */
+export async function credentialed(label: string, as: string, url: string, headers: Headers): Promise<Credentialed> {
+  const secret = vault.entries().find(named(label));
+  if (!secret) throw new LibraryError(`no key named "${label}" is saved: ask the user for it with secret`);
   const target = new URL(url);
-  if (!mayGo(key.site, target)) throw new LibraryError(`the key "${label}" is for ${key.site} over https, and goes nowhere else: not to ${target.origin}`);
+  if (!mayGo(secret.site, target)) throw new LibraryError(`the key "${label}" is for ${secret.site} over https, and goes nowhere else: not to ${target.origin}`);
   const now = Date.now();
   const recent = perProcess("library-lean.key-calls", () => new Map<string, number[]>());
-  const times = (recent.get(key.id) || []).filter((t) => now - t < 60 * 1000);
+  const times = (recent.get(secret.id) || []).filter((t) => now - t < 60 * 1000);
   if (times.length >= PER_MINUTE) throw new LibraryError(`the key "${label}" was used ${PER_MINUTE} times in the last minute: wait a minute, and make fewer requests`);
-  recent.set(key.id, [...times, now]);
-  const value = String(key.value);
+  recent.set(secret.id, [...times, now]);
+  const value = isSignIn(secret) ? await accessToken(secret) : String(secret.value);
   const sent = { ...headers };
   const [kind, ...rest] = as.split(":");
   const arg = rest.join(":");
@@ -145,5 +224,5 @@ export function credentialed(label: string, as: string, url: string, headers: He
       target.searchParams.set(arg, value);
       break;
   }
-  return { url: target.href, headers: sent, value, next: (to) => (mayGo(key.site, new URL(to)) ? sent : null) };
+  return { url: target.href, headers: sent, value, next: (to) => (mayGo(secret.site, new URL(to)) ? sent : null) };
 }

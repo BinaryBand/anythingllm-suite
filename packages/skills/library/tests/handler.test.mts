@@ -5,24 +5,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
-import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { check } from "../src/sandbox.ts";
+import { type Card, call as called, card, library, reset, skillDir, storage } from "./harness.mts";
 
-const require = createRequire(import.meta.url);
-const testsDir = path.dirname(fileURLToPath(import.meta.url));
-const skillDir = path.join(testsDir, "..");
-
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "library-lean-"));
-const storage = path.join(tmp, "storage");
-process.env.STORAGE_DIR = storage;
-process.env.FENCE_ALLOW = "127.0.0.1";
-process.env.SIG_KEY = "test-sig-key";
-process.env.SIG_SALT = "test-sig-salt";
+const call = (args: Record<string, unknown>, slug: string | null = "work", c?: Card) => called(args, { slug, card: c });
 
 const KEY = "tok-1234567890";
 
@@ -45,36 +34,7 @@ const api = http.createServer((req, res) => {
 });
 await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
 const BASE = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
-test.after(() => {
-  api.close();
-  fs.rmSync(tmp, { recursive: true, force: true });
-});
-
-const bundle = path.join(skillDir, "build", "library-lean", "handler.js");
-const handler = (): ((this: unknown, args: Record<string, unknown>) => Promise<string>) => {
-  delete require.cache[bundle];
-  return require(bundle).runtime.handler;
-};
-
-type Card = { asked: unknown[]; surveys: unknown[]; answer: string | null };
-
-/** Calls the skill as AnythingLLM's agent would, from workspace `slug` (null: none, as a job), with
- *  a question card that answers `card.answer` when one is given. */
-function call(args: Record<string, unknown>, slug: string | null = "work", card?: Card): Promise<string> {
-  const ask = card && {
-    requestUserClarification: async (q: unknown) => (card.asked.push(q), card.answer === null ? { skipped: true } : { answers: [{ answer: card.answer }] }),
-    addClarifyingQuestionSurvey: (s: unknown) => void card.surveys.push(s),
-  };
-  const self = { super: { handlerProps: { invocation: slug ? { workspace: { slug }, thread_id: 3 } : {} }, ...ask }, runtimeArgs: {}, logger: () => {} };
-  return handler().call(self, args);
-}
-
-const card = (answer: string | null): Card => ({ asked: [], surveys: [], answer });
-const library = path.join(storage, "library-lean");
-const reset = () => {
-  fs.rmSync(library, { recursive: true, force: true });
-  fs.rmSync(path.join(storage, "vault-lean"), { recursive: true, force: true });
-};
+test.after(() => api.close());
 
 const ISSUES = `async function main(input, kit) {
   const answer = await kit.http({ path: "/issues", params: { state: input.state || "open" } });
@@ -109,7 +69,7 @@ test("the user's key is asked for on the card, kept unseen, and goes with a func
 
 test("without a card, or with the card closed, nothing is saved", async () => {
   assert.match(await call({ action: "secret", site: "api.example.com", label: "x" }), /can't show a question card/);
-  assert.match(await call({ action: "secret", site: "api.example.com", label: "x" }, "work", card(null)), /gave no key; nothing was saved/);
+  assert.match(await call({ action: "secret", site: "api.example.com", label: "x" }, "work", card(null)), /closed the card; nothing was saved/);
   assert.match(await call({ action: "secret", site: "localhost", label: "x" }, "work", card("k")), /a key needs site/);
 });
 
@@ -223,7 +183,7 @@ test("a toolkit saved again keeps what isn't given; a function or a toolkit is r
   assert.match(shown, /Notes:\nNew notes\./);
   assert.match(await call({ action: "save", service: "demo", remove: "list_issues" }), /^Removed demo\.list_issues\.$/);
   assert.match(await call({ action: "save", service: "demo", remove: "demo" }), /^Removed the toolkit demo and its functions\. Its keys stay saved\.$/);
-  assert.equal(await call({ action: "library" }), "The library is empty: no toolkit yet. guide says how to build one (topic toolkits).");
+  assert.match(await call({ action: "library" }), /^The library is empty: no toolkit yet\. guide says how to build one \(topic toolkits\)\.\n\nThe Library page/);
 });
 
 // The guide, and the static files it's made of.
