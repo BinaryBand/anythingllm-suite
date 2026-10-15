@@ -1,14 +1,13 @@
 # Git hooks, the only gate this repository has (there is no hosted CI). Install once per clone:
 #   lefthook install
 # A hook runs only when a staged or pushed file matches its glob, so the empty scaffolding commits
-# freely. tools/check knows the bridge, the skills and mcp so far (their unit tests, not a container run); their imports are checked when they are built (packages/build.mjs).
+# freely. tools/check knows the bridge, the control server and the skills so far (their unit tests,
+# not a container run: that is `make e2e`); their imports are checked when they are built
+# (packages/build.mjs).
 
 pre-commit:
   parallel: true
   commands:
-    ruff:
-      glob: "**/*.py"
-      run: uv run --locked ruff check {staged_files}
     flutter-analyze:
       glob: "app/**/*.dart"
       root: app/
@@ -22,9 +21,9 @@ pre-push:
     bridge:
       glob: ["packages/bridge/**/*.{ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**", "contract/**"]
       run: tools/check bridge
-    mcp:
-      glob: "packages/mcp/**/*.py"
-      run: tools/check mcp
+    control:
+      glob: ["packages/control/**/*.{ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**"]
+      run: tools/check control
     skills:
       glob: ["packages/skills/**/*.{js,ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**"]
       run: tools/check skills

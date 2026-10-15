@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
-# tools/check [skills|bridge|mcp|app ...]: the tests of each part; no argument: all, stopping at the
-# first part that fails. The bridge and the skills are written: each one's type-check, then its tests
-# (which build the bundles first). The type-check is one run over both (packages/tsconfig.json), and so
-# are the tests of what both share: packages/shared and the build script. mcp is written too: ruff, then
-# pytest, whose stdio test starts the server as an MCP client does.
+# tools/check [bridge|control|skills|app ...]: the tests of each part; no argument: all, stopping
+# at the first part that fails. The bridge, the control server and the skills are written: their
+# type-check and the tests of what they share (packages/shared, the build script) run once, first,
+# then each part's tests (which build its bundle first).
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-[ $# -gt 0 ] || set -- bridge skills mcp app
+[ $# -gt 0 ] || set -- bridge control skills app
+case " $* " in *" bridge "*|*" control "*|*" skills "*)
+  echo "[shared] type-check, then tests"
+  npm --prefix "$ROOT/packages" run -s typecheck
+  npm --prefix "$ROOT/packages" run -s shared:test
+esac
 for part in "$@"; do
   case "$part" in
-    bridge|skills)
-      echo "[$part] type-check, then tests"
-      npm --prefix "$ROOT/packages" run -s typecheck
-      npm --prefix "$ROOT/packages" run -s shared:test
+    bridge|control|skills)
+      echo "[$part] tests"
       npm --prefix "$ROOT/packages" run -s "$part:test"
       ;;
-    mcp)
-      echo "[mcp] ruff, then tests"
-      uv run --locked --directory "$ROOT/packages/mcp" ruff check .
-      uv run --locked --directory "$ROOT/packages/mcp" pytest -q
-      ;;
     app) not_yet "check $part" ;;
-    *) echo "tools/check: no such part: $part (one of: bridge skills mcp app)" >&2; exit 2 ;;
+    *) echo "tools/check: no such part: $part (one of: bridge control skills app)" >&2; exit 2 ;;
   esac
 done

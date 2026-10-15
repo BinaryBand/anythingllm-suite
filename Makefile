@@ -2,11 +2,11 @@
 # implemented here, so `make` and the scripts never disagree.
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks lint test boundaries check e2e routes package install-skill
+.PHONY: help hooks lint test boundaries check e2e routes package install
 
-PART  ?=# bridge, mcp, skills or app; empty: all
-SKILL ?=# a skill's folder name under packages/skills
-DIR   ?=# the agent-skills folder to install it into
+PART    ?=# bridge, control, skills or app; empty: all
+SKILL   ?=# a skill's folder name under packages/skills
+STORAGE ?=# AnythingLLM's storage folder; empty: AnythingLLM Desktop's
 
 help: ## List the commands
 	@awk -F':.*## ' '/^[a-z0-9-]+:.*## /{printf "  make %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,7 +21,7 @@ hooks: ## Install the git hooks, once per clone
 		exit 1; }
 	lefthook install
 
-lint: ## Run the commit hooks on every file (ruff, flutter analyze)
+lint: ## Run the commit hooks on every file (flutter analyze)
 	lefthook run pre-commit --all-files
 
 test: ## Run the push hooks on every file (boundaries, then each part's tests)
@@ -30,10 +30,10 @@ test: ## Run the push hooks on every file (boundaries, then each part's tests)
 boundaries: ## Fail if the app imports a path into another part
 	tools/boundaries
 
-check: ## Test a part (PART=mcp) or, with no PART, all of them
+check: ## Test a part (PART=control) or, with no PART, all of them
 	tools/check $(PART)
 
-e2e: ## Run the MCP servers against a throwaway AnythingLLM and the built bridge (needs podman or docker)
+e2e: ## Install into a throwaway AnythingLLM and run the suite against it (needs podman or docker)
 	tools/e2e
 
 routes: ## Fail if AnythingLLM stopped declaring a route the default list names (needs the image)
@@ -42,5 +42,5 @@ routes: ## Fail if AnythingLLM stopped declaring a route the default list names 
 package: ## Build and zip a skill into dist/ (SKILL=memory)
 	tools/package $(SKILL)
 
-install-skill: ## Install a skill (SKILL=memory DIR=<agent-skills folder>)
-	tools/install $(SKILL) $(DIR)
+install: ## Build and install into AnythingLLM's storage (STORAGE=<folder>; empty: Desktop's)
+	tools/install $(if $(STORAGE),--storage "$(STORAGE)")

@@ -10,7 +10,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 skills() { for c in "$ROOT"/packages/skills/*/plugin.json; do [ -f "$c" ] && basename "$(dirname "$c")"; done; }
 
 # plugin_field <key>: a field of the loaded skill's plugin.json.
-plugin_field() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$SKILL_DIR/plugin.json" "$1"; }
+plugin_field() { node -p 'require(process.argv[1])[process.argv[2]]' "$SKILL_DIR/plugin.json" "$1"; }
 
 # load_skill <name>: sets SKILL_DIR and HUB_ID for packages/skills/<name>. AnythingLLM finds an
 # imported skill by a hubId equal to its folder; build.mjs puts what ships in build/<hubId>.
