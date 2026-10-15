@@ -10,6 +10,7 @@ import { Upstream } from "../src/upstream.mts";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { close, listen } from "./fakes/net.mts";
 import { tempDir } from "./fakes/tmp.mts";
+import { until } from "./fakes/until.mts";
 
 let fake: FakeAnythingLLM;
 let bridge: ReturnType<typeof createServer>;
@@ -138,6 +139,20 @@ test("a request body over the limit is a 413 before it is read", async () => {
   const res = await call("POST", "/scheduled-jobs/new", { body: "x".repeat(9 * 1024 * 1024) });
   assert.equal(res.status, 413);
   assert.deepEqual(fake.calls, []);
+});
+
+test("a client that leaves ends the upstream call, and the bridge goes on serving", async () => {
+  fake.hold.add("GET /scheduled-jobs");
+  const gone = new AbortController();
+  const waiting = fetch(url + "/scheduled-jobs", { headers: KEY, signal: gone.signal }).catch((e: Error) => e);
+  await until(() => fake.calls.length);
+  gone.abort();
+  assert.equal(((await waiting) as Error).name, "AbortError");
+  await until(() => fake.dropped.length);
+  assert.deepEqual(fake.dropped, ["GET /scheduled-jobs"]);
+  await until(() => logged.some((l) => l.includes("client closed")));
+  assert.ok(logged.includes("GET /scheduled-jobs client closed"));
+  assert.equal((await call("GET", "/workspaces")).status, 200);
 });
 
 test("with no routes listed nothing passes", async () => {

@@ -2,28 +2,34 @@
 // beside it, and the build fails (removing the output) when a bundle took in a file from outside its
 // part: that is the boundary between parts, since a part cannot ship another part's code.
 //
-//   bridge  src/main.mts -> bridge/dist/anythingllm-bridge.cjs, for Node 20 or later. The extension is
-//           fixed (.cjs) so it runs the same wherever it is copied to. contract/default-allow.txt is
-//           inlined (the one copy of the default BRIDGE_ALLOW). Allowed: src/ and the contract.
+//   bridge  src/main.mts -> bridge/dist/anythingllm-bridge.cjs, for Node 20.3 or later
+//           (AbortSignal.any). The extension is fixed (.cjs) so it runs the same wherever it is
+//           copied to. contract/default-allow.txt is inlined (the one copy of the default BRIDGE_ALLOW). Allowed: src/, shared/ and the contract.
 //   skills  each skill's src/handler.ts -> <skill>/build/<hubId>/handler.js plus plugin.json, the
-//           folder AnythingLLM unpacks, for Node 18. esbuild folds src/ and shared/ into the one
-//           handler.js, which then requires only Node's own modules (and AnythingLLM's, by a path
-//           built at run time). Allowed: the skill's src/ and shared/. Files a skill ships beyond
-//           those two (a guide, JSON data) are not handled yet; add them here when apps and browser
-//           move in.
+//           folder AnythingLLM unpacks, for Node 18. esbuild folds src/ and shared/ (helpers both
+//           parts use) into the one handler.js, which then requires only Node's own modules (and
+//           AnythingLLM's, by a path built at run time). Allowed: the skill's src/ and shared/.
+//           Files a skill ships beyond those two (a guide, JSON data) are not handled yet; add
+//           them here when apps and browser move in.
 //
 // usage: node build.mjs [bridge | skills [skill ...]]   (no argument: the bridge and every skill)
 import { build } from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const here = import.meta.dirname;
+const self = fileURLToPath(import.meta.url);
+const here = path.dirname(self);
 
-/** Bundles `entry` into `outfile`; `allowed` are path prefixes relative to `here`, as esbuild's
- *  metafile writes them. `clean` is what to remove if the bundle took in anything else. */
-async function bundle({ entry, outfile, target, loader, allowed, label, clean = outfile }) {
+/**
+ * Bundles `entry` into `outfile`; `allowed` are path prefixes relative to `cwd`, as esbuild's
+ * metafile writes them. `clean` is what to remove if the bundle took in anything else.
+ * @param {{ entry: string, outfile: string, target: string, allowed: string[], label: string,
+ *   loader?: Record<string, "text">, clean?: string, cwd?: string }} options
+ */
+export async function bundle({ entry, outfile, target, loader, allowed, label, clean = outfile, cwd = here }) {
   const { metafile } = await build({
-    absWorkingDir: here,
+    absWorkingDir: cwd,
     entryPoints: [entry],
     outfile,
     bundle: true,
@@ -48,13 +54,14 @@ async function buildBridge() {
     outfile,
     target: "node20",
     loader: { ".txt": "text" },
-    allowed: ["bridge/src/", "../contract/"],
+    allowed: ["bridge/src/", "shared/", "../contract/"],
     label: "the bridge",
   });
   fs.chmodSync(outfile, 0o755);
   console.log(`built bridge -> ${path.relative(here, outfile)}`);
 }
 
+/** @param {string[]} names */
 async function buildSkills(names) {
   const skills = names.length ? names : fs.readdirSync(path.join(here, "skills")).filter((name) => fs.existsSync(path.join(here, "skills", name, "src", "handler.ts")));
   for (const name of skills) {
@@ -66,7 +73,7 @@ async function buildSkills(names) {
       entry: path.join(dir, "src", "handler.ts"),
       outfile: path.join(out, entrypoint.file),
       target: "node18",
-      allowed: [`skills/${name}/src/`, "skills/shared/"],
+      allowed: [`skills/${name}/src/`, "shared/"],
       label: name,
       clean: out,
     });
@@ -75,7 +82,9 @@ async function buildSkills(names) {
   }
 }
 
-const [part, ...names] = process.argv.slice(2);
-if (part && part !== "bridge" && part !== "skills") throw new Error(`usage: node build.mjs [bridge | skills [skill ...]], not ${part}`);
-if (part !== "skills") await buildBridge();
-if (part !== "bridge") await buildSkills(names);
+if (process.argv[1] === self) {
+  const [part, ...names] = process.argv.slice(2);
+  if (part && part !== "bridge" && part !== "skills") throw new Error(`usage: node build.mjs [bridge | skills [skill ...]], not ${part}`);
+  if (part !== "skills") await buildBridge();
+  if (part !== "bridge") await buildSkills(names);
+}

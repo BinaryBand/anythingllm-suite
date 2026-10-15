@@ -20,13 +20,13 @@ pre-push:
       glob: "app/**/*.dart"
       run: tools/boundaries
     bridge:
-      glob: ["packages/bridge/**/*.{ts,mts,mjs,json}", "packages/*.{json,mjs}", "contract/**"]
+      glob: ["packages/bridge/**/*.{ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**", "contract/**"]
       run: tools/check bridge
     mcp:
       glob: "packages/mcp/**/*.py"
       run: tools/check mcp
     skills:
-      glob: ["packages/skills/**/*.{js,ts,mts,mjs,json}", "packages/*.{json,mjs}"]
+      glob: ["packages/skills/**/*.{js,ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**"]
       run: tools/check skills
     app:
       glob: "app/**/*.dart"

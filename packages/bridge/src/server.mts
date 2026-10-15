@@ -64,7 +64,7 @@ function send(res: http.ServerResponse, status: number, json: unknown): void {
 
 export function createServer({ rules, upstream, log }: Deps): http.Server {
   const allow = rules.map(show);
-  async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  async function handle(req: http.IncomingMessage, res: http.ServerResponse, gone: AbortSignal): Promise<void> {
     const method = req.method ?? "GET";
     const url = req.url ?? "/";
     const cut = url.indexOf("?");
@@ -81,18 +81,24 @@ export function createServer({ rules, upstream, log }: Deps): http.Server {
       throw invalid("bad path");
     }
     const body = await bodyOf(req);
-    const reply = await upstream.exchange(method, route(rules, method, path, query), body, BRIDGE_TIMEOUT);
+    const reply = await upstream.exchange(method, route(rules, method, path, query), body, BRIDGE_TIMEOUT, gone);
     send(res, reply.status, reply.json);
   }
 
   return http.createServer((req, res) => {
-    handle(req, res)
+    // A client that leaves before the answer ends the upstream call too.
+    const left = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) left.abort();
+    });
+    handle(req, res, left.signal)
       .catch((e: unknown) => {
         const known = e instanceof BridgeError;
-        if (!known) log(`error: ${(e as Error).stack ?? e}`);
+        if (!known && (e as Error).name !== "AbortError") log(`error: ${(e as Error).stack ?? e}`);
+        if (left.signal.aborted) return; // nobody is there to be told
         if (res.headersSent) return res.destroy();
         send(res, known ? e.status : 500, { error: known ? e.message : "the bridge failed" });
       })
-      .finally(() => log(`${req.method} ${(req.url ?? "").split("?", 1)[0]} ${res.statusCode}`));
+      .finally(() => log(`${req.method} ${(req.url ?? "").split("?", 1)[0]} ${left.signal.aborted ? "client closed" : res.statusCode}`));
   });
 }

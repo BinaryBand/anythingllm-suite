@@ -4,7 +4,7 @@ A bridge to the parts of AnythingLLM that only its own settings pages reach: its
 
 It needs nothing from AnythingLLM beyond a stock instance, adds no skill and keeps no state. What each route does is AnythingLLM's own, so the caller knows the routes; [contract/endpoints.md](../../contract/endpoints.md) records the ones worth opening, with their shapes as AnythingLLM 1.16.2 gives them.
 
-It is one file, `dist/anythingllm-bridge.cjs`, that runs on Node 20 or later and needs nothing installed beside it.
+It is one file, `dist/anythingllm-bridge.cjs`, that runs on Node 20.3 or later and needs nothing installed beside it.
 
 ```mermaid
 flowchart LR
@@ -25,6 +25,7 @@ It listens on `BRIDGE_PORT` (8467), on 127.0.0.1.
 - `<METHOD> /<path>` (GET, POST, PUT or DELETE) is AnythingLLM's `/api/<path>`, with the query string and the JSON body sent on. AnythingLLM's status and JSON come back as they are: a 400 with `{"job": null, "error": ...}` stays that.
 - A route is passed only when `BRIDGE_ALLOW` lists it. Any other is `403`. With the setting empty, nothing passes.
 - The bridge's own failures are `{"error": "..."}`: 400 a bad request (a path with `.`, `..` or an empty segment, a body that isn't JSON), 401 no accepted key, 403 a route not allowed, 405 another method, 413 a body over 8 MiB, 502 AnythingLLM can't be reached or refused the bridge's login.
+- A client that disconnects before the answer ends the call to AnythingLLM too (Node 20.3 or later for `AbortSignal.any`); a POST may already have taken effect there.
 - Replies are JSON. A route that sends a file or a stream isn't for the bridge.
 
 **Why a list.** The bridge holds AnythingLLM's password, so anyone with a developer key could do what the settings pages do, down to reading the key list or rewriting `.env` through `system/update-env`, unless the bridge says no. List what a client needs and no more.
@@ -61,7 +62,7 @@ This replaces the Python toolkit's `TOOLKIT_*` settings and `~/.config/anythingl
 ## Deploy it
 
 1. Build it: `npm install` once in `packages/`, then `node build.mjs bridge` there. Copy `packages/bridge/dist/anythingllm-bridge.cjs` where you want it to live; the service points at that path.
-1. Run `node anythingllm-bridge.cjs install --storage <AnythingLLM's storage folder>`. It points the bridge at the storage, where the password is, sets `BRIDGE_ALLOW` when it isn't set, and on Linux with systemd writes and starts the user unit `anythingllm-bridge.service`. `--no-start` stops there.
+1. Run `node anythingllm-bridge.cjs install --storage <AnythingLLM's storage folder>`. It points the bridge at the storage, where the password is, sets `BRIDGE_ALLOW` when it isn't set, and, where the user's systemd manager answers (`systemctl --user is-system-running`), writes and starts the user unit `anythingllm-bridge.service`. `--no-start` stops there.
    - It also makes a developer key named `anythingllm-mcp` and writes it, with the bridge's address, to `chat.env` and `schedule.env` in `MCP_ENV_DIR` (mode 600). A key or address already in a file is left alone, and the key is never printed. `--no-agent-tools` skips this. Deleting the key in AnythingLLM's settings disconnects both servers.
 1. Without systemd, run `node anythingllm-bridge.cjs serve` under your own supervisor: a terminal, tmux, a container or a process manager. It reads the same settings file.
 1. If AnythingLLM's `.env` isn't at `<storage>/.env`, set `ANYTHINGLLM_ENV` in the settings file.
@@ -92,7 +93,8 @@ On Linux these need sudo unless you ran `tailscale set --operator=$USER` once.
 
 ## Develop
 
-- `tools/check bridge` is the gate: the type-check, then `node --test` on `tests/`, after building. From `packages/`: `npm run typecheck` (covers the skills too) and `npm run bridge:test`.
-- `src/` is flat: `allow.mts` (the rules) and `settings.mts` do no I/O; `upstream.mts` is AnythingLLM's client; `server.mts` the HTTP side; `install.mts`, `service.mts`, `pair.mts` and `envfile.mts` the deployment; `main.mts` the commands.
+- `tools/check bridge` is the gate: the type-check, the tests of what both parts share (`packages/shared` and the build check: `npm run shared:test`), then `node --test` on `tests/`, after building. From `packages/`: `npm run typecheck` (covers the skills too) and `npm run bridge:test`.
+- Both parts share `packages/shared/` (today `writeAtomic`), bundled in. `src/` is flat: `allow.mts` (the rules) and `settings.mts` do no I/O; `upstream.mts` is AnythingLLM's client; `server.mts` the HTTP side; `install.mts`, `service.mts`, `pair.mts` and `envfile.mts` the deployment; `main.mts` the commands.
 - Tests import `src/` directly (Node strips the types), except `bundle.test.mts`, which runs the built file. `tests/fakes/anythingllm.mts` stands in for AnythingLLM's two APIs on a port of its own, so `server.test.mts` runs the real bridge against it, with and without AnythingLLM's password.
-- Not tested: the systemd calls themselves (`service.usable` reads the real machine, so the `install --start` path never runs in a test), the commands other than `serve`, `settings` and the usage through argv, and AnythingLLM itself; the bridge has not yet been run against a real instance.
+- `service.test.mts` runs `install`, `uninstall` and `health` against a scripted `systemctl` and a real bridge on a free port. A client that leaves ends the upstream call (`server.test.mts`, with a route the fake AnythingLLM never answers).
+- Not tested: a real `systemctl`, the commands other than `serve` and `settings` through argv, and AnythingLLM itself; the bridge has not yet been run against a real instance.

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Upstream } from "../src/upstream.mts";
 import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { tempDir } from "./fakes/tmp.mts";
+import { until } from "./fakes/until.mts";
 
 const tmp = tempDir("upstream");
 
@@ -110,4 +111,16 @@ test("calls with one key at once share one question, and the memory of keys is b
   for (let i = 0; i < 300; i++) await api.keyValid(`bad-${i}`);
   await api.keyValid("good-key"); // the oldest were let go, this one among them
   assert.equal(fake.keyChecks, 1 + 300 + 1);
+});
+
+test("a call whose client left is ended with an AbortError, not a 502", async () => {
+  fake.hold.add("GET /slow");
+  const api = new Upstream(fake.url, null);
+  const gone = new AbortController();
+  const call = api.exchange("GET", "/slow", undefined, 5_000, gone.signal);
+  await until(() => fake.calls.length);
+  gone.abort();
+  await assert.rejects(call, { name: "AbortError" });
+  await until(() => fake.dropped.length); // AnythingLLM saw the connection go
+  assert.deepEqual([fake.calls.length, fake.dropped], [1, ["GET /slow"]]);
 });

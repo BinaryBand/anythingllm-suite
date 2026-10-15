@@ -20,7 +20,8 @@
   "include": [
     "bridge/src",
     "bridge/tests",
-    "skills/shared",
+    "shared",
+    "*.test.mts",
     "skills/*/src",
     "skills/*/tests/*.mts"
   ]

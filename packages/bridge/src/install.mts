@@ -27,6 +27,8 @@ export interface Ctx {
   defaultAllow: string;
   /** The service manager's commands; the real ones unless a test gives its own. */
   run?: service.Run;
+  /** How many seconds a started bridge has to answer (60). */
+  startWait?: number;
 }
 
 const AGENT_SERVERS = ["chat", "schedule"]; // anythingllm-mcp's servers that call the bridge
@@ -53,10 +55,9 @@ const statusOf = async (url: string): Promise<number> => {
   }
 };
 
-async function waitFor(url: string): Promise<boolean> {
-  for (let tries = 0; tries < 120; tries++) {
+async function waitFor(url: string, seconds = 60): Promise<boolean> {
+  for (const deadline = Date.now() + seconds * 1000; Date.now() < deadline; await sleep(500)) {
     if ((await statusOf(url)) === 200) return true;
-    await sleep(500);
   }
   return false;
 }
@@ -88,7 +89,7 @@ async function start(ctx: Ctx, settings: Settings, file: string): Promise<void> 
   }
   if (service.define(ctx.home, service.unitText(ctx.command, file, settings.port), ctx.run)) ctx.print(`wrote the runner's service: ${service.UNIT}`);
   service.start(ctx.run);
-  if (!(await waitFor(`http://127.0.0.1:${settings.port}/health`))) throw invalid(`the runner didn't answer; see \`journalctl --user -u ${service.UNIT}\``);
+  if (!(await waitFor(`http://127.0.0.1:${settings.port}/health`, ctx.startWait))) throw invalid(`the runner didn't answer; see \`journalctl --user -u ${service.UNIT}\``);
 }
 
 /** Gives anythingllm-mcp's chat and schedule servers the developer key named AGENT_KEY_NAME and
@@ -130,10 +131,12 @@ function leftForYou(ctx: Ctx, settings: Settings, file: string): void {
 }
 
 export function uninstall(ctx: Ctx): void {
-  const managed = service.managed(ctx.home, ctx.run);
-  if (managed) service.stop(ctx.run);
+  const unit = service.defined(ctx.home);
+  const stopped = unit && service.stop(ctx.run);
   saveEnv(fileFor(ctx.env, ctx.home), { ANYTHINGLLM_STORAGE: null });
-  ctx.print(managed ? "Stopped the runner." : "Forgot the storage. Stop `anythingllm-bridge serve` yourself.");
+  if (stopped) ctx.print("Stopped the runner.");
+  else if (unit) ctx.print(`Forgot the storage, but \`systemctl --user disable --now ${service.UNIT}\` failed: stop the service yourself.`);
+  else ctx.print("Forgot the storage. Stop `anythingllm-bridge serve` yourself.");
 }
 
 type Check = [what: string, ok: boolean, detail: string];
@@ -142,7 +145,7 @@ type Check = [what: string, ok: boolean, detail: string];
 export async function health(ctx: Ctx): Promise<boolean> {
   const settings = loadSettings(ctx.env, ctx.home);
   const found: Check[] = [];
-  if (service.managed(ctx.home, ctx.run)) {
+  if (service.defined(ctx.home)) {
     const state = service.status(ctx.run);
     found.push([service.UNIT, state === "active", state]);
   }

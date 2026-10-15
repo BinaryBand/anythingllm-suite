@@ -29,6 +29,8 @@ interface Options {
   body?: unknown;
   token?: string;
   timeout?: number;
+  /** Aborts the call (the client that asked for it left). An aborted call throws the AbortError as it is. */
+  signal?: AbortSignal;
 }
 
 const said = (found: unknown): string | null => {
@@ -38,16 +40,18 @@ const said = (found: unknown): string | null => {
 };
 
 /** One JSON call: its status and its JSON. */
-export async function request(url: string, { method = "GET", body, token = "", timeout = DEFAULT_TIMEOUT }: Options = {}): Promise<Reply> {
+export async function request(url: string, { method = "GET", body, token = "", timeout = DEFAULT_TIMEOUT, signal }: Options = {}): Promise<Reply> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
   let text: string;
   try {
-    res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
+    const limit = signal ? AbortSignal.any([AbortSignal.timeout(timeout), signal]) : AbortSignal.timeout(timeout);
+    res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: limit });
     text = await res.text();
   } catch (e) {
+    if (signal?.aborted) throw e;
     if ((e as Error).name === "TimeoutError") throw upstreamError(`AnythingLLM didn't answer within ${Math.round(timeout / 1000)} s`);
     throw upstreamError(`AnythingLLM can't be reached: ${((e as Error).cause as Error | undefined)?.message ?? (e as Error).message}`);
   }
@@ -113,14 +117,15 @@ export class Upstream {
     return this.#token;
   }
 
-  /** The status and JSON of AnythingLLM's own answer, whatever its status. `path` is under /api. */
-  async exchange(method: string, path: string, body?: unknown, timeout = DEFAULT_TIMEOUT): Promise<Reply> {
+  /** The status and JSON of AnythingLLM's own answer, whatever its status. `path` is under /api.
+   *  `signal` ends the call early; the login it may wait on is shared and goes on. */
+  async exchange(method: string, path: string, body?: unknown, timeout = DEFAULT_TIMEOUT, signal?: AbortSignal): Promise<Reply> {
     const url = `${this.#base}/api${path}`;
     const first = this.#tokenFor();
     const token = await first;
-    const reply = await request(url, { method, body, token, timeout });
+    const reply = await request(url, { method, body, token, timeout, signal });
     if (reply.status !== 401 || !token) return reply; // with no password, a 401 is the route's own
-    const again = await request(url, { method, body, token: await this.#tokenFor(first), timeout });
+    const again = await request(url, { method, body, token: await this.#tokenFor(first), timeout, signal });
     if (again.status === 401) throw upstreamError("AnythingLLM refused the bridge's login (the password in its .env, ANYTHINGLLM_ENV)");
     return again;
   }

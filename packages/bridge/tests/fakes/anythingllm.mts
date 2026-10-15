@@ -20,6 +20,9 @@ export class FakeAnythingLLM {
   expired = new Set<string>();
   /** Replies by `METHOD /path?query` (under /api); anything else is 200 {"ok": true}. */
   replies = new Map<string, { status?: number; json: unknown }>();
+  /** `METHOD /path` routes that are never answered; `dropped` lists the ones whose caller gave up. */
+  hold = new Set<string>();
+  dropped: string[] = [];
   calls: Call[] = [];
   logins = 0;
   keyChecks = 0;
@@ -48,6 +51,10 @@ export class FakeAnythingLLM {
       if (this.expired.has(token)) return reply(401, undefined);
       const route = url.replace(/^\/api/, "");
       this.calls.push({ method: req.method ?? "", url: route, body, token });
+      if (this.hold.has(`${req.method} ${route}`)) {
+        res.on("close", () => this.dropped.push(`${req.method} ${route}`));
+        return;
+      }
       const found = this.replies.get(`${req.method} ${route}`);
       reply(found?.status ?? 200, found ? found.json : { ok: true });
     });

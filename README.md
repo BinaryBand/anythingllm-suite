@@ -17,6 +17,7 @@ Everything that extends a stock AnythingLLM, in one repository: a bridge to its 
 packages/bridge/    the bridge (TypeScript; ships as one file, anythingllm-bridge.cjs)
 packages/mcp/       the MCP servers (Python; distribution: anythingllm-mcp)
 packages/skills/    one folder per skill; each ships as its own zip
+packages/shared/    helpers both JavaScript parts bundle in (writeAtomic)
 packages/package.json, tsconfig.json   the JavaScript parts' toolchain (bridge, skills): one install, one type-check
 app/                the Flutter app
 contract/           endpoints.md, default-allow.txt, versions.env: read by every part
@@ -27,7 +28,7 @@ dist/               build output, ignored
 
 ## Rules
 
-- **No part imports another.** A JavaScript part's build fails if its bundle takes in a file from outside its own `src/` (a skill's `shared/` aside), `tools/boundaries` fails if the app imports a path into another part, and a Python part cannot import a TypeScript one. Imports that are erased or not bundled (types, tests) are not checked. Parts share the contract and the tooling, never modules.
+- **No part imports another.** A JavaScript part's build fails if its bundle takes in a file from outside its own `src/` (the helpers in `packages/shared/` aside; `build.test.mts` tests this), `tools/boundaries` fails if the app imports a path into another part, and a Python part cannot import a TypeScript one. Imports that are erased or not bundled (types, tests) are not checked. Parts share the contract and the tooling, never modules.
 - **One version of AnythingLLM under test.** `contract/versions.env` pins the image every check uses.
 - **Parts version and release on their own.** Tags are prefixed: `skills/memory-lean-v0.2.0`, `app-v1.4.0`.
 

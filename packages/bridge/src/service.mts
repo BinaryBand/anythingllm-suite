@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { writeAtomic } from "#shared/atomic";
 
 export const UNIT = "anythingllm-bridge.service";
 
@@ -16,7 +17,7 @@ const run: Run = (command, args) => {
   return { status: done.status, stdout: done.stdout ?? "" };
 };
 
-const unitFile = (home: string): string => path.join(home, ".config", "systemd", "user", UNIT);
+export const unitFile = (home: string): string => path.join(home, ".config", "systemd", "user", UNIT);
 
 const quote = (word: string): string => (/[\s"'\\$%]/.test(word) ? `"${word.replace(/[\\"]/g, "\\$&").replace(/%/g, "%%").replace(/\$/g, "$$$$")}"` : word);
 
@@ -38,29 +39,28 @@ WantedBy=default.target
 `;
 }
 
-/** Whether this machine runs systemd (as sd_booted does: /run/systemd/system) and has systemctl. */
-export const usable = (r: Run = run): boolean => process.platform === "linux" && fs.existsSync("/run/systemd/system") && r("systemctl", ["--version"]).status === 0;
+/** Whether the user's systemd manager answers: no systemctl, or no reachable user manager (an ssh
+ *  session without a user bus), reads as an empty answer. */
+export const usable = (r: Run = run): boolean => ["running", "degraded", "starting"].includes(r("systemctl", ["--user", "is-system-running"]).stdout.trim());
 
 /** Writes the unit; whether it changed. */
 export function define(home: string, text: string, r: Run = run): boolean {
   const file = unitFile(home);
   if (fs.existsSync(file) && fs.readFileSync(file, "utf8") === text) return false;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text);
+  writeAtomic(file, text);
   r("systemctl", ["--user", "daemon-reload"]);
   return true;
 }
 
-/** Whether the bridge runs as a unit here: systemd is there and `install` defined the unit. */
-export const managed = (home: string, r: Run = run): boolean => usable(r) && fs.existsSync(unitFile(home));
+/** Whether `install` defined the unit. */
+export const defined = (home: string): boolean => fs.existsSync(unitFile(home));
 
 export function start(r: Run = run): void {
   r("systemctl", ["--user", "enable", UNIT]);
   if (r("systemctl", ["--user", "restart", UNIT]).status !== 0) throw new Error(`systemctl restart ${UNIT} failed; see \`journalctl --user -u ${UNIT}\``);
 }
 
-export function stop(r: Run = run): void {
-  r("systemctl", ["--user", "disable", "--now", UNIT]);
-}
+/** Stops the unit and keeps it from starting again; whether systemctl agreed. */
+export const stop = (r: Run = run): boolean => r("systemctl", ["--user", "disable", "--now", UNIT]).status === 0;
 
 export const status = (r: Run = run): string => r("systemctl", ["--user", "is-active", UNIT]).stdout.trim();

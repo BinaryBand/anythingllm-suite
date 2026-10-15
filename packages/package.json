@@ -7,8 +7,9 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
+    "shared:test": "node --test \"shared/*.test.mts\" \"*.test.mts\"",
     "bridge:test": "node build.mjs bridge && node --test \"bridge/tests/*.test.mts\"",
-    "skills:test": "node build.mjs skills && node --test \"skills/shared/*.test.mts\" \"skills/*/tests/*.test.mts\""
+    "skills:test": "node build.mjs skills && node --test \"skills/*/tests/*.test.mts\""
   },
   "devDependencies": {
     "@types/node": "^18.19.130",
@@ -16,6 +17,6 @@
     "typescript": "^7.0.2"
   },
   "imports": {
-    "#shared/*": "./skills/shared/*.mts"
+    "#shared/*": "./shared/*.mts"
   }
 }

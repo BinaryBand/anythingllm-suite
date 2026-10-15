@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { writeAtomic } from "./atomic.mts";
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "skills-shared-"));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "shared-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 const dir = () => fs.mkdtempSync(path.join(root, "t-"));
 

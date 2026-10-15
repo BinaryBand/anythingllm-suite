@@ -3,7 +3,7 @@
 // its password is.
 
 import fs from "node:fs";
-import path from "node:path";
+import { writeAtomic } from "#shared/atomic";
 
 const HEADER = [
   "# anythingllm-bridge's settings: the runner's environment. `install` writes the first",
@@ -46,13 +46,5 @@ export function saveEnv(file: string, changes: Record<string, string | null>, he
     }
   }
   for (const [key, value] of left) if (value !== null) kept.push(`${key}=${value}`);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(temp, kept.join("\n") + "\n", { mode: 0o600 });
-    fs.renameSync(temp, file);
-  } catch (e) {
-    fs.rmSync(temp, { force: true });
-    throw e;
-  }
+  writeAtomic(file, kept.join("\n") + "\n", 0o600);
 }
