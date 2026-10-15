@@ -1,41 +1,65 @@
 # anythingllm-suite
 
-Everything that extends a stock AnythingLLM, in one repository: a bridge to its internal API, MCP servers for the agent and other MCP clients, agent skills that run inside it, and the phone app that talks to the bridge.
+Everything that extends a stock AnythingLLM, in one repository: an MCP server and agent skills that AnythingLLM runs itself, a bridge to its internal API, and the phone app that talks to the bridge.
 
 | Part | Folder | Runs | Toolchain |
 | --- | --- | --- | --- |
-| Bridge to AnythingLLM's internal API | `packages/bridge` | beside AnythingLLM, as a service | Node 20+, no dependencies shipped |
-| MCP servers (control: chat and schedule) | `packages/mcp` | started over stdio by an MCP client, or for AnythingLLM by systemd through a socket | Python 3.13, uv |
-| Agent skills (apps, browser, memory) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+, no dependencies shipped |
+| Control server (MCP: chat and schedule) | `packages/control` | started by AnythingLLM, from its storage folder, with `node` | Node 18+, no dependencies shipped |
+| Agent skills (memory; apps and browser to come) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+, no dependencies shipped |
+| Bridge to AnythingLLM's internal API, and the installer | `packages/bridge` | the command you run; the bridge beside AnythingLLM, as a service | Node 20.3+, no dependencies shipped |
 | Phone app (AnywhereLLM Lite) | `app` | on the phone | Flutter |
 
 `packages/` holds what runs beside or inside AnythingLLM. `app/` is the client and has its own toolchain and release. `contract/` is what both sides agree on.
 
+## Install
+
+You need a stock AnythingLLM (Desktop, or the Docker image) and Node 20.3 or later on the machine it runs on. The command is one file, `anythingllm-suite.cjs`, which carries the control server and the skills; build it with `npm install` once in `packages/`, then `node build.mjs bridge` there (it lands in `packages/bridge/dist/`), or `make install` from a checkout.
+
+```sh
+node anythingllm-suite.cjs install                     # AnythingLLM Desktop, on Windows, macOS or Linux
+node anythingllm-suite.cjs install --storage ~/anythingllm   # Docker: the folder mounted at /app/server/storage
+```
+
+It writes the control server, its entry in AnythingLLM's MCP servers file and the skills into AnythingLLM's storage folder, and AnythingLLM runs them itself: nothing runs beside it, so there is no service, socket or key to set up. Then, in AnythingLLM, open Settings > Agent Skills, refresh the MCP servers (or restart AnythingLLM) and switch on what you want.
+
+- **Which AnythingLLM:** `--storage DIR`, else the one install was last given, else AnythingLLM Desktop's (`%APPDATA%\anythingllm-desktop\storage`, `~/Library/Application Support/anythingllm-desktop/storage`, `~/.config/anythingllm-desktop/storage`). For Docker it is the host folder you bind-mounted, as AnythingLLM's own instructions do; a named volume isn't reachable from the host. With rootless podman, start the container with `--userns=keep-id` or run install inside `podman unshare`, so the storage is yours to write.
+- **What it puts in:** `--roles chat,schedule` (default `chat`: the schedule role lets the agent plant prompts that run later, unattended), `--skills all|none|memory,...` (default all), `--runtime container|native` (default: native for Desktop's storage, container for any other).
+- **The bridge,** which only AnywhereLLM Lite needs: add `--bridge`. It runs under the user's own service manager: systemd on Linux, launchd on macOS, the Task Scheduler on Windows, or your own supervisor (`--service foreground`). See [packages/bridge](packages/bridge/README.md).
+- `health` checks it all, `uninstall` takes it out again (a skill's data stays), `pair` prints the link the phone app opens.
+
+| Where AnythingLLM runs | Install | Verified on real hardware |
+| --- | --- | --- |
+| Docker or podman on Linux | `install --storage DIR` | yes, with podman (AnythingLLM 1.16.2); docker not yet (CI's e2e will) |
+| Desktop on Windows, macOS, Linux | `install` | not yet |
+| Docker Desktop on macOS or Windows | `install --storage DIR` | not yet; best effort |
+| The bridge's service: systemd, launchd, Task Scheduler | `install --bridge` | systemd's commands as before; launchd and Task Scheduler only against scripted commands |
+
 ## Layout
 
 ```text
-packages/bridge/    the bridge (TypeScript; ships as one file, anythingllm-bridge.cjs)
-packages/mcp/       the MCP server, control (Python; distribution: anythingllm-mcp)
-packages/skills/    one folder per skill; each ships as its own zip
-packages/shared/    helpers both JavaScript parts bundle in (writeAtomic)
-packages/package.json, tsconfig.json   the JavaScript parts' toolchain (bridge, skills): one install, one type-check
+packages/control/   the control MCP server (TypeScript; ships as control.cjs, inside the installer)
+packages/bridge/    the installer and the bridge (TypeScript; ships as one file, anythingllm-suite.cjs)
+packages/skills/    one folder per skill; each ships as its own zip, and inside the installer
+packages/shared/    helpers the JavaScript parts bundle in (writeAtomic, the per-OS paths, AnythingLLM's login)
+packages/package.json, tsconfig.json   the toolchain: one install, one type-check
 app/                the Flutter app
 contract/           endpoints.md, default-allow.txt, versions.env: read by every part
-tools/              check, package, install, boundaries
+tools/              check, package, install, e2e, routes, boundaries
 docs/               architecture.md; notes/ for decisions, repo-wide and per part
+.github/workflows/  the tests on Linux, macOS and Windows, and the e2e on Linux
 dist/               build output, ignored
 ```
 
 ## Rules
 
-- **No part imports another.** A JavaScript part's build fails if its bundle takes in a file from outside its own `src/` (the helpers in `packages/shared/` aside; `build.test.mts` tests this), `tools/boundaries` fails if the app imports a path into another part, and a Python part cannot import a TypeScript one. Imports that are erased or not bundled (types, tests) are not checked. Parts share the contract and the tooling, never modules.
+- **No part imports another.** A JavaScript part's build fails if its bundle takes in a file from outside its own `src/` (the helpers in `packages/shared/` aside; `build.test.mts` tests this), and `tools/boundaries` fails if the app imports a path into another part. Imports that are erased or not bundled (types, tests) are not checked. Parts share the contract and the tooling, never modules. The installer carries the control server and the skills as built text, not as imports.
 - **One version of AnythingLLM under test.** `contract/versions.env` pins the image every check uses.
 - **Parts version and release on their own.** Tags are prefixed: `skills/memory-lean-v0.2.0`, `app-v1.4.0`.
 
 ## Checks
 
-There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the skills and mcp. `make lint` and `make test` run those hooks on every file; `make check` tests everything. `make e2e` (`tools/e2e`) is not a hook: it starts a throwaway AnythingLLM in a container and the built bridge in front of it, and runs the MCP servers against them, with podman including the server's `install` into the container's storage (about 25 seconds once the image is pulled). Nothing here tests Windows or macOS.
+`lefthook.yml` is the gate before a push, and `.github/workflows/test.yml` runs the same tests on Linux, macOS and Windows. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. `flutter analyze` runs on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the control server and the skills. `make lint` and `make test` run those hooks on every file; `make check` tests everything. `make e2e` (`tools/e2e`) is not a hook: it starts a throwaway AnythingLLM in a container with its storage bind-mounted, runs `install --bridge` into it and the bridge beside it, and has the real AnythingLLM start the control server and the tests drive it.
 
 ## Status
 
-Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit; `make e2e` runs it in front of a real AnythingLLM, but only for the routes the control server calls). `packages/mcp` holds the `control` server: chat and schedule, as roles of one MCP server, against the bridge (tested against a real AnythingLLM by `make e2e`); `anythingllm-mcp-control install` puts it where AnythingLLM can start it; the memory and sandbox servers and the old deploy command are still in `anythingllm-mcp`. Not yet: `app/` (holds a `.gitkeep`), the other skills, `tools/install`, and the container checks.
+Moved in: the bridge, the control server (chat and schedule, ported from Python to TypeScript; AnythingLLM 1.16.2 starts it from its storage and `make e2e` drives it there) and the `memory` skill (AnythingLLM lists it after install; not yet called by a real agent). Not yet: `app/` (holds a `.gitkeep`), the `apps` and `browser` skills, a run on real macOS and Windows machines. The memory and sandbox MCP servers stay in `anythingllm-mcp`.

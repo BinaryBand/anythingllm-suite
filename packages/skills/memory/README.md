@@ -33,7 +33,7 @@ The vectors are derived from the index. The skill records, for each scope, which
 
 ## Using it
 
-1. Build the Hub package with `tools/package memory` (`dist/memory-lean-0.1.0.zip`: `handler.js` and `plugin.json`) and import it in AnythingLLM, or copy `build/memory-lean/` into its `agent-skills` folder. (`tools/install` is not ported yet.)
+1. `anythingllm-suite install` puts it into AnythingLLM's `plugins/agent-skills/memory-lean/` with the rest of the suite (`--skills memory` leaves out any other skill; see the [README](../../../README.md)). Or build the Hub package with `tools/package memory` (`dist/memory-lean-0.1.0.zip`: `handler.js` and `plugin.json`) and import it in AnythingLLM.
 1. In AnythingLLM, Agent Skills, switch on Memory.
 1. Ask the agent to remember something.
 
