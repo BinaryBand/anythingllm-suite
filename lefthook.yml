@@ -1,7 +1,7 @@
 # Git hooks, the only gate this repository has (there is no hosted CI). Install once per clone:
 #   lefthook install
 # A hook runs only when a staged or pushed file matches its glob, so the empty scaffolding commits
-# freely. tools/check knows the bridge and the skills so far (their unit tests, not a container run); their imports are checked when they are built (packages/build.mjs).
+# freely. tools/check knows the bridge, the skills and mcp so far (their unit tests, not a container run); their imports are checked when they are built (packages/build.mjs).
 
 pre-commit:
   parallel: true

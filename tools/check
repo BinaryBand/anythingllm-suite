@@ -2,7 +2,8 @@
 # tools/check [skills|bridge|mcp|app ...]: the tests of each part; no argument: all, stopping at the
 # first part that fails. The bridge and the skills are written: each one's type-check, then its tests
 # (which build the bundles first). The type-check is one run over both (packages/tsconfig.json), and so
-# are the tests of what both share: packages/shared and the build script.
+# are the tests of what both share: packages/shared and the build script. mcp is written too: ruff, then
+# pytest, whose stdio test starts the server as an MCP client does.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -15,7 +16,12 @@ for part in "$@"; do
       npm --prefix "$ROOT/packages" run -s shared:test
       npm --prefix "$ROOT/packages" run -s "$part:test"
       ;;
-    mcp|app) not_yet "check $part" ;;
+    mcp)
+      echo "[mcp] ruff, then tests"
+      uv run --locked --directory "$ROOT/packages/mcp" ruff check .
+      uv run --locked --directory "$ROOT/packages/mcp" pytest -q
+      ;;
+    app) not_yet "check $part" ;;
     *) echo "tools/check: no such part: $part (one of: bridge skills mcp app)" >&2; exit 2 ;;
   esac
 done

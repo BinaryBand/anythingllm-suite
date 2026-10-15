@@ -34,8 +34,8 @@ dist/               build output, ignored
 
 ## Checks
 
-There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge and the skills. `make lint` and `make test` run those hooks on every file; `make check` tests everything. Nothing here tests Windows or macOS.
+There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. Ruff and `flutter analyze` run on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the skills and mcp. `make lint` and `make test` run those hooks on every file; `make check` tests everything. Nothing here tests Windows or macOS.
 
 ## Status
 
-Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit, not yet run against a real AnythingLLM). Not yet: `packages/mcp` and `app/` (each holds a `.gitkeep`), the other skills, `tools/install`, and the container checks. The MCP servers still call the bridge by the toolkit's old names; see the notes.
+Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit, not yet run against a real AnythingLLM). `packages/mcp` holds only a `hello` server so far, a skeleton to grow from; the chat, schedule, memory and sandbox servers are still in `anythingllm-mcp` and call the bridge by the toolkit's old names (see the notes). Not yet: `app/` (holds a `.gitkeep`), the other skills, `tools/install`, and the container checks.
