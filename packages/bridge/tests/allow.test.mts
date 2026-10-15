@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { chatRoutes, missingRules, parseRules, route, show } from "../src/allow.mts";
+import { absentRules, chatRoutes, defaultList, missingRules, parseRules, route, show } from "../src/allow.mts";
 
 // The default list the parts agree on (contract/default-allow.txt).
-const CLIENT_ALLOW = fs.readFileSync(fileURLToPath(new URL("../../../contract/default-allow.txt", import.meta.url)), "utf8").trim();
+const DEFAULT_FILE = fs.readFileSync(fileURLToPath(new URL("../../../contract/default-allow.txt", import.meta.url)), "utf8");
+const CLIENT_ALLOW = defaultList(DEFAULT_FILE);
 const CHAT = chatRoutes(CLIENT_ALLOW);
 
 const passes = (allow: string, method: string, path: string, query = ""): string => route(parseRules(allow), method, path, query);
@@ -116,4 +117,27 @@ test("missing rules are those nothing held covers", () => {
   assert.deepEqual(lacking("/workspace/*/thread"), ["GET /workspace/*/threads"]);
   // A wildcard held covers a name wanted, never the other way round.
   assert.ok(lacking("GET /workspace/home/threads").includes("GET /workspace/*/threads"));
+});
+
+test("the default list file is an entry a line, with comments", () => {
+  assert.equal(defaultList("# why\n\n/workspaces\n  GET /scheduled-jobs  \n# more\nPOST /a/*/b, /c\n"), "/workspaces, GET /scheduled-jobs, POST /a/*/b, /c");
+  assert.equal(defaultList("# nothing\n"), "");
+  assert.throws(() => defaultList("/workspaces\nscheduled-jobs"), /BRIDGE_ALLOW/);
+  assert.match(DEFAULT_FILE, /^# verified against AnythingLLM \d+\.\d+\.\d+$/m); // tools/routes reads and rewrites this line
+});
+
+test("a rule is absent when AnythingLLM declares no route under it", () => {
+  const declared = [
+    { method: "GET", segments: ["workspace", ":slug", "threads"] },
+    { method: "POST", segments: ["workspace", ":slug", "thread", "new"] },
+    { method: "GET", segments: ["scheduled-jobs", ":id", "runs"] },
+  ];
+  const absent = (text: string) => absentRules(parseRules(text), declared);
+  assert.deepEqual(absent("GET /workspace/*/threads, POST /workspace/*/thread/new, /scheduled-jobs"), []);
+  assert.deepEqual(absent("/workspace"), []); // any route under the prefix will do
+  assert.deepEqual(absent("POST /workspace/*/threads"), ["POST /workspace/*/threads"]); // the method has to be one declared
+  assert.deepEqual(absent("GET /workspace/*/thread/*/chats"), ["GET /workspace/*/thread/*/chats"]); // moved
+  assert.deepEqual(absent("/workspaces"), ["/workspaces"]); // whole segments, so not /workspace
+  assert.deepEqual(absent("GET /workspace/home/threads"), []); // a name where AnythingLLM has a :slug
+  assert.deepEqual(absent("GET /scheduled-jobs/1/runs/2"), ["GET /scheduled-jobs/1/runs/2"]); // longer than any declared
 });

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { parseArgs } from "node:util";
 import defaultAllow from "../../../contract/default-allow.txt";
+import { defaultList } from "./allow.mts";
 import { invalid } from "./errors.mts";
 import { health, install, uninstall, type Ctx } from "./install.mts";
 import { developerKey, pairingLink } from "./pair.mts";
@@ -30,7 +31,7 @@ const ctx: Ctx = {
   env: process.env,
   print: console.log,
   command: [process.execPath, fs.realpathSync(process.argv[1]), "serve"],
-  defaultAllow: defaultAllow.trim(),
+  defaultAllow: defaultList(defaultAllow),
 };
 
 async function main(argv: string[]): Promise<number | void> {

@@ -2,7 +2,7 @@
 # implemented here, so `make` and the scripts never disagree.
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks lint test boundaries check package install-skill
+.PHONY: help hooks lint test boundaries check routes package install-skill
 
 PART  ?=# bridge, mcp, skills or app; empty: all
 SKILL ?=# a skill's folder name under packages/skills
@@ -32,6 +32,9 @@ boundaries: ## Fail if the app imports a path into another part
 
 check: ## Test a part (PART=mcp) or, with no PART, all of them
 	tools/check $(PART)
+
+routes: ## Fail if AnythingLLM stopped declaring a route the default list names (needs the image)
+	tools/routes
 
 package: ## Build and zip a skill into dist/ (SKILL=memory)
 	tools/package $(SKILL)

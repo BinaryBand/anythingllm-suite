@@ -64,6 +64,30 @@ export function parseRules(text: string): Rule[] {
   return rules;
 }
 
+/** The rules of contract/default-allow.txt: one entry per line (commas work too), `#` lines and
+ *  blank lines left out. */
+export const defaultRules = (text: string): Rule[] =>
+  parseRules(text.split("\n").filter((line) => !line.trim().startsWith("#")).join(","));
+
+/** That file as a BRIDGE_ALLOW value, on one line. */
+export const defaultList = (text: string): string => defaultRules(text).map(show).join(", ");
+
+/** A route AnythingLLM declares: a `:name` segment takes any one segment. */
+export interface Declared {
+  method: string;
+  segments: string[];
+}
+
+/** The rules that name no declared route, as they are written: a route that has gone or moved.
+ *  A rule is a prefix, so any route under it will do. */
+export function absentRules(rules: Rule[], declared: Declared[]): string[] {
+  const under = (rule: Rule, route: Declared): boolean =>
+    (rule.method === null || rule.method === route.method) &&
+    rule.prefix.length <= route.segments.length &&
+    rule.prefix.every((want, i) => want === WILDCARD || route.segments[i].startsWith(":") || want === route.segments[i]);
+  return rules.filter((rule) => !declared.some((route) => under(rule, route))).map(show);
+}
+
 /** The rules of `wanted` that nothing in `have` covers, as they are written. */
 export const missingRules = (have: Rule[], wanted: Rule[]): string[] => wanted.filter((r) => !have.some((h) => covers(h, r))).map(show);
 

@@ -22,6 +22,7 @@
     "bridge/tests",
     "shared",
     "*.test.mts",
+    "../tools/*.mts",
     "skills/*/src",
     "skills/*/tests/*.mts"
   ]
