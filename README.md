@@ -5,7 +5,7 @@ Everything that extends a stock AnythingLLM, in one repository: a bridge to its 
 | Part | Folder | Runs | Toolchain |
 | --- | --- | --- | --- |
 | Bridge to AnythingLLM's internal API | `packages/bridge` | beside AnythingLLM, as a service | Node 20+, no dependencies shipped |
-| MCP servers (chat, schedule, memory, sandbox) | `packages/mcp` | started by an MCP client over stdio | Python 3.13, uv |
+| MCP servers (control: chat and schedule) | `packages/mcp` | started by an MCP client over stdio | Python 3.13, uv |
 | Agent skills (apps, browser, memory) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+, no dependencies shipped |
 | Phone app (AnywhereLLM Lite) | `app` | on the phone | Flutter |
 
@@ -15,7 +15,7 @@ Everything that extends a stock AnythingLLM, in one repository: a bridge to its 
 
 ```text
 packages/bridge/    the bridge (TypeScript; ships as one file, anythingllm-bridge.cjs)
-packages/mcp/       the MCP servers (Python; distribution: anythingllm-mcp)
+packages/mcp/       the MCP server, control (Python; distribution: anythingllm-mcp)
 packages/skills/    one folder per skill; each ships as its own zip
 packages/shared/    helpers both JavaScript parts bundle in (writeAtomic)
 packages/package.json, tsconfig.json   the JavaScript parts' toolchain (bridge, skills): one install, one type-check
@@ -38,4 +38,4 @@ There is no hosted CI; `lefthook.yml` is the gate. `make` lists the commands; th
 
 ## Status
 
-Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit, not yet run against a real AnythingLLM). `packages/mcp` holds two skeleton servers so far, `hello` and `world` (which calls the bridge); the chat, schedule, memory and sandbox servers are still in `anythingllm-mcp` and call the bridge by the toolkit's old names (see the notes). Not yet: `app/` (holds a `.gitkeep`), the other skills, `tools/install`, and the container checks.
+Moved in: the `memory` skill (ported to TypeScript, not yet run in a real AnythingLLM) and the bridge (rewritten in TypeScript from the Python toolkit; `make e2e` runs it in front of a real AnythingLLM, but only for the routes the control server calls). `packages/mcp` holds the `control` server: chat and schedule, as roles of one MCP server, against the bridge (tested against a real AnythingLLM by `make e2e`); the memory and sandbox servers and the deploy command are still in `anythingllm-mcp`. Not yet: `app/` (holds a `.gitkeep`), the other skills, `tools/install`, and the container checks.
