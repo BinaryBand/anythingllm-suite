@@ -1,0 +1,21 @@
+{
+  "name": "anythingllm-packages",
+  "private": true,
+  "description": "The JavaScript parts, the bridge and the skills: one install of the toolchain, one tsconfig, one build script. CommonJS by default, which the skills need (AnythingLLM requires them); the bridge's source and tests and the shared helper are .mts, so ESM by their extension. packages/mcp is Python and not part of it.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "bridge:test": "node build.mjs bridge && node --test \"bridge/tests/*.test.mts\"",
+    "skills:test": "node build.mjs skills && node --test \"skills/shared/*.test.mts\" \"skills/*/tests/*.test.mts\""
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "imports": {
+    "#shared/*": "./skills/shared/*.mts"
+  }
+}

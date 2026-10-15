@@ -1,24 +1,14 @@
 #!/usr/bin/env bash
-# tools/boundaries: fails when the bridge and mcp import each other, or the app imports a path into
-# another part. Python is checked with ast-grep (rules in tools/boundaries.d/rules, run through uvx so
-# nothing is installed); Dart has no ast-grep grammar here, so the app is checked with grep. A skill's
-# imports are checked when it is built (packages/skills/build.mjs). Not covered: dynamic imports.
+# tools/boundaries: fails when the app imports a path into another part. The app talks to the bridge
+# over HTTP. Dart has no ast-grep grammar here, so this is grep. The other parts are checked
+# elsewhere: the bridge and the skills when they are built (packages/build.mjs fails on a file from
+# outside the part), and a Python part cannot import a TypeScript one. Not covered: dynamic imports.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 cd "$ROOT"
 
-AST_GREP=0.50.0
-
-status=0
-
-# The rules are severity: error, so a match makes the scan exit non-zero.
-uvx --from "ast-grep-cli==$AST_GREP" ast-grep scan --config tools/boundaries.d/sgconfig.yml --color never packages || status=1
-
-# The app talks to the bridge over HTTP; it must not import a path into another part.
 if [ -d app ] && grep -rEn --include='*.dart' "^[[:space:]]*(import|export)[[:space:]]+['\"](\.\./)+.*(packages|contract|tools)/" app; then
   echo "tools/boundaries: app/ imports a path into another part (above)" >&2
-  status=1
+  exit 1
 fi
-
-[ "$status" -eq 0 ] && echo "tools/boundaries: ok"
-exit "$status"
+echo "tools/boundaries: ok"

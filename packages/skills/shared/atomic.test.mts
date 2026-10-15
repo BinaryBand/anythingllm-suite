@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { writeAtomic } from "./atomic.ts";
+import { writeAtomic } from "./atomic.mts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "skills-shared-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));

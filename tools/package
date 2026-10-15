@@ -4,7 +4,7 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_skill "${1:-}"
-node "$ROOT/packages/skills/build.mjs" "$1" >&2
+node "$ROOT/packages/build.mjs" skills "$1" >&2
 built="$SKILL_DIR/build/$HUB_ID"
 [ -d "$built" ] || { echo "tools/package: the build left no $built" >&2; exit 1; }
 out="$ROOT/dist/$HUB_ID-$(plugin_field version).zip"

@@ -50,4 +50,4 @@ The skill has no settings.
 
 ## Source
 
-TypeScript in `src/`, bundled by `packages/skills/build.mjs` into the one `handler.js` AnythingLLM loads; the old handler cleared its own modules from `require.cache`, which a single file has no need for. `npm --prefix packages/skills test` builds and tests it; `tools/check skills` type-checks first.
+TypeScript in `src/`, bundled by `packages/build.mjs` into the one `handler.js` AnythingLLM loads; the old handler cleared its own modules from `require.cache`, which a single file has no need for. `npm run skills:test` (in `packages/`) builds and tests it; `tools/check skills` type-checks first.

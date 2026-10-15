@@ -1,9 +1,9 @@
-# The root of the Python side: a virtual workspace, so it has no project of its own. The two members are
-# separate distributions with their own pyproject.toml; what they share is this lock and the ruff rules
-# below. `uv lock` works once packages/bridge and packages/mcp hold their pyproject.toml.
+# The root of the Python side: a virtual workspace, so it has no project of its own. packages/mcp is its
+# only member for now; the bridge is TypeScript (packages/package.json is the JavaScript side). The lock
+# and the ruff rules below are for Python parts. `uv lock` works once packages/mcp holds its pyproject.toml.
 
 [tool.uv.workspace]
-members = ["packages/bridge", "packages/mcp"]
+members = ["packages/mcp"]
 
 [tool.ruff]
 line-length = 100

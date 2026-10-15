@@ -3,8 +3,12 @@
     "target": "ES2022",
     "module": "preserve",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
-    "types": ["node"],
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "allowJs": true,
     "checkJs": true,
@@ -12,5 +16,12 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true
-  }
+  },
+  "include": [
+    "bridge/src",
+    "bridge/tests",
+    "skills/shared",
+    "skills/*/src",
+    "skills/*/tests/*.mts"
+  ]
 }

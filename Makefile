@@ -27,14 +27,14 @@ lint: ## Run the commit hooks on every file (ruff, flutter analyze)
 test: ## Run the push hooks on every file (boundaries, then each part's tests)
 	lefthook run pre-push --all-files
 
-boundaries: ## Fail if one part imports another
+boundaries: ## Fail if the app imports a path into another part
 	tools/boundaries
 
 check: ## Test a part (PART=mcp) or, with no PART, all of them
 	tools/check $(PART)
 
-package: ## Build a part or a skill into dist/ (PART=bridge|mcp|<skill>)
-	tools/package $(PART)
+package: ## Build and zip a skill into dist/ (SKILL=memory)
+	tools/package $(SKILL)
 
 install-skill: ## Install a skill (SKILL=memory DIR=<agent-skills folder>)
 	tools/install $(SKILL) $(DIR)

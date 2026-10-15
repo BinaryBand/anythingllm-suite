@@ -2,7 +2,7 @@
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# IMAGE, INNER_PORT and TOOLKIT_PORT: the one AnythingLLM every check runs against.
+# IMAGE, INNER_PORT and BRIDGE_PORT: the one AnythingLLM every check runs against.
 # shellcheck source=/dev/null
 . "$ROOT/contract/versions.env"
 

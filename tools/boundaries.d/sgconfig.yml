@@ -1,3 +1,0 @@
-# The rules behind tools/boundaries. Run from the repository root; `files` globs are relative to it.
-ruleDirs:
-  - rules

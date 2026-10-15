@@ -1,7 +1,7 @@
 # Git hooks, the only gate this repository has (there is no hosted CI). Install once per clone:
 #   lefthook install
 # A hook runs only when a staged or pushed file matches its glob, so the empty scaffolding commits
-# freely. tools/check knows only the skills so far (their unit tests, not a container run); a skill's imports are checked when it is built (build.mjs).
+# freely. tools/check knows the bridge and the skills so far (their unit tests, not a container run); their imports are checked when they are built (packages/build.mjs).
 
 pre-commit:
   parallel: true
@@ -17,16 +17,16 @@ pre-commit:
 pre-push:
   commands:
     boundaries:
-      glob: "{packages,app}/**/*.{py,dart}"
+      glob: "app/**/*.dart"
       run: tools/boundaries
     bridge:
-      glob: "packages/bridge/**/*.py"
+      glob: ["packages/bridge/**/*.{ts,mts,mjs,json}", "packages/*.{json,mjs}", "contract/**"]
       run: tools/check bridge
     mcp:
       glob: "packages/mcp/**/*.py"
       run: tools/check mcp
     skills:
-      glob: "packages/skills/**/*.{js,ts,mts,mjs,json,config}"
+      glob: ["packages/skills/**/*.{js,ts,mts,mjs,json}", "packages/*.{json,mjs}"]
       run: tools/check skills
     app:
       glob: "app/**/*.dart"
