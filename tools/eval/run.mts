@@ -29,7 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { type CaseRecord, type Expect, grade } from "./grade.mts";
-import { type Instance, ROOT, actor, forgetLogins, start } from "./instance.mts";
+import { type Instance, ROOT, actor, forgetLogins, start, tabOfWorkspace } from "./instance.mts";
 import * as lab from "./lab.mts";
 import { Session } from "./session.mts";
 
@@ -117,16 +117,19 @@ async function runCase(at: Instance, c: Case, run: string, rep: number, accounts
         log(c.name, `  < ${(turn.replies.at(-1) ?? "").replace(/\s+/g, " ").slice(0, 160)} (${turn.seconds} s, ${turn.ended})`);
         if (turn.ended !== "waiting") break;
       } else if (step.answer) {
-        if (!session.tab) {
+        const tab = session.tab ?? tabOfWorkspace(at, session.workspace);
+        if (!tab) {
           record.asked.push({ none: "no tab's page" });
           continue;
         }
         let need: Record<string, unknown> | null = null;
         for (let i = 0; i < 15 && !need; i++) {
-          need = JSON.parse(actor(at, [session.tab, JSON.stringify([{ state: true }])]).replace(/^STATE /, "")).need;
+          need = JSON.parse(actor(at, [tab, JSON.stringify([{ state: true }])]).replace(/^STATE /, "")).need;
           if (!need) await new Promise((r) => setTimeout(r, 2000));
         }
         record.asked.push(need ?? { none: "nothing asked" });
+        // The page asks, but no reply linked it: a person in the chat would have nothing to tap.
+        if (need && !session.tab) record.cardMissing = true;
         if (!need) {
           log(c.name, "~ the tab's page asks for nothing");
           continue;
@@ -134,11 +137,12 @@ async function runCase(at: Instance, c: Case, run: string, rep: number, accounts
         const code = need.kind === "code" ? lab.codeFor(a!, String(need.label ?? need.text)) : undefined;
         if (code) record.secrets.push(code);
         log(c.name, `~ the tab's page asks: ${need.kind}${need.confirm ? " (new password)" : ""}: ${need.text}`);
-        actor(at, [session.tab, JSON.stringify([{ answer: { user: step.answer.user ?? a?.email, pass: step.answer.pass ?? a?.pass, code, save: step.answer.save } }])]);
+        actor(at, [tab, JSON.stringify([{ answer: { user: step.answer.user ?? a?.email, pass: step.answer.pass ?? a?.pass, code, save: step.answer.save } }])]);
       } else if (step.user) {
         const steps = fillAll(step.user, { captcha: lab.captcha() });
         log(c.name, `~ user ${JSON.stringify(steps)}`);
-        if (session.tab) log(c.name, `  ${actor(at, [session.tab, JSON.stringify(steps)]).replace(/\n/g, " ")}`);
+        const tab = session.tab ?? tabOfWorkspace(at, session.workspace);
+        if (tab) log(c.name, `  ${actor(at, [tab, JSON.stringify(steps)]).replace(/\n/g, " ")}`);
       } else if (step.lab === "approvePush") {
         let ok = false;
         for (let i = 0; i < 20 && !(ok = lab.approvePush(a!)); i++) await new Promise((r) => setTimeout(r, 1500));

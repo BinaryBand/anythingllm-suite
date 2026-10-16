@@ -35,6 +35,7 @@ export interface Account {
 /** Sites whose accounts have an authenticator, and the one whose accounts have no password. */
 const TOTP_SITES = new Set(["totp", "stepup", "push"]);
 const NO_PASSWORD = new Set(["otp"]);
+const PHONE_SITES = new Set(["otp"]);
 /** What a new account on a site holds besides the login, as its own seed gives Alice. */
 const PROFILE: Record<string, object> = {
   basic: { notes: ["Water the ferns", "Book the dentist"] },
@@ -53,7 +54,9 @@ export function account(site: string, tag: string, create = true): Account {
     phone: `+1555${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`,
     totp: TOTP_SITES.has(site) ? authenticator.generateSecret() : undefined,
   };
-  if (create) users.create(site, { email: a.email, name: a.name, pass: NO_PASSWORD.has(site) ? null : a.pass, phone: a.phone, totp: a.totp ?? null, profile: PROFILE[site] ?? null });
+  // A phone only where the site texts codes: elsewhere it changes the account page's layout, which a
+  // case that taps the tab's picture (passkey-add) depends on.
+  if (create) users.create(site, { email: a.email, name: a.name, pass: NO_PASSWORD.has(site) ? null : a.pass, phone: PHONE_SITES.has(site) ? a.phone : null, totp: a.totp ?? null, profile: PROFILE[site] ?? null });
   return a;
 }
 

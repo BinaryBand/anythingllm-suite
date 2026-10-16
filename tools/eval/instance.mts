@@ -153,3 +153,15 @@ export async function forgetLogins(at: Instance, hosts: string[]): Promise<numbe
     return before - v.entries.length;
   }, path.join(at.storage, "vault-lean"));
 }
+
+/** The tab's page of a workspace's chat, from the browser skill's own record (tabs.json), for when
+ *  the agent's reply left out the card that links it. A case has one chat per workspace. */
+export function tabOfWorkspace(at: Instance, workspace: string): string | null {
+  try {
+    const tabs = JSON.parse(fs.readFileSync(path.join(at.storage, "browser-lean", workspace, "tabs.json"), "utf8")) as Record<string, { token?: string }>;
+    const token = Object.values(tabs).at(-1)?.token;
+    return token ? `/browser-lean/${token}.html` : null;
+  } catch {
+    return null;
+  }
+}

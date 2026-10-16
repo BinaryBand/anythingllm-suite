@@ -35,7 +35,9 @@ Needs podman or docker, Node 22.18 or later, the lab running with its public nam
 5. **Grading** (`grade.mts`) uses the lab's own records (who signed in, which account exists), what
    the tab's page asked for, and the agent's tool calls, never the agent's claims. Every case is also
    held to: no password or code in a tool call or a reply; every reply has words besides the tab's
-   card; no call repeated with the same arguments more than twice. A rate limit or a turn that timed
+   card; no call repeated with the same arguments more than twice; when the tab's page asks the user for
+   something, a reply linked it (a model that leaves the card out leaves the user nothing to tap: the
+   stand-in user then finds the page from the skill's own record, and the case fails that check). A rate limit or a turn that timed
    out counts as **infra**, not a failure.
 6. **Results** go to `tools/eval/results/<run>/` (ignored): `records.jsonl` (every turn, call, reply
    and check) and `report.md`. The run's lab accounts are removed and the instance stopped, unless
