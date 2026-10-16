@@ -1,0 +1,52 @@
+# A named tunnel for the lab: one public hostname per site, so each one has its own saved logins,
+# cookies and passkeys in the browser skill (they're kept by hostname, and the port doesn't count).
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create test-lab
+#   for s in basic twostep spa totp otp passkey captcha iframe shadow wizard idp federated push stepup consent gate; do
+#     cloudflared tunnel route dns test-lab lab-$s.example.com
+#   done
+#   cloudflared tunnel --config cloudflared.yml run test-lab
+#
+# Use one level under your zone (lab-basic.example.com, not basic.lab.example.com): Cloudflare's
+# free certificate covers *.example.com only. The dashboard (port 4100) isn't here on purpose: it
+# shows every code the sites "send" and answers the Phone panel's sign-in approvals.
+# Set LAB_PUBLIC_URL=https://lab-{name}.example.com so Cirrus Docs and Lumen ID find each other.
+
+tunnel: test-lab
+credentials-file: /home/diot/.cloudflared/<TUNNEL-ID>.json
+
+ingress:
+  - hostname: lab-basic.example.com
+    service: http://localhost:4101
+  - hostname: lab-twostep.example.com
+    service: http://localhost:4102
+  - hostname: lab-spa.example.com
+    service: http://localhost:4103
+  - hostname: lab-totp.example.com
+    service: http://localhost:4104
+  - hostname: lab-otp.example.com
+    service: http://localhost:4105
+  - hostname: lab-passkey.example.com
+    service: http://localhost:4106
+  - hostname: lab-captcha.example.com
+    service: http://localhost:4107
+  - hostname: lab-iframe.example.com
+    service: http://localhost:4108
+  - hostname: lab-shadow.example.com
+    service: http://localhost:4109
+  - hostname: lab-wizard.example.com
+    service: http://localhost:4110
+  - hostname: lab-idp.example.com
+    service: http://localhost:4111
+  - hostname: lab-federated.example.com
+    service: http://localhost:4112
+  - hostname: lab-push.example.com
+    service: http://localhost:4113
+  - hostname: lab-stepup.example.com
+    service: http://localhost:4114
+  - hostname: lab-consent.example.com
+    service: http://localhost:4115
+  - hostname: lab-gate.example.com
+    service: http://localhost:4116
+  - service: http_status:404

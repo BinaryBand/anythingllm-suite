@@ -48,7 +48,8 @@ packages/shared/    helpers the JavaScript parts bundle in (writeAtomic, the per
 packages/package.json, tsconfig.json   the toolchain: one install, one type-check
 app/                the Flutter app
 contract/           endpoints.md, default-allow.txt, versions.env: read by every part
-tools/              check, package, install, e2e, routes, boundaries
+tools/              check, package, install, e2e, routes, boundaries, lab-check
+tools/lab/          the test lab: fake sign-in sites the browser skill is tried against (its README, GAPS.md)
 docs/               architecture.md; notes/ for decisions, repo-wide and per part
 .github/workflows/  the tests on Linux, macOS and Windows, and the e2e on Linux
 dist/               build output, ignored
@@ -62,7 +63,7 @@ dist/               build output, ignored
 
 ## Checks
 
-`lefthook.yml` is the gate before a push, and `.github/workflows/test.yml` runs the same tests on Linux, macOS and Windows. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. `flutter analyze` runs on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the control server and the skills. `make lint` and `make test` run those hooks on every file; `make check` tests everything. `make e2e` (`tools/e2e`) is not a hook: it starts a throwaway AnythingLLM in a container with its storage bind-mounted, runs `install --bridge` into it and the bridge beside it, and has the real AnythingLLM start the control server and the tests drive it.
+`lefthook.yml` is the gate before a push, and `.github/workflows/test.yml` runs the same tests on Linux, macOS and Windows. `make` lists the commands; they only call `lefthook` or a script in `tools/`. After cloning, run `make hooks`. `flutter analyze` runs on commit, and `tools/boundaries` and `tools/check <part>` on push, each only when files of that part changed. `tools/check` knows the bridge, the control server and the skills. `make lint` and `make test` run those hooks on every file; `make check` tests everything. `make e2e` (`tools/e2e`) is not a hook: it starts a throwaway AnythingLLM in a container with its storage bind-mounted, runs `install --bridge` into it and the bridge beside it, and has the real AnythingLLM start the control server and the tests drive it. `make lab` (`tools/lab-check`) runs the test lab's own checks: its fake sign-in sites over HTTP, then in a real Chrome read with the browser skill's own snapshot code.
 
 ## Status
 
