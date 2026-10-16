@@ -25,7 +25,7 @@ test("a job naming a workspace may list and read there, and do only on an app th
   assert.match(await asJob({ action: "read", workspace: "home", name: "shop" }), /^shop's app\.json/);
   assert.match(await asJob({ action: "do", workspace: "home", name: "shop", ev: "add", patch: add("Milk") }), /^Apps: shop doesn't take changes from scheduled jobs: the user lets it from a chat/);
   for (const action of ["create", "edit", "undo", "page", "delete"])
-    assert.match(await asJob({ action, workspace: "home", name: "shop", file: "page.html", text: "x" }), action === "delete" ? /can't delete an app/ : /may list, read and do in a workspace it names/, action);
+    assert.match(await asJob({ action, workspace: "home", name: "shop", file: "page.html", text: "x" }), action === "delete" ? /can't delete an app/ : /in a workspace it names, a scheduled job may list, do, read, guide, not /, action);
   // The user lets it, from a chat.
   assert.match(await call("home", { action: "edit", name: "shop", file: "app.json", find: '"card": {', text: '"jobs": true,\n  "card": {' }), /^Changed shop's app\.json\./);
   assert.match(await asJob({ action: "do", workspace: "home", name: "shop", ev: "add", patch: add("Milk") }), /^Done: add on shop\./);

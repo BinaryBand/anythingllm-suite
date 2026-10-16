@@ -179,10 +179,10 @@ const ACTIONS = {
       ...cardBlock(made, url),
     ].join("\n");
   },
-  do: async ({ workspace, thread, job }, p, self) => {
+  do: async ({ workspace, thread, job, named }, p, self) => {
     const patch = asJson(p.patch, "patch");
     const fields = asJson(p.fields, "fields");
-    const app = await store.change(workspace, p.name, { patch, ev: p.ev, fields, thread, by: job ? "job" : undefined, ask: p.ask });
+    const app = await store.change(workspace, p.name, { patch, ev: p.ev, fields, thread, by: job ? "job" : undefined, ask: p.ask, jobsOnly: named });
     return [`Done: ${app.history[app.history.length - 1].ev} on ${app.name}${p.ask !== undefined ? `; ask ${p.ask} cleared` : ""}.`, ...cardOf(self, app)].join("\n");
   },
   read: ({ workspace }, p, self) => {
@@ -266,14 +266,13 @@ const ACTIONS = {
  *    write a page's script. "own": only in its own workspace (_jobs); "named": in a workspace it
  *    names too; "app": there, only on an app whose app.json says "jobs": true; "never": not at all.
  *  - changes: it changes the app it names, whose page is written again after.
- *  - pages: it reads apps, so what pages posted is taken first and what they did is said (all but
- *    guide). */
+ *  - quiet: it reads no app, so what pages posted isn't taken first, nor what they did said. */
 interface Rule {
   job: "own" | "named" | "app" | "never";
   changes?: true;
-  pages?: false;
+  quiet?: true;
 }
-const RULES: { [action in keyof typeof ACTIONS]: Rule } = {
+const RULES: { [action in ActionName]: Rule } = {
   list: { job: "named" },
   create: { job: "own" },
   do: { job: "app", changes: true },
@@ -282,12 +281,17 @@ const RULES: { [action in keyof typeof ACTIONS]: Rule } = {
   undo: { job: "own", changes: true },
   edit: { job: "own", changes: true },
   delete: { job: "never" },
-  guide: { job: "named", pages: false },
+  guide: { job: "named", quiet: true },
 };
 
 /** The workspace a call works on: AnythingLLM's for a chat; for a scheduled job, which AnythingLLM
  *  gives none, its own (_jobs) or one it names, as RULES let it. Throws what it may not do. */
-function scopeFor(self: HandlerContext, action: keyof typeof ACTIONS, p: Args): Scope {
+type ActionName = keyof typeof ACTIONS;
+const isAction = (name: string): name is ActionName => Object.hasOwn(ACTIONS, name);
+/** What a job may do in a workspace it names, in words, from RULES. */
+const NAMED = Object.entries(RULES).filter(([, r]) => r.job === "named" || r.job === "app").map(([a]) => a).join(", ");
+
+function scopeFor(self: HandlerContext, action: ActionName, p: Args): Scope {
   const scope = scopeOf(self);
   const named = typeof p.workspace === "string" && p.workspace.trim() ? p.workspace.trim() : null;
   if (!scope.job) {
@@ -297,15 +301,14 @@ function scopeFor(self: HandlerContext, action: keyof typeof ACTIONS, p: Args): 
   const { job } = RULES[action];
   if (job === "never") throw new AppError(`a scheduled job can't ${action} an app: the user does that from a chat`);
   if (!named) return scope;
-  if (job === "own") throw new AppError(`a scheduled job may list, read and do in a workspace it names, not ${action}: ask the user to do that from a chat`);
-  if (job === "app" && store.read(named, p.name).jobs !== true)
-    throw new AppError(`${p.name} doesn't take changes from scheduled jobs: the user lets it from a chat, where its app.json gets "jobs": true`);
-  return { workspace: named, job: true };
+  if (job === "own") throw new AppError(`in a workspace it names, a scheduled job may ${NAMED}, not ${action}: ask the user to do that from a chat`);
+  // "app": the store checks the app takes jobs, in the same locked pass as the change.
+  return { workspace: named, job: true, named: true };
 }
 
 async function run(self: HandlerContext, params: Args): Promise<string> {
-  const action = (params.action || "list") as keyof typeof ACTIONS;
-  if (!Object.hasOwn(ACTIONS, action)) throw new AppError(`action is one of ${Object.keys(ACTIONS).join(", ")}`);
+  const action = String(params.action || "list");
+  if (!isAction(action)) throw new AppError(`action is one of ${Object.keys(ACTIONS).join(", ")}`);
   const act: Action = ACTIONS[action];
   const rule = RULES[action];
   const scope = scopeFor(self, action, params);
@@ -315,7 +318,7 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   // Pages' changes are applied as they land, by a watch that lasts as long as AnythingLLM's process;
   // a call takes what's waiting first, so it reads every app as its pages left it.
   keepWatching();
-  if (rule.pages !== false) {
+  if (!rule.quiet) {
     // What older pages posted, before upgrade gives their apps a secret those pages don't have.
     await caughtUp(key);
     // A job's process ends within minutes and starts afresh each run: the chat's does this.
@@ -324,7 +327,7 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   const reply = await act(scope, params, self);
   if (rule.changes && params.name) await refresh(scope.workspace, params.name, key);
   // What pages did is said once, in the workspace's next chat call; a scheduled job is told none.
-  const lines = rule.pages === false || scope.job ? [] : await news(scope.workspace);
+  const lines = rule.quiet || scope.job ? [] : await news(scope.workspace);
   return lines.length ? [...lines, "", reply].join("\n") : reply;
 }
 

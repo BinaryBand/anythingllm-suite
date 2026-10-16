@@ -81,6 +81,15 @@ function cleared(app: Json, id: unknown): Json {
   return { ...app, asks: asks.filter((a) => a.id !== id) };
 }
 
+/** `app`'s history with each change's line, for changes from before changes kept theirs: worked out
+ *  back from the app's line, which is right only while none in the history has its own, so done at
+ *  the first write that adds one. */
+function numbered(app: Json): Json[] {
+  const history: Json[] = app.history || [];
+  if (history.every((h) => h.n !== undefined)) return history;
+  return history.map((h, i) => (h.n !== undefined ? h : { ...h, n: (app.line || 0) - (history.length - 1 - i) }));
+}
+
 /** `app` remembering the page event `id`, so one sent twice applies once. */
 const seenWith = (app: Json, id: string): Json => ({ ...app, seen: [...(app.seen || []), id].slice(-SEEN) });
 const isSeen = (app: Json, id: string | undefined): boolean => !!id && (app.seen || []).includes(id);
@@ -174,6 +183,8 @@ export interface Change {
   id?: string;
   /** The page's ask this change is made for, cleared with it. */
   ask?: string;
+  /** Refuse it unless the app takes changes from scheduled jobs (app.json's "jobs": true). */
+  jobsOnly?: boolean;
 }
 
 /** `app` with `patch` applied to its data and checked against its schema, unsaved. `by` names who
@@ -194,7 +205,7 @@ function applyChange(app: Json, { patch, ev, fields, thread, by, id }: Change): 
   // Each change keeps the line it made: an undo also takes a line, so the newest changes' lines
   // can't be worked out from where they stand in the history.
   const entry = { n: line, t: now(), by: by || "agent", ev: ev || "change", ...(fields ? { fields } : {}), ...(thread !== undefined ? { thread } : {}), patch, before: app.data };
-  const next = { ...app, data, line, changed: entry.t, history: [...app.history, entry].slice(-KEEP) };
+  const next = { ...app, data, line, changed: entry.t, history: [...numbered(app), entry].slice(-KEEP) };
   return id ? seenWith(next, id) : next;
 }
 
@@ -202,6 +213,7 @@ function applyChange(app: Json, { patch, ev, fields, thread, by, id }: Change): 
  *  was made for, if any, cleared. */
 export async function change(workspace: string, name: unknown, opts: Change): Promise<Json> {
   return update(workspace, name, (app) => {
+    if (opts.jobsOnly && app.jobs !== true) throw new AppError(`${name} doesn't take changes from scheduled jobs: the user lets it from a chat, where its app.json gets "jobs": true`);
     const next = applyChange(app, opts);
     return next.duplicate ? next : cleared(next, opts.ask);
   });
@@ -243,7 +255,7 @@ export async function undo(workspace: string, name: unknown): Promise<{ app: Jso
   const app = await update(workspace, name, (app) => {
     undone = app.history[app.history.length - 1];
     if (!undone) throw new AppError(`${name} has no change left to undo`);
-    return { ...app, data: undone.before, line: (app.line || 0) + 1, changed: now(), history: app.history.slice(0, -1) };
+    return { ...app, data: undone.before, line: (app.line || 0) + 1, changed: now(), history: numbered(app).slice(0, -1) };
   });
   return { app, undone: undone! };
 }

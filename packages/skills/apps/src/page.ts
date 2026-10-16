@@ -142,9 +142,8 @@ interface Row {
   said: Pick<Result, "kind" | "ev" | "fields">;
   secret: unknown;
   change?: store.Change;
-  picks?: Json[];
-  /** An ask's own id, as its page sent it, so one sent twice is kept once. */
-  event?: string;
+  /** An ask: what was picked, and its own id as its page sent it, so one sent twice is kept once. */
+  ask?: { event?: string; picks: Json[] };
   answer?: Result;
 }
 
@@ -162,9 +161,10 @@ export async function collect(): Promise<Result[]> {
     if (typeof e.workspace !== "string" || typeof e.app !== "string" || !Array.isArray(kind === "ask" ? e.picks : e.patch)) continue;
     const fields = e.fields && typeof e.fields === "object" ? e.fields : undefined;
     const said = { kind, ev: String(e.ev || kind), fields } as const;
+    const id = typeof e.id === "string" ? e.id : undefined;
     const row: Row = { workspace: e.workspace, app: e.app, said, secret: e.secret };
-    if (kind === "ask") Object.assign(row, { picks: e.picks, event: typeof e.id === "string" ? e.id : undefined });
-    else row.change = { patch: e.patch, ev: said.ev, fields, by: "page", id: typeof e.id === "string" ? e.id : undefined };
+    if (kind === "ask") row.ask = { event: id, picks: e.picks };
+    else row.change = { patch: e.patch, ev: said.ev, fields, by: "page", id };
     const key = `${e.workspace}/${e.app}`;
     (byApp.get(key) ?? byApp.set(key, []).get(key)!).push(row);
     rows.push(row);
@@ -182,11 +182,11 @@ export async function collect(): Promise<Result[]> {
     const asks: Row[] = [], changes: Row[] = [];
     for (const row of waiting)
       if (found.secret && !sameSecret(row.secret, found.secret)) row.answer = { ...row.said, ok: false, why: "it didn't come from this app's page" };
-      else (row.picks ? asks : changes).push(row);
+      else (row.ask ? asks : changes).push(row);
     for (const row of asks)
       try {
-        const kept = await store.addAsk(workspace, app, { event: row.event, picks: row.picks });
-        mine(row, kept ? { ok: true, ask: kept.id, fields: { text: `${kept.kept} picked` } } : { ok: false, duplicate: true });
+        const added = await store.addAsk(workspace, app, row.ask!);
+        mine(row, added ? { ok: true, ask: added.id, fields: { text: `${added.kept} picked` } } : { ok: false, duplicate: true });
       } catch (error) {
         mine(row, { ok: false, why: firstLine(error) });
       }

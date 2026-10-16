@@ -4,7 +4,7 @@ import { call, post } from "./harness.mts";
 import { whereIs } from "../src/handler.ts";
 import * as store from "../src/store.ts";
 
-const ask = (app: string, picks: unknown[], workspace = "home") => post({ workspace, app, secret: store.read(workspace, app).secret, id: `ask-${Math.random()}`, kind: "ask", ev: "ask", picks });
+const ask = (app: string, picks: unknown[], workspace = "home", id = `ask-${Math.random()}`) => post({ workspace, app, secret: store.read(workspace, app).secret, id, kind: "ask", ev: "ask", picks });
 
 test("an ask from the page waits on the app, apart from its data and history, and list counts it", async () => {
   await call("home", { action: "create", name: "reading", title: "Reading", starter: "tracker" });
@@ -57,9 +57,7 @@ test("a pick is found by what marks it in page.html, never by its text", () => {
 
 test("an ask a page sends twice is kept once, as a change is", async () => {
   await call("home", { action: "create", name: "twice", title: "Twice", starter: "checklist" });
-  const event = { workspace: "home", app: "twice", secret: store.read("home", "twice").secret, id: "same-ask", kind: "ask", ev: "ask", picks: [{ tag: "p", text: "Bigger" }] };
-  post(event);
-  post(event);
+  for (let i = 0; i < 2; i++) ask("twice", [{ tag: "p", text: "Bigger" }], "home", "same-ask");
   const listed = await call("home", { action: "list" });
   assert.equal(store.read("home", "twice").asks.length, 1);
   assert.equal(listed.match(/ask a\d+ on twice/g)?.length, 1, "told once");

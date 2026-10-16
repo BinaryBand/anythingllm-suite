@@ -12,6 +12,8 @@ export interface Scope {
   thread?: number;
   /** A scheduled job's call: AnythingLLM gave it no workspace. */
   job: boolean;
+  /** A job's call in a workspace it named, where it may change only an app that takes jobs. */
+  named?: boolean;
 }
 
 export function scopeOf(self: HandlerContext | undefined): Scope {
