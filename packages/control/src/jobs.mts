@@ -102,7 +102,7 @@ export class Jobs {
     const name = checkedName(spec.name);
     const prompt = checkedPrompt(spec.prompt);
     const schedule = checkedSchedule(spec.schedule);
-    const tools = checkedTools(spec.tools);
+    const tools = await this.#usable(checkedTools(spec.tools));
     const wanted: Obj = { name, prompt, schedule, tools: tools ?? [] };
     const existing = (await this.#all()).map(shown);
     const twin = existing.find((j) => Object.entries(wanted).every(([k, v]) => same(j[k], v)));
@@ -120,7 +120,7 @@ export class Jobs {
     if (edit.name !== undefined) changes.name = checkedName(edit.name);
     if (edit.prompt !== undefined) changes.prompt = checkedPrompt(edit.prompt);
     if (edit.schedule !== undefined) changes.schedule = checkedSchedule(edit.schedule);
-    if (edit.tools !== undefined) changes.tools = checkedTools(edit.tools);
+    if (edit.tools !== undefined) changes.tools = await this.#usable(checkedTools(edit.tools));
     if (edit.enabled !== undefined) changes.enabled = edit.enabled;
     if (!Object.keys(changes).length) throw new ControlError("say what to change: name, prompt, schedule, tools or enabled");
     const current = shown(await this.#one(job));
@@ -137,6 +137,18 @@ export class Jobs {
     const reply = obj(await this.#api.call("DELETE", pathOf(job)));
     if (reply.success !== true) throw new ControlError(`AnythingLLM has no job ${job}`);
     return { applied: true, deleted: current.id, name: current.name };
+  }
+
+  /** `tools`, when AnythingLLM's catalog has each, set up (as its own create-scheduled-job checks):
+   *  a job with an id it doesn't know runs without that tool. */
+  async #usable(tools: string[] | undefined): Promise<string[] | undefined> {
+    if (!tools?.length) return tools;
+    const catalog = items(obj(await this.#api.call("GET", "/scheduled-jobs/available-tools")).tools).map(obj);
+    const ready = catalog.filter((c) => !c.requiresSetup).flatMap((c) => items(c.items).map(obj).filter((t) => !t.requiresSetup).map((t) => text(t.id)));
+    const unknown = tools.filter((t) => !ready.includes(t));
+    if (!unknown.length) return tools;
+    const meant = unknown.filter((t) => ready.includes(`@@${t}`)).map((t) => ` (an imported skill is @@${t})`).join("");
+    throw new ControlError(`a job can't use ${unknown.join(", ")}${meant}; it can use ${ready.join(", ")}`);
   }
 
   async #all(): Promise<Obj[]> {

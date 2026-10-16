@@ -50,6 +50,19 @@ test("a job can name an imported skill, as AnythingLLM does: @@<hubId>", async (
   assert.deepEqual(JSON.parse(String(fake.jobs.get(2)?.tools)), ["@@library-lean", "web-scraping"]);
 });
 
+test("a job's tools are ones AnythingLLM's catalog has, set up; a skill's bare id is told its @@", async () => {
+  for (const [tools, why] of [
+    [["library-lean"], /a job can't use library-lean \(an imported skill is @@library-lean\); it can use web-scraping, web-browsing, @@library-lean$/],
+    [["sql-agent"], /can't use sql-agent;/],
+    [["gmail-send"], /can't use gmail-send;/],
+  ] as const) {
+    const fake = new FakeAnythingLLM();
+    await assert.rejects(jobs(fake).add({ ...NEW, tools: [...tools] }, false), why);
+    await assert.rejects(jobs(fake).update(1, { tools: [...tools] }, false), why);
+    assert.deepEqual(fake.changes(), [], "nothing changed");
+  }
+});
+
 test("a bad job is refused before AnythingLLM", async () => {
   const bad: JobSpec[] = [
     { name: "", prompt: "p", schedule: "0 7 * * *" },

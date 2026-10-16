@@ -17,6 +17,13 @@ const validCron = (schedule: string): boolean => {
   return fields.length === 5 && fields.every((f) => /^[0-9*/,?#A-Za-z-]+$/.test(f)) && !(/^\d+$/.test(fields[0]) && Number(fields[0]) > 59);
 };
 
+/** AnythingLLM's catalog of what a scheduled job can use (models/scheduledJob.js availableTools). */
+const TOOL_CATALOG = [
+  { name: "Default Skills", items: [{ id: "web-scraping" }, { id: "web-browsing" }, { id: "sql-agent", requiresSetup: true }] },
+  { name: "Imported Skills", items: [{ id: "@@library-lean", name: "Library" }] },
+  { name: "Gmail", requiresSetup: true, items: [{ id: "gmail-send" }] },
+];
+
 export class FakeAnythingLLM {
   workspaces: Record<string, string> = { home: "Home", work: "Work" };
   /** A workspace's chats, oldest first: slug -> name. */
@@ -110,6 +117,7 @@ export class FakeAnythingLLM {
 
   #jobRoute(method: string, rest: string[], body: Obj): Reply {
     if (!rest.length && method === "GET") return { status: 200, json: { jobs: [...this.jobs.values()] } };
+    if (rest.join("/") === "available-tools" && method === "GET") return { status: 200, json: { tools: TOOL_CATALOG } };
     if (rest.join("/") === "new" && method === "POST") {
       if (!validCron(text(body.schedule))) return { status: 400, json: { job: null, error: "Invalid cron expression" } };
       const tools = items(body.tools).map(text);
