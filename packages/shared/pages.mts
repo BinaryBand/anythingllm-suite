@@ -156,9 +156,11 @@ const folderId = (): number => {
  *  hands it the newer `pass` and `until`, so a reloaded skill's code takes over. */
 export function watch(title: string, pass: () => Promise<void>, until: () => number): void {
   const watches = perProcess("pages.watches", () => new Map<string, Watch>());
-  fs.mkdirSync(eventsDir(), { recursive: true });
+  // A folder made here is a new one, whatever its inode (ext4 gives a removed folder's to the next):
+  // a kept watch is on the one that went.
+  const made = fs.mkdirSync(eventsDir(), { recursive: true }) !== undefined;
   const kept = watches.get(title);
-  if (kept && kept.dir === folderId()) return void Object.assign(kept, { pass, until });
+  if (kept && !made && kept.dir === folderId()) return void Object.assign(kept, { pass, until });
   kept?.stop();
   const w: Watch = { pass, until, running: null, again: false, seen: 0, dir: folderId(), stop: () => {} };
   const changed = () => {

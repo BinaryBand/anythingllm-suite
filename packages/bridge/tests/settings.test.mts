@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { readEnv } from "#shared/envfile";
@@ -15,7 +16,7 @@ test("defaults", () => {
 
 test("the env file follows the storage, and an explicit one wins", () => {
   const s = fromEnv({ ANYTHINGLLM_STORAGE: "/srv/a", ANYTHINGLLM_URL: "http://x:1/" });
-  assert.equal(s.envFile, "/srv/a/.env");
+  assert.equal(s.envFile, path.join("/srv/a", ".env"));
   assert.equal(s.anythingllmUrl, "http://x:1");
   assert.equal(fromEnv({ ANYTHINGLLM_STORAGE: "/srv/a", ANYTHINGLLM_ENV: "/e/.env" }).envFile, "/e/.env");
 });
