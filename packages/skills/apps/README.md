@@ -33,6 +33,8 @@ Taps reach the app as they land: the skill watches where AnythingLLM's collector
 
 Each page has Change this: tap it, tap up to five things on the page (taps pick then, they don't press), say what should change of each, and send. It reaches the chat as an ask; the agent sees it in `read`, with where each pick is in page.html, and acts on it only when you ask it to in the chat. At most 10 asks wait on an app.
 
+To ask you something a chat can't show well (pick a worktop from three, with a note), the agent makes a question app from the `question` starter and its turn ends with the card; you answer on the page, and the agent reads your answer at its next call, as data. The app is kept.
+
 To keep an app up on a schedule, ask the agent ("every morning at 6, put a new puzzle in it"): it lets the app take a job's changes (app.json's `"jobs": true`) and adds an AnythingLLM scheduled job with the tool `@@apps-lean` (guide topic `schedules`). A job has no workspace of its own, so it names the app's; in a workspace it names it can only list, read and change the data of an app that takes it, never make, rewrite, take back or delete one. A deleted app is kept under `apps-lean/.trash/` (the newest 20) in case it was a mistake.
 
 A page posts each change with its app's secret, and the skill applies it to that app alone, so one app's link changes no other. An app from before apps had a secret takes its page's events until it gets one; once per process the skill writes again every page an older skill or older parts made, which also gives those apps their secret.

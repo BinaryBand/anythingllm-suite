@@ -1,0 +1,33 @@
+<!--part
+{"name":"choices","line":"a question with choices and a note: the agent asks, the user answers","schema":{"type":"object","required":["question","choices","answer"],"properties":{"question":{"type":"string","minLength":1,"maxLength":200},"choices":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":80}},"answer":{"type":["object","null"],"required":["choice"],"properties":{"choice":{"type":"string","maxLength":80},"note":{"type":"string","maxLength":500},"at":{"type":"string"}}}}},"data":{"question":"Which one?","choices":["This","That"],"answer":null},"events":["answer"]}
+-->
+<form class="stack" data-part="choices" data-ref="form">
+<h2 data-ref="q"></h2>
+<fieldset class="stack" data-ref="choices"></fieldset>
+<label class="stack">Anything else? <textarea data-ref="note" maxlength="500" placeholder="Optional"></textarea></label>
+<button type="submit" class="primary" data-ref="send">Send my answer</button>
+<p data-ref="sent" role="status"></p>
+</form>
+<script>
+App.mount("choices", ({ at, q }) => {
+  q("form").onsubmit = (e) => {
+    e.preventDefault();
+    const picked = q("choices").querySelector("input:checked");
+    if (!picked) return (q("sent").textContent = "Pick one first.");
+    const answer = { choice: picked.value, note: q("note").value.trim().slice(0, 500), at: new Date().toISOString() };
+    App.patch([{ op: "test", path: at + "/question", value: App.get(at + "/question") }, { op: "replace", path: at + "/answer", value: answer }], { ev: "answer", text: answer.choice });
+  };
+  return () => {
+    const { question, choices, answer } = App.get(at);
+    q("q").textContent = question;
+    q("choices").replaceChildren(...choices.map((c) => {
+      const label = el("label", { className: "row" });
+      label.append(el("input", { type: "radio", name: "choice", value: c, checked: answer?.choice === c }), el("span", { textContent: c }));
+      return label;
+    }));
+    if (answer && !q("note").value) q("note").value = answer.note || "";
+    q("send").textContent = answer ? "Change my answer" : "Send my answer";
+    q("sent").textContent = answer ? `Sent: ${answer.choice}. Tell the chat you've answered.` : "";
+  };
+});
+</script>
