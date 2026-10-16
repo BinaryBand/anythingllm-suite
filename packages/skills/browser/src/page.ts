@@ -21,25 +21,13 @@ import * as vault from "#shared/vault";
 import { typeIn } from "./act";
 import * as logins from "./logins";
 import * as passkey from "./passkey";
-import { type Snap, readPage } from "./snapshot";
-import { type Entry, type Need, OFFER_MS, type Tab, VIEWPORT, clip, holder, note, skillDir, state, statics, workspaceDir } from "./state";
+import { type Snap, asksPassword, isPasswordLine, readPage } from "./snapshot";
+import { type Entry, NEED_MS, type Need, OFFER_MS, type Tab, VIEWPORT, clip, holder, live, note, say, skillDir, state, statics, workspaceDir } from "./state";
 import * as takeover from "./takeover";
 
 const TITLE = "browser-lean-event";
 /** How long the pages' events are watched for after one was last shown. */
 const WATCH_MS = 30 * 60 * 1000;
-/** How long the agent's request for a login or a code waits on the page. */
-export const NEED_MS = 10 * 60 * 1000;
-/** How long a notice stays in a tab's state: past the next few writes, so the page doesn't miss it. */
-const NOTICE_MS = 60 * 1000;
-
-/** The tab's notice, while it lasts. */
-function notice(entry: Entry, key: string): string | null {
-  const kept = entry.notices.get(key);
-  if (kept && kept.until > Date.now()) return kept.text;
-  entry.notices.delete(key);
-  return null;
-}
 const QUALITY = 70;
 /** A tab's files: its picture, the card's crop, its state and its page. */
 const ENDINGS = [".jpg", "-card.jpg", ".json", ".html"];
@@ -92,11 +80,7 @@ export function forgetTab(workspace: string, key: string): void {
 }
 
 /** What the agent waits for the user to enter on the tab's page, or null: one that ran out goes. */
-function pendingNeed(entry: Entry, key: string): Need | null {
-  const need = entry.needs.get(key);
-  if (need && need.until <= Date.now()) entry.needs.delete(key);
-  return entry.needs.get(key) ?? null;
-}
+const pendingNeed = (entry: Entry, key: string): Need | null => live(entry.needs, key);
 
 /** Text a card's Markdown can hold: no brackets or line breaks. */
 const plain = (text: string, n = 120) => text.replace(/[[\]()\n\r|*_`<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
@@ -108,6 +92,7 @@ function tabState(at: Tab, title: string, url: string, snap: Snap) {
   const need = pendingNeed(at.entry, at.key);
   const screen = at.page.viewport() ?? VIEWPORT;
   const held = !!holder(at.entry, at.key);
+  const msg = live(at.entry.msgs, at.key);
   return {
     title: title.slice(0, 200),
     url: url.slice(0, 2000),
@@ -118,7 +103,7 @@ function tabState(at: Tab, title: string, url: string, snap: Snap) {
     fields: held ? snap.fields : [],
     need: need ? { kind: need.kind, host: need.host, text: need.text, label: need.label ?? null, hasUser: !!need.userRef, until: need.until } : null,
     offer: takeover.shownOffer(at.entry, at.key),
-    msg: at.msg ?? notice(at.entry, at.key),
+    msg: msg && { text: msg.text, id: msg.id },
     logins: logins.list().map((l) => ({ ...l, here: onSite(host, l.site) })),
   };
 }
@@ -127,7 +112,7 @@ function tabState(at: Tab, title: string, url: string, snap: Snap) {
  *  just read, and its page (with the card, or when it has none); answers the page's token, or null
  *  where AnythingLLM's public folder can't be written (AnythingLLM Desktop) or no page key can be made. */
 async function draw(at: Tab, card: boolean, { snap, title }: Read): Promise<string | null> {
-  await takeover.keepOffer(at, snap.elements.some((e) => e.includes("input[password]"))); // before the state shows the logins
+  await takeover.keepOffer(at, asksPassword(snap)); // before the state shows the logins
   const names = namesOf(at.workspace, at.key)!;
   try {
     const shot = path.join(publicDir(), pub(names.token, ""));
@@ -187,7 +172,7 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   if (e.ev === "login-delete") {
     const gone = await logins.remove(text(e.id, 100));
     if (gone?.kind === "passkey") await passkey.forget(gone.credentialId); // out of every tab
-    if (at && gone) at.msg = gone.kind === "passkey" ? "Passkey deleted: remove it in the site's own settings too" : "Login deleted";
+    if (at && gone) say(at.entry, at.key, gone.kind === "passkey" ? "Passkey deleted: remove it in the site's own settings too" : "Login deleted");
     return !!at;
   }
   if (!at) return false; // the tab closed meanwhile
@@ -207,28 +192,24 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   at.entry.needs.delete(at.key);
   await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, secret }, need.submitRef);
   if (login && need.userRef && e.save === true) at.entry.offers.set(at.key, { kind: "password", site: need.host, user, pass: secret, agreed: true, until: Date.now() + OFFER_MS });
-  const what = login ? "the login" : "the code";
-  const typed = `the user entered ${what} you asked for on the tab's page and it was typed into the page`;
-  if (!need.submitRef) {
-    note(at.entry, at.key, `${typed}, but nothing was submitted: submit it with act (press Enter in the field, or click the button); it stays hidden from you. Read the page to see whether it worked`);
-    return true;
-  }
+  const typed = `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page`;
+  const hidden = "it stays hidden from you. Read the page to see whether it worked";
+  if (!need.submitRef) return note(at.entry, at.key, `${typed}, but nothing was submitted: submit it with act (press Enter in the field, or click the button); ${hidden}`), true;
+  const sent = `${typed} and ${need.submitRef} clicked`;
   const asking = await stillAsks(at, need);
-  if (!asking) {
-    note(at.entry, at.key, `${typed} and ${need.submitRef} clicked; it stays hidden from you. Read the page to see whether it worked`);
-    return true;
-  }
-  // The site still asks for it: likely refused. The user hears it on the page they're looking at, a
-  // login they asked to save isn't (it would be kept at the next read without a password field), and
-  // where the same field is still there they're asked again.
+  if (!asking) return note(at.entry, at.key, `${sent}; ${hidden}`), true;
+  // Likely refused: a login the user asked to save isn't kept; they're asked again where the same
+  // field is still there, else told on the page.
   at.entry.offers.delete(at.key);
   const it = login ? "a password" : "the code";
+  const told = `${need.host} still asks for ${it}: it may not have been accepted.`;
+  const refused = `${sent}, but the page still asks for ${it}: the site may have refused it.`;
   if (asking === "same") {
-    at.entry.needs.set(at.key, { ...need, text: `${need.host} still asks for ${it}: it may not have been accepted. Check it and enter it again`, until: Date.now() + NEED_MS });
-    note(at.entry, at.key, `${typed} and ${need.submitRef} clicked, but the page still asks for ${it}: the site may have refused it. The user is asked again on the tab's page; wait for them, then read the page`);
+    at.entry.needs.set(at.key, { ...need, text: `${told} Check it and enter it again`, until: Date.now() + NEED_MS });
+    note(at.entry, at.key, `${refused} The user is asked again on the tab's page; wait for them, then read the page`);
   } else {
-    at.entry.notices.set(at.key, { text: `${need.host} still asks for ${it}: it may not have been accepted. Take the tab over to try again, or ask the agent to.`, until: Date.now() + NOTICE_MS });
-    note(at.entry, at.key, `${typed} and ${need.submitRef} clicked, but the page still asks for ${it}: the site may have refused it. Read the page, tell the user, and use login again if they want to retry`);
+    say(at.entry, at.key, `${told} Take the tab over to try again, or ask the agent to.`);
+    note(at.entry, at.key, `${refused} Read the page, tell the user, and use login again if they want to retry`);
   }
   return true;
 }
@@ -241,8 +222,8 @@ async function stillAsks(at: Tab, need: Need): Promise<"same" | "other" | null> 
   if (hostOf(at.page.url()) !== need.host) return null;
   const { snap } = await readPage(at.page);
   const line = snap.elements.find((l) => l.startsWith(`[${need.secretRef}] `));
-  if (line && (need.kind === "code" || line.includes("input[password]"))) return "same";
-  return need.kind === "login" && snap.elements.some((l) => l.includes("input[password]")) ? "other" : null;
+  if (line && (need.kind === "code" || isPasswordLine(line))) return "same";
+  return need.kind === "login" && asksPassword(snap) ? "other" : null;
 }
 
 /** Applies what the tabs' pages posted, for a call, in its turn with the watch's (#shared/pages inTurn). */
@@ -273,5 +254,6 @@ async function drain(): Promise<void> {
       if (at) (note(at.entry, at.key, `what the user entered on the tab's page couldn't be used: ${err.message}`), changed.add(at));
     }
   }
+  for (const at of changed) at.entry.changed(); // a login typed, a takeover's step: its cookies may have changed
   await Promise.all([...changed].map(redrawn));
 }

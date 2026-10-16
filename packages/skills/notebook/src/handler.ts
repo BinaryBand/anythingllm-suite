@@ -3,10 +3,9 @@
 // read finds notes by their words, and the agent decides what to write. The file is changed under
 // its lock (#shared/atomic), since a scheduled job runs in a process of its own.
 
-import fs from "node:fs";
 import path from "node:path";
 import { storageDir } from "#shared/anythingllm";
-import { updateJson } from "#shared/atomic";
+import { readJson, updateJson } from "#shared/atomic";
 import { Told } from "#shared/errors";
 
 type Args = Record<string, unknown>;
@@ -29,14 +28,7 @@ export const SHOWN = 30; // notes a read shows at most
 const file = (): string => path.join(storageDir(), "notebook-lean", "notebook.json");
 const fresh = (): Book => ({ next: 1, notes: [] });
 
-function load(): Book {
-  try {
-    return JSON.parse(fs.readFileSync(file(), "utf8")) as Book;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return fresh();
-    throw e;
-  }
-}
+const load = (): Book => readJson(file(), fresh);
 
 const change = <T,>(fn: (book: Book) => T): Promise<T> => updateJson(file(), fresh, fn);
 

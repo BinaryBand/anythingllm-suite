@@ -178,6 +178,7 @@ test("a workspace's cookies are kept in the vault and given back, and Chrome's p
   await called({ action: "open", url: "https://shop.example/" }, { workspace: "keep" });
   const first = world.launched.at(-1) as { options: { userDataDir: string }; cookies: Record<string, unknown>[] };
   assert.ok(!first.options.userDataDir.startsWith(storage), "the profile is a temporary folder");
+  for (let i = 0; i < 50 && fs.existsSync(oldProfile); i++) await new Promise((r) => setTimeout(r, 20)); // removed in the background
   assert.ok(!fs.existsSync(oldProfile), "the profile kept in the storage before is gone");
   const now = Date.now() / 1000;
   first.cookies.push(
@@ -187,8 +188,8 @@ test("a workspace's cookies are kept in the vault and given back, and Chrome's p
     { name: "embed", value: "e-1", domain: "widget.example", path: "/", expires: now + 60, session: false, partitionKey: "https://shop.example" },
   );
   for (const other of ["keep-2", "keep-3", "keep-4"]) await called({ action: "open", url: "https://shop.example/" }, { workspace: other }); // past 3 browsers, the oldest closes
-  const vaultText = fs.readFileSync(path.join(storage, "vault-lean", "vault.json"), "utf8");
-  assert.ok(!vaultText.includes("s-123"), "kept encrypted");
+  const sealed = fs.readFileSync(path.join(storage, "vault-lean", "sealed", "session-keep.json"), "utf8");
+  assert.ok(!sealed.includes("s-123"), "sealed beside the vault, not in clear");
   await called({ action: "open", url: "https://shop.example/" }, { workspace: "keep" });
   const again = world.launched.at(-1) as { cookies: Record<string, unknown>[] };
   assert.notEqual(again, first);
@@ -200,29 +201,33 @@ test("a workspace's cookies are kept in the vault and given back, and Chrome's p
 });
 
 test("a login the site seems to refuse is said on the tab's page and asked again, and not saved", async () => {
-  site("https://strict.example/", { title: "Sign in", fields: { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } } });
-  const call = (args: Record<string, unknown>) => called(args, { workspace: "strict" });
+  const SIGN_IN = { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } };
+  const inWorkspace = (workspace: string) => (args: Record<string, unknown>) => called(args, { workspace });
+  site("https://strict.example/", { title: "Sign in", fields: SIGN_IN });
+  const call = inWorkspace("strict");
   await call({ action: "open", url: "https://strict.example/" });
   await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
   const first = tabState("strict").need.until;
   post({ ev: "need-answer", user: "ada@example.com", sealed: seal("wrong-pw-1", tabConfig("strict").pub), save: true }, { workspace: "strict" });
-  const after = await call({ action: "read" });
-  assert.match(after, /e3 clicked, but the page still asks for a password: the site may have refused it\. The user is asked again on the tab's page/);
-  assert.equal(tabState("strict").need.kind, "login", "asked again");
-  assert.equal(tabState("strict").need.text, "strict.example still asks for a password: it may not have been accepted. Check it and enter it again", "and told why, on the request itself");
-  assert.ok(tabState("strict").need.until >= first);
+  assert.match(await call({ action: "read" }), /e3 clicked, but the page still asks for a password: the site may have refused it\. The user is asked again on the tab's page/);
+  const { need } = tabState("strict");
+  assert.equal(need.kind, "login", "asked again");
+  assert.equal(need.text, "strict.example still asks for a password: it may not have been accepted. Check it and enter it again", "and told why, on the request itself");
+  assert.ok(need.until >= first);
   site("https://strict.example/about", { title: "About", text: "About us" });
   await call({ action: "open", url: "https://strict.example/about" }); // on its site, no password asked: where an agreed login is kept
   assert.ok(!tabState("strict").logins.some((l: { site: string }) => l.site === "strict.example"), "the refused login isn't saved");
 
   // A sign-in page that comes back as a new page, its fields new: said, but not asked again by itself.
-  site("https://retry.example/", { title: "Sign in", fields: { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } }, onclick: { e3: "https://retry.example/again" } });
+  site("https://retry.example/", { title: "Sign in", fields: SIGN_IN, onclick: { e3: "https://retry.example/again" } });
   site("https://retry.example/again", { title: "Try again", text: "Wrong password.", fields: { e7: { type: "password", name: "Password" } } });
-  const other = (args: Record<string, unknown>) => called(args, { workspace: "retry" });
+  const other = inWorkspace("retry");
   await other({ action: "open", url: "https://retry.example/" });
   await other({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
   post({ ev: "need-answer", user: "ada@example.com", sealed: seal("wrong-pw-2", tabConfig("retry").pub) }, { workspace: "retry" });
   assert.match(await other({ action: "read" }), /the page still asks for a password: the site may have refused it\. Read the page, tell the user, and use login again/);
-  assert.match(tabState("retry").msg, /Take the tab over to try again, or ask the agent to\./, "kept past the agent's own read");
-  assert.equal(tabState("retry").need, null);
+  const after = tabState("retry");
+  assert.match(after.msg.text, /Take the tab over to try again, or ask the agent to\./, "kept past the agent's own read");
+  assert.ok(after.msg.id > 0, "with an id the page shows it once by");
+  assert.equal(after.need, null);
 });

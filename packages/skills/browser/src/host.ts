@@ -86,7 +86,7 @@ export interface Page {
 
 export interface Browser {
   newPage(): Promise<Page>;
-  pages(): Promise<Page[]>;
+  target(): { createCDPSession(): Promise<CDPSession> };
   close(): Promise<void>;
   on(event: "disconnected", fn: () => void): unknown;
 }

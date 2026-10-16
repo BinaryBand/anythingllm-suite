@@ -97,7 +97,7 @@ input{font:inherit;color:var(--ink)}
   const host = window.AnywhereLLMBrowser || null;
   if (host) document.body.classList.add("hosted");
   let st = null, size = { w: 430, h: 932 }, scale = 1, left = 0, top = 68, bottom = 0, view = "page", over = null, shot = 0, swiped = false;
-  let needOpen = false, dismissed = 0, skew = 0, lastText = "", shown = "";
+  let needOpen = false, dismissed = 0, skew = 0, lastText = "", shown = 0;
   // A step posted from here: "Updating" until a newer picture than `from` comes (or a few seconds,
   // for a step that changed nothing), showing `who` as this page set it until then.
   let pending = null, pendingTimer = 0;
@@ -463,7 +463,7 @@ input{font:inherit;color:var(--ink)}
         if (st.size) size = st.size;
         $("shot").src = cfg.token + ".jpg?v=" + shot;
         if (pending && shot !== pending.from) settled();
-        if (fresh && st.msg && st.msg !== shown) toast((shown = st.msg)); // a notice stays a while: shown once
+        if (st.msg && st.msg.id !== shown) (fresh && toast(st.msg.text)), (shown = st.msg.id); // a line stays a while: shown once
       }
       if (first) askSize(); // the first state: ask for this window's room
     }

@@ -82,8 +82,8 @@ export interface Entry {
   notes: Map<string, string[]>;
   needs: Map<string, Need>;
   offers: Map<string, Offer>;
-  /** A line for a tab's page that outlasts one write of its state (page.ts notice). */
-  notices: Map<string, { text: string; until: number }>;
+  /** The line each tab's page shows (say). */
+  msgs: Map<string, { text: string; id: number; until: number }>;
   /** The tabs the user holds. */
   holds: Map<string, Hold>;
   /** The screen each tab's page asked for, given to every page the tab has. */
@@ -100,6 +100,8 @@ export interface Entry {
   saved: string | null;
   /** Keeps the browser open IDLE_MS from now (browser.ts). */
   touch: () => void;
+  /** Saves its cookies a while from now, after a step that may have changed them (browser.ts). */
+  changed: () => void;
   /** The tabs the agent is doing a step in, which the user can't take over meanwhile. */
   busy: Set<string>;
 }
@@ -113,6 +115,9 @@ export const state = () =>
     /** Whether the lean browser's logins were imported (logins.ts). */
     imported: false,
   }));
+
+/** How long the agent's request for a login or a code waits on the page. */
+export const NEED_MS = 10 * 60 * 1000;
 
 /** A tab's own name when the chat has no thread (the workspace's default chat). */
 export const NO_THREAD = "_";
@@ -155,14 +160,29 @@ export function holder(entry: Entry, key: string): Hold | null {
   return entry.holds.get(key) ?? null;
 }
 
-/** A chat's tab: its workspace's browser entry, its page, and its thread's key; `msg` is what its
- *  page says to the user once it's drawn. */
+/** A chat's tab: its workspace's browser entry, its page, and its thread's key. */
 export interface Tab {
   workspace: string;
   entry: Entry;
   page: Page;
   key: string;
-  msg?: string;
+}
+
+/** What `map` holds for `key` while it lasts (its `until`); one that ran out is dropped. */
+export function live<V extends { until: number }>(map: Map<string, V>, key: string): V | null {
+  const value = map.get(key);
+  if (value && value.until <= Date.now()) map.delete(key);
+  return map.get(key) ?? null;
+}
+
+/** How long a line for a tab's page stays in its state: past the next few writes, so the page
+ *  doesn't miss it. The page shows each line once, by its id. */
+const SAY_MS = 60 * 1000;
+
+/** Puts `text` on the page of `key`'s tab, in place of the line before. */
+export function say(entry: Entry, key: string, text: string): void {
+  const now = Date.now();
+  entry.msgs.set(key, { text, id: Math.max(now, (entry.msgs.get(key)?.id ?? 0) + 1), until: now + SAY_MS });
 }
 
 /** The first line of what an error says. */

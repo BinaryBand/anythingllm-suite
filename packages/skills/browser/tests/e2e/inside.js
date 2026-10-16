@@ -206,7 +206,7 @@ const server = http.createServer((req, res) => {
   // Signed in, the browser closes (past three browsers, the oldest does) and starts again signed in.
   assert.match(await call({ action: "open", url: `${SITE}/me` }), /Signed in\./);
   for (const other of ["e2e-2", "e2e-3", "e2e-4"]) await call({ action: "open", url: DOCS }, 1, other);
-  assert.ok(!fs.readFileSync(path.join(storage, "vault-lean", "vault.json"), "utf8").includes("sid"), "the cookie is in the vault, encrypted");
+  assert.ok(!fs.readFileSync(path.join(storage, "vault-lean", "sealed", "session-e2e.json"), "utf8").includes("sid"), "the cookie is sealed beside the vault");
   assert.ok(!fs.existsSync(path.join(storage, "browser-lean", "e2e", "profile")), "no profile in the storage");
   assert.match(await call({ action: "open", url: `${SITE}/me` }), /Signed in\./, "signed in again after the restart");
 

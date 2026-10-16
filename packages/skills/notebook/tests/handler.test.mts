@@ -88,3 +88,10 @@ test("notes written at once all land, each with its own id", async () => {
   assert.equal(new Set(answers).size, 20);
   assert.deepEqual(book().notes.map((n) => n.id).sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => i + 1));
 });
+
+test("a notebook file that can't be read is said, and never written over", async () => {
+  fs.mkdirSync(path.dirname(bookFile), { recursive: true });
+  fs.writeFileSync(bookFile, "{ not json");
+  assert.match(await call({ action: "write", text: "A new note." }), /^Couldn't write: /);
+  assert.equal(fs.readFileSync(bookFile, "utf8"), "{ not json", "what it held is still there");
+});

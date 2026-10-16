@@ -7,7 +7,7 @@ import path from "node:path";
 import { after, beforeEach, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { VaultError, load, newId, openSealed, publicKey, update } from "./vault.mts";
+import { VaultError, load, newId, openSealed, publicKey, readSealed, update, writeSealed } from "./vault.mts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -109,6 +109,21 @@ test("a new vault with VAULT_KEY_FILE is sealed under its key; a file without on
   assert.throws(() => load(dir), (e: Error) => e instanceof VaultError && /holds no key: .*openssl rand -base64 32/.test(e.message));
   process.env.VAULT_KEY_FILE = keyFileWith();
   assert.throws(() => load(dir), (e: Error) => e instanceof VaultError && /can't be opened with the key in VAULT_KEY_FILE/.test(e.message));
+});
+
+test("a sealed file beside the vault keeps a value apart from it, and moves to VAULT_KEY_FILE's key", () => {
+  assert.equal(readSealed("session-home", dir), null, "none yet");
+  writeSealed("session-home", [{ name: "sid", value: "s-1" }], dir);
+  const file = path.join(dir, "sealed", "session-home.json");
+  assert.ok(!fs.readFileSync(file, "utf8").includes("s-1"), "not in clear");
+  assert.ok(!fs.existsSync(path.join(dir, "vault.json")), "the vault isn't written");
+  process.env.VAULT_KEY_FILE = keyFileWith();
+  assert.deepEqual(readSealed("session-home", dir), [{ name: "sid", value: "s-1" }], "opened with the earlier key");
+  delete process.env.VAULT_KEY_FILE;
+  assert.throws(() => readSealed("session-home", dir), VaultError, "and sealed again under the file's");
+  writeSealed("session-home", null, dir);
+  assert.ok(!fs.existsSync(file), "null removes it");
+  assert.throws(() => writeSealed("../escape", 1, dir), VaultError);
 });
 
 test("changes from one process all land, in turn", async () => {

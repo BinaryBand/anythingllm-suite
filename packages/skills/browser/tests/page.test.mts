@@ -31,7 +31,12 @@ test("every field the page reads from its state is one the skill writes", async 
   for (const [, field] of html.matchAll(/\bneed\.([a-zA-Z_]+)/g)) assert.ok(field in state.need, `need.${field}`);
   // contract/browser-tab.md lists the state's fields and the need's, for clients: the same as written
   const contract = fs.readFileSync(path.join(skillDir, "..", "..", "..", "contract", "browser-tab.md"), "utf8");
-  const listed = (heading: string) => [...contract.split(heading)[1].split("\n## ")[0].split("\n### ")[0].matchAll(/^\| `(\w+)` \|/gm)].map((m) => m[1]).sort();
+  const listed = (heading: string): string[] => {
+    const at = contract.indexOf(`\n${heading}\n`);
+    assert.ok(at >= 0, `the contract has a section ${heading}`);
+    const body = contract.slice(at + heading.length + 2).split(/\n#/)[0]; // up to the next heading
+    return [...body.matchAll(/^\| `(\w+)` \|/gm)].map((m) => m[1]).sort();
+  };
   assert.deepEqual(listed("## The state, `<token>.json`"), Object.keys(state).sort(), "the state's fields in the contract");
   assert.deepEqual(listed("### `need`"), Object.keys(state.need).sort(), "the need's fields in the contract");
 });

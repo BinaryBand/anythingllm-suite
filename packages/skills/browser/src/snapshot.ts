@@ -126,6 +126,12 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
 const SNAPSHOT_ELEMENTS = 400;
 
 /** The page now: { snap, title, url }, with a snap saying why when it can't be read. */
+/** Whether a line of a read is a password field. */
+export const isPasswordLine = (line: string): boolean => line.includes("input[password]");
+
+/** Whether the page as read asks for a password. */
+export const asksPassword = (snap: Snap): boolean => snap.elements.some(isPasswordLine);
+
 export async function readPage(page: Page): Promise<{ snap: Snap; title: string; url: string }> {
   const [snap, title] = await Promise.all([
     page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false, fields: [] })),

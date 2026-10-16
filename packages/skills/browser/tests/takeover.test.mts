@@ -35,7 +35,7 @@ test("the user takes the tab over, types a login sealed, is offered to save it, 
   post({ ev: "type", ref: "e1", text: "ada" }, opts);
   post({ ev: "type", ref: "e2", text: "in the clear" }, opts);
   await call({ action: "guide" });
-  assert.match(tabState("take").msg, /^A password has to come sealed/);
+  assert.match(tabState("take").msg.text, /^A password has to come sealed/);
   assert.equal(lastPage().fields.e2.value, undefined);
   post({ ev: "type", ref: "e2", sealed: seal("pw-take-1", tabConfig("take").pub), then: "Enter" }, opts);
   await call({ action: "guide" });
@@ -45,7 +45,7 @@ test("the user takes the tab over, types a login sealed, is offered to save it, 
 
   post({ ev: "offer", save: true }, opts);
   await call({ action: "guide" });
-  assert.equal(tabState("take").msg, "Saved for take.example");
+  assert.equal(tabState("take").msg.text, "Saved for take.example");
   assert.equal(tabState("take").offer, null);
   assert.ok(tabState("take").logins.some((l: { site: string; user: string }) => l.site === "take.example" && l.user === "ada"));
 
@@ -63,7 +63,7 @@ test("taps and scrolls only while the user holds the tab, kept on its screen; ba
   const opts = { workspace: "taps" };
   post({ ev: "tap", x: 10, y: 10 }, opts);
   await call({ action: "guide" });
-  assert.equal(tabState("taps").msg, "Take over the tab first");
+  assert.equal(tabState("taps").msg.text, "Take over the tab first");
   assert.deepEqual(lastPage().taps, []);
 
   post({ ev: "take" }, opts);
@@ -122,7 +122,7 @@ test("a passkey the site makes is taken out unless the user holds the tab; saved
   const [saved] = passkeys("2");
   post({ ev: "login-delete", id: saved.id }, { workspace: "pk", tab: "2" });
   await call({ action: "guide" }, 2);
-  assert.match(tabState("pk", "2").msg, /^Passkey deleted: remove it in the site's own settings too/);
+  assert.match(tabState("pk", "2").msg.text, /^Passkey deleted: remove it in the site's own settings too/);
   assert.deepEqual(passkeys("2"), []);
   assert.equal(world.authenticators.some((a) => a.credentials.has("by-user")), false, "taken out of every tab");
 
@@ -132,6 +132,6 @@ test("a passkey the site makes is taken out unless the user holds the tab; saved
   await first.emit("WebAuthn.credentialAdded", { credential: made("declined") });
   post({ ev: "offer", save: false }, opts);
   await call({ action: "guide" });
-  assert.match(tabState("pk").msg, /^Not saved: remove the passkey in the site's own settings too/);
+  assert.match(tabState("pk").msg.text, /^Not saved: remove the passkey in the site's own settings too/);
   assert.equal(first.credentials.has("declined"), false);
 });

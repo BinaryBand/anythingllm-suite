@@ -15,7 +15,7 @@ import { act, element, fill, isPassword, settle, settled } from "./act";
 import { BrowserError } from "./errors";
 import * as logins from "./logins";
 import * as passkey from "./passkey";
-import { type Entry, type Hold, OFFER_MS, type Tab, clamp, clip, holder, note, screenFor } from "./state";
+import { type Entry, type Hold, OFFER_MS, type Tab, clamp, clip, holder, note, say, screenFor } from "./state";
 
 const MAX_TEXT = 2000;
 const MAX_SCROLL = 3000;
@@ -36,7 +36,7 @@ export async function apply(e: Record<string, unknown>, at: Tab): Promise<boolea
     return await step(e, at);
   } catch (err) {
     if (!(err instanceof Told)) throw err;
-    at.msg = err.message;
+    say(at.entry, at.key, err.message);
     return true;
   }
 }
@@ -56,7 +56,7 @@ async function step(e: Record<string, unknown>, at: Tab): Promise<boolean> {
       if (!hold) return false;
       entry.holds.delete(key);
       note(entry, key, "the user had the tab and handed it back to you; what they typed stays hidden. Read the page before going on");
-      at.msg = "Handed back to the agent";
+      say(at.entry, at.key, "Handed back to the agent");
       return true;
     case "tap": {
       const { width, height } = page.viewport() ?? { width: 1, height: 1 };
@@ -115,14 +115,14 @@ async function answerOffer(at: Tab, save: boolean): Promise<boolean> {
   if (offer.kind === "passkey") {
     if (!save) {
       await passkey.forget(offer.credential.credentialId);
-      at.msg = "Not saved: remove the passkey in the site's own settings too";
+      say(at.entry, at.key, "Not saved: remove the passkey in the site's own settings too");
       return true;
     }
     await logins.savePasskey(offer.site, offer.user, offer.credential);
     await passkey.spread(offer.credential, at.page);
     note(at.entry, at.key, `the user saved the passkey ${offer.site} made; the next time its sign-in asks for a passkey, it signs in by itself`);
   } else if (save) await logins.save(offer.site, offer.user, offer.pass);
-  at.msg = save ? `Saved for ${offer.site}` : "Not saved";
+  say(at.entry, at.key, save ? `Saved for ${offer.site}` : "Not saved");
   return true;
 }
 

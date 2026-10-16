@@ -42,7 +42,7 @@ Read `<token>.json` with a query that changes (`?t=<now>`) or no cache: it's rew
 | `fields` | array | the fields in view, only while the user holds the tab |
 | `need` | object or null | what the agent asked the user to enter (below) |
 | `offer` | object or null | a login or passkey the page offers to save: `{kind, site, user}` |
-| `msg` | string or null | a line for the page to show once, though it may stay in the state for up to a minute ("Login deleted"; a login the site seems to have refused) |
+| `msg` | `{text, id}` or null | a line for the page to show once ("Login deleted"; a login the site seems to have refused). It stays in the state for up to a minute, so show each `id` once |
 | `logins` | array | the saved logins and passkeys: `{id, site, user, kind, here}`, no secret |
 
 A closed tab's state is `{"closed": true}`, and its other files are gone.

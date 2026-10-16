@@ -20,11 +20,11 @@ import { existing, load, tab } from "./browser";
 import { BrowserError } from "./errors";
 import type { HandlerContext } from "./host";
 import * as logins from "./logins";
-import { NEED_MS, card, caughtUp } from "./page";
+import { card, caughtUp } from "./page";
 import * as research from "./research";
 import { type Scope, scopeOf } from "./scope";
 import { readPage } from "./snapshot";
-import { type Need, type Tab, firstLine, holder, note, state, statics, takeNotes, threadKey } from "./state";
+import { NEED_MS, type Need, type Tab, firstLine, holder, note, state, statics, takeNotes, threadKey } from "./state";
 import { free } from "./takeover";
 import { render } from "./view";
 
@@ -189,7 +189,7 @@ async function onTab(scope: Scope, run: () => Promise<string> | string): Promise
     return await run();
   } finally {
     entry?.busy.delete(key);
-    state().browsers.get(scope.workspace)?.touch(); // its cookies are saved a while after the step, not only before it
+    state().browsers.get(scope.workspace)?.changed();
   }
 }
 

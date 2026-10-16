@@ -1,8 +1,9 @@
 // Chrome, run by this skill inside AnythingLLM's own process: the Puppeteer and the Chrome that
 // AnythingLLM's collector ships with, required at run time, so the skill brings none of its own.
 // Each workspace gets a browser of its own, with a profile in a temporary folder that goes when it
-// closes; its cookies are kept in the vault (sessions.ts), saved SAVE_MS after it was last used and
-// as it closes, so its sign-ins last. Each chat thread gets a tab. A browser closes after IDLE_MS unused, and at most
+// closes; its cookies are sealed beside the vault (sessions.ts), saved SAVE_MS after a step and as
+// it closes, so its sign-ins last. Each chat thread gets a tab. A browser closes after IDLE_MS
+// unused, and at most
 // MAX_BROWSERS run at once. Every request a page makes goes through the fence (#shared/fence), and
 // every tab has a passkey authenticator (passkey.ts).
 // What must outlive a reload (the browsers, their tabs) is kept per process (state.ts).
@@ -22,7 +23,7 @@ import { type Entry, type Tab, VIEWPORT, firstLine, note, state, threadKey, work
 
 const PUPPETEER = "/app/collector/node_modules/puppeteer";
 const IDLE_MS = 20 * 60 * 1000;
-/** How long after a browser was last used its cookies are saved. */
+/** How long after a step its browser's cookies are saved. */
 const SAVE_MS = 10 * 1000;
 const MAX_BROWSERS = 3;
 /** The screen a research page reads at, so docs show their desktop layout. */
@@ -53,14 +54,17 @@ function makeProfile(): string {
   return profile;
 }
 
-/** The page cookies are read and set through: the one Chrome starts with. */
-const firstPage = async (browser: Browser): Promise<Page> => (await browser.pages())[0] ?? (await browser.newPage());
-
-/** Saves the workspace's cookies into the vault, if they changed; a failure leaves them as last saved. */
+/** Saves the workspace's cookies, if they changed; a failure (Chrome gone, say) leaves them as last saved. */
 async function saveNow(workspace: string, entry: Entry): Promise<void> {
-  clearTimeout(entry.saving ?? undefined);
   if (!entry.browser) return;
-  entry.saved = await sessions.save(workspace, await firstPage(entry.browser), entry.saved).catch(() => entry.saved);
+  entry.saved = await sessions.save(workspace, entry.browser, entry.saved).catch(() => entry.saved);
+}
+
+/** Saves the workspace's cookies SAVE_MS from now, in place of a save to come. */
+function saveSoon(workspace: string, entry: Entry): void {
+  clearTimeout(entry.saving ?? undefined);
+  entry.saving = setTimeout(() => void saveNow(workspace, entry), SAVE_MS);
+  entry.saving.unref?.();
 }
 
 /** Forgets a thread's tab, however it closed: its page then says the tab closed. */
@@ -69,7 +73,7 @@ function dropTab(workspace: string, entry: Entry, key: string): void {
   entry.notes.delete(key);
   entry.needs.delete(key);
   entry.offers.delete(key);
-  entry.notices.delete(key);
+  entry.msgs.delete(key);
   entry.holds.delete(key);
   entry.screens.delete(key);
   forgetTab(workspace, key);
@@ -93,19 +97,16 @@ async function closeEntry(workspace: string): Promise<void> {
   await (await entry.ready.catch(() => null))?.close().catch(() => {});
 }
 
-/** Keeps a workspace's browser open IDLE_MS from now, and saves its cookies SAVE_MS from now. */
+/** Keeps a workspace's browser open IDLE_MS from now. */
 function touch(workspace: string, entry: Entry): void {
   entry.last = Date.now();
   clearTimeout(entry.timer ?? undefined);
   entry.timer = setTimeout(() => void closeEntry(workspace), IDLE_MS);
   entry.timer.unref?.();
-  clearTimeout(entry.saving ?? undefined);
-  entry.saving = setTimeout(() => void saveNow(workspace, entry), SAVE_MS);
-  entry.saving.unref?.();
 }
 
 async function launch(workspace: string): Promise<Browser> {
-  fs.rmSync(path.join(workspaceDir(workspace), "profile"), { recursive: true, force: true }); // a profile kept in the storage before the vault kept the cookies
+  fs.rm(path.join(workspaceDir(workspace), "profile"), { recursive: true, force: true }, () => {}); // a profile the storage kept before the cookies were sealed
   const profile = makeProfile();
   // Chrome may still be writing it as it goes, so it's removed in the background, with retries, and
   // never throws: this runs in an event handler, where a throw would take AnythingLLM down.
@@ -133,9 +134,9 @@ async function entryFor(workspace: string): Promise<Entry> {
   if (!entry) {
     const others = [...browsers.entries()].sort((a, b) => a[1].last - b[1].last);
     while (others.length >= MAX_BROWSERS) await closeEntry(others.shift()![0]);
-    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), notices: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, saving: null, saved: null, ready: null!, touch: () => touch(workspace, made), busy: new Set() };
+    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), msgs: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, saving: null, saved: null, ready: null!, touch: () => touch(workspace, made), changed: () => saveSoon(workspace, made), busy: new Set() };
     made.ready = launch(workspace).then(async (browser) => {
-      made.saved = await sessions.restore(workspace, await firstPage(browser)).catch(() => null);
+      made.saved = await sessions.restore(workspace, browser).catch(() => null);
       return (made.browser = browser);
     });
     browsers.set(workspace, (entry = made));

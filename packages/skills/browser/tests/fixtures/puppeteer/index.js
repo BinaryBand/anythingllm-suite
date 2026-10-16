@@ -6,11 +6,11 @@ const fs = require("fs");
 
 const world = (globalThis.__browserLeanWorld ||= { launched: [], pages: [], sites: {}, apis: {}, fetched: [], authenticators: [] });
 
-/** A page's DevTools session, for its WebAuthn domain and the browser's cookies: each virtual
- *  authenticator keeps its credentials by id, and `emit` plays an event Chrome would send. */
+/** A DevTools session: a page's, for its WebAuthn domain (each virtual authenticator keeps its
+ *  credentials by id, and `emit` plays an event Chrome would send), or the browser's, for its cookies. */
 class Session {
-  constructor(page) {
-    this.page = page;
+  constructor(browser) {
+    this.browser = browser;
     this.handlers = {};
     this.credentials = new Map();
   }
@@ -31,8 +31,8 @@ class Session {
     }
     if (method === "WebAuthn.addCredential") return void this.credentials.set(params.credential.credentialId, { ...params.credential });
     if (method === "WebAuthn.removeCredential") return void this.credentials.delete(params.credentialId);
-    if (method === "Network.getAllCookies") return { cookies: structuredClone(this.page.browser.cookies) };
-    if (method === "Network.setCookies") return void this.page.browser.cookies.push(...structuredClone(params.cookies));
+    if (method === "Storage.getCookies") return { cookies: structuredClone(this.browser.cookies) };
+    if (method === "Storage.setCookies") return void this.browser.cookies.push(...structuredClone(params.cookies));
     throw new Error(`the stand-in has no ${method}`);
   }
 }
@@ -115,11 +115,7 @@ class Page {
   }
   target() {
     return {
-      createCDPSession: async () => {
-        const session = new Session(this);
-        this.session ||= session; // the tab's own (its passkeys'), not one made to read cookies
-        return session;
-      },
+      createCDPSession: async () => (this.session = new Session(this.browser)),
     };
   }
   on() {}
@@ -191,18 +187,15 @@ class Browser {
     this.options = options;
     this.closed = false;
     this.cookies = [];
-    this.first = this.adopt(new Page());
-  }
-  adopt(page) {
-    page.browser = this;
-    return page;
   }
   on() {}
-  async pages() {
-    return [this.first];
+  target() {
+    return { createCDPSession: async () => new Session(this) };
   }
   async newPage() {
-    return this.adopt(new Page());
+    const page = new Page();
+    page.browser = this;
+    return page;
   }
   async close() {
     this.closed = true;

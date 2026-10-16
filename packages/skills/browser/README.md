@@ -19,7 +19,8 @@ Each answer about the tab ends with its card, a picture of the tab that opens it
 
 | What | Where |
 | --- | --- |
-| Logins, passkeys, and each workspace's cookies (so its sign-ins last) | `vault-lean/vault.json` in AnythingLLM's storage, encrypted, shared with the library |
+| Logins and passkeys | `vault-lean/vault.json` in AnythingLLM's storage, encrypted, shared with the library |
+| Each workspace's cookies (so its sign-ins last) | `vault-lean/sealed/session-<workspace>.json`, encrypted with the vault's key |
 | Chrome's profile while it runs | a temporary folder, removed when it closes |
 | Each workspace's tabs' page names | `browser-lean/<workspace>/` |
 | The tabs' pictures, state and pages | `public/browser-lean/` beside AnythingLLM's server |
