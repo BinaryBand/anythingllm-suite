@@ -107,16 +107,19 @@ class Page {
       f.getAttribute = (name) => f.attrs?.[name] ?? null;
       f.closest = (selector) => (f.behind && selector === "[inert]" ? {} : null);
       f.dispatchEvent = () => true;
+      f.getBoundingClientRect = () => ({ left: 0, top: 0, width: 10, height: 10 });
+      const dialogs = [];
       if (f.behind) {
         const { title, buttons } = f.behind;
-        const dialog = {
+        dialogs.push({
           closest: () => null,
           getClientRects: () => [{}],
           getAttribute: (name) => (name === "aria-label" ? title : null),
+          querySelector: () => null,
           querySelectorAll: () => buttons.map((b) => ({ innerText: b.label, getAttribute: (name) => (name === "data-bw-ref" ? b.ref : null) })),
-        };
-        f.ownerDocument = { querySelectorAll: () => [dialog] };
+        });
       }
+      f.ownerDocument = { querySelectorAll: () => dialogs, elementFromPoint: () => null };
       if (f.type === "date") {
         let value = f.value || "";
         Object.defineProperty(f, "value", { get: () => value, set: (v) => (value = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ""), enumerable: true });

@@ -362,3 +362,18 @@ test("a check that a person is at the browser isn't clicked or ticked by the age
   assert.deepEqual(lastPage().clicks, []);
   assert.match(await call({ action: "act", do: "check", ref: "e9" }), /^Did check e9\./);
 });
+
+test("a code field the page shows again under another ref counts as still asked, without typing into the old ref", async () => {
+  site("https://moved.example/code", {
+    title: "Two-step",
+    fields: { e4: { type: "text", name: "Authentication code" }, e6: { kind: "button", name: "Verify" } },
+    onclick: { e6: "https://moved.example/again" },
+  });
+  site("https://moved.example/again", { title: "Two-step", fields: { e3: { kind: "link", name: "Try another way" }, e4: { kind: "button", name: "Resend" }, e5: { type: "text", name: "Authentication code" } } });
+  const call = inWorkspace("moved");
+  await call({ action: "open", url: "https://moved.example/code" });
+  await call({ action: "login", what: "authenticator", ref: "e4", submit_ref: "e6" });
+  post({ ev: "need-answer", text: "111111" }, { workspace: "moved" });
+  assert.match(await call({ action: "read" }), /the page still asks for the code: the site may have refused it\. Read the page, tell the user, and use login again/);
+  assert.equal(tabState("moved").need, null, "not asked again under a ref that's now another element");
+});

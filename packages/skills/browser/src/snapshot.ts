@@ -1,7 +1,7 @@
 // The page as the agent reads it (view.ts): its visible interactive elements, each tagged with a ref
 // (data-bw-ref) that act targets, then its visible text. A ref stays with its element for the life
 // of the page, so refs from an earlier read still work while the element is there. Open shadow
-// roots are walked; frames aren't. An open modal dialog's elements come first, and those behind it
+// roots are walked; frames aren't. An open dialog's elements come first, and those behind it
 // say so. A password field is marked (data-bw-secret) and stays one in every read after, even once
 // "Show password" makes it a text field. It also gives where each field one types into sits in
 // view, for the tab's page to put an input over while the user holds the tab. `snapshot` runs in
@@ -31,7 +31,7 @@ export interface Snap {
 /** The input types one doesn't type into; act.ts's notTyped is given the same list. */
 export const NOT_TYPED = ["checkbox", "radio", "hidden", "button", "submit", "reset", "image", "file", "range", "color"];
 
-function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTyped: string[] }): Snap {
+function snapshot({ snapshot: maxElements, notTyped, dialog }: { snapshot: number; notTyped: string[]; dialog: string }): Snap {
   const { document, window, getComputedStyle, innerWidth, innerHeight } = globalThis as any;
   const INTERACTIVE = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"]);
   const ROLES = new Set(["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "combobox", "textbox", "searchbox", "slider", "spinbutton"]);
@@ -66,10 +66,17 @@ function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTy
         "",
       80,
     );
-  // An open modal dialog (a cookie one, say): its elements are listed first, and those behind it
-  // (made inert, or outside a modal) are marked, since a click or typing there doesn't reach them.
-  const modal = [...document.querySelectorAll('dialog[open], [aria-modal="true"]')].find((d: any) => !d.closest("[inert]") && visible(d) && (d.getAttribute("aria-modal") === "true" || d.matches(":modal")));
-  const behind = (el: any) => !!el.closest("[inert]") || (modal && !modal.contains(el));
+  // Open dialogs (a cookie one, say): their elements are listed first, and those behind one are
+  // marked, as act.ts's coverOf refuses them: under an inert ancestor, or under a dialog at their
+  // middle; a click or typing there doesn't reach them.
+  const dialogs = [...document.querySelectorAll(dialog)].filter((d: any) => !d.closest("[inert]") && visible(d));
+  const behind = (el: any) => {
+    if (el.closest("[inert]")) return true;
+    if (!dialogs.length) return false;
+    const r = el.getBoundingClientRect();
+    const over = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(dialog);
+    return !!over && !over.contains(el);
+  };
   // A password field (or one that says it takes a password) is marked, and stays one once read,
   // even after "Show password" makes it a text field: act.ts's isPassword reads the mark.
   const secret = (el: any) => el.getAttribute("data-bw-secret") === "1";
@@ -129,7 +136,7 @@ function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTy
       if (f && fields.length < MAX_FIELDS) fields.push(f);
     }
   };
-  if (modal) walk(modal);
+  for (const d of dialogs) walk(d);
   walk(document);
   window.__bwNext = next;
   const text = String(document.body ? document.body.innerText : "")
@@ -153,6 +160,12 @@ export const asksPassword = (snap: Snap): boolean => snap.elements.some(isPasswo
 /** Whether the page as read has a field for a code (a one-time, verification or authenticator code). */
 export const asksCode = (snap: Snap): boolean => snap.elements.some((l) => /^\[e\d+\] input\[(text|tel|number)\] "[^"]*\b(code|one-time|otp|passcode|verification)/i.test(l));
 
+/** The page as read, with its title and address (readPage). */
+export type Read = { snap: Snap; title: string; url: string };
+
+/** A dialog, as a read lists it first and act checks what it covers. */
+export const DIALOG = 'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"]';
+
 /** The line of a read for `ref`, if it has one. */
 export const lineOf = (snap: Snap, ref: string): string | undefined => snap.elements.find((l) => l.startsWith(`[${ref}] `));
 
@@ -160,10 +173,16 @@ export const lineOf = (snap: Snap, ref: string): string | undefined => snap.elem
  *  field on a page read again, where a ref alone may name another element on a new page. */
 export const fieldOf = (line: string): string => line.match(/^\[e\d+\] (\S+ "[^"]*")/)?.[1] ?? line;
 
+/** What the field `ref` is in a read (fieldOf), if the read has it. */
+export const fieldAt = (snap: Snap, ref: string): string | undefined => {
+  const line = lineOf(snap, ref);
+  return line && fieldOf(line);
+};
+
 /** The page now: { snap, title, url }, with a snap saying why when it can't be read. */
-export async function readPage(page: Page): Promise<{ snap: Snap; title: string; url: string }> {
+export async function readPage(page: Page): Promise<Read> {
   const [snap, title] = await Promise.all([
-    page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS, notTyped: NOT_TYPED }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false, fields: [] })),
+    page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS, notTyped: NOT_TYPED, dialog: DIALOG }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false, fields: [] })),
     page.title().catch(() => ""),
   ]);
   return { snap, title, url: page.url() };

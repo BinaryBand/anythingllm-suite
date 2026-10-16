@@ -5,7 +5,7 @@
 import { hostOf } from "#shared/fence";
 import { BrowserError, StaleRef } from "./errors";
 import type { ElementHandle, Page } from "./host";
-import { NOT_TYPED } from "./snapshot";
+import { DIALOG, NOT_TYPED } from "./snapshot";
 import type { Tab } from "./state";
 
 const ACTIONS = ["click", "fill", "type", "press", "select", "check", "uncheck", "hover", "scroll_down", "scroll_up", "back", "forward", "reload", "wait"];
@@ -50,37 +50,41 @@ export async function element(page: Page, ref: string): Promise<ElementHandle> {
  *  "Show password" turning it into a text field doesn't change that. */
 export const isPassword = (target: ElementHandle): Promise<boolean> => target.evaluate((el) => el.type === "password" || el.getAttribute("data-bw-secret") === "1");
 
-/** What `target` is when it isn't a field one types into (a link, a button…), else null. */
-export const notTyped = (target: ElementHandle): Promise<string | null> =>
+/** What `target` is when it isn't a field one types into (a link, a button…), else null; and its
+ *  input type, if it's an input. */
+const fieldKind = (target: ElementHandle): Promise<{ what: string | null; type: string }> =>
   target.evaluate((el, skip: string[]) => {
     const tag = el.tagName.toLowerCase();
-    if ((tag === "input" && !skip.includes(el.type)) || tag === "textarea" || el.isContentEditable) return null;
-    return tag === "input" ? `input[${el.type}]` : tag === "a" ? "link" : tag;
+    const type = tag === "input" ? String(el.type) : "";
+    if ((tag === "input" && !skip.includes(type)) || tag === "textarea" || el.isContentEditable) return { what: null, type };
+    return { what: tag === "input" ? `input[${type}]` : tag === "a" ? "link" : tag, type };
   }, NOT_TYPED);
 
-/** The open dialog `target` sits behind, so a click or typing would land on the dialog or nowhere
- *  (a cookie dialog, say, that makes the rest of the page inert): its title and buttons; else null. */
+/** What `target` is when it isn't a field one types into (a link, a button…), else null. */
+export const notTyped = async (target: ElementHandle): Promise<string | null> => (await fieldKind(target)).what;
+
+/** The open dialog `target` sits behind, so a click or typing would land on the dialog or nowhere:
+ *  its title and buttons; else null. Behind is what snapshot.ts marks so too: under an inert ancestor
+ *  (a cookie dialog that makes the rest of the page inert), or under a dialog (DIALOG) at its middle. */
 const coverOf = (target: ElementHandle): Promise<{ title: string; buttons: string[] } | null> =>
-  target.evaluate((el) => {
+  target.evaluate((el, selector: string) => {
     const doc = el.ownerDocument;
-    if (!doc) return null;
-    const DIALOG = 'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"]';
     let dialog: any = null;
-    if (el.closest("[inert]")) dialog = [...doc.querySelectorAll(DIALOG)].find((d: any) => !d.closest("[inert]") && d.getClientRects().length) ?? doc.body;
+    if (el.closest("[inert]")) dialog = [...doc.querySelectorAll(selector)].find((d: any) => !d.closest("[inert]") && d.getClientRects().length) ?? doc.body;
     else {
       const r = el.getBoundingClientRect();
-      dialog = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest?.(DIALOG) ?? null;
+      dialog = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(selector) ?? null;
       if (dialog?.contains(el)) dialog = null;
     }
     if (!dialog) return null;
     const clip = (s: unknown, n: number) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
-    const labelled = dialog.getAttribute?.("aria-labelledby");
-    const title = clip(dialog.getAttribute?.("aria-label") || (labelled && doc.getElementById(labelled)?.innerText) || dialog.querySelector?.("h1, h2, h3")?.innerText, 60);
-    const buttons = [...(dialog.querySelectorAll?.('button, [role="button"], input[type="submit"], input[type="button"]') ?? [])]
+    const labelled = dialog.getAttribute("aria-labelledby");
+    const title = clip(dialog.getAttribute("aria-label") || (labelled && doc.getElementById(labelled)?.innerText) || dialog.querySelector("h1, h2, h3")?.innerText, 60);
+    const buttons = [...dialog.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]')]
       .slice(0, 6)
       .map((b: any) => [b.getAttribute("data-bw-ref"), `"${clip(b.innerText || b.value || b.getAttribute("aria-label"), 40)}"`].filter(Boolean).join(" "));
     return { title, buttons };
-  });
+  }, DIALOG);
 
 /** A BrowserError when `target` (`ref`) is behind an open dialog, naming it and its buttons. */
 export async function reachable(target: ElementHandle, ref: string): Promise<void> {
@@ -93,13 +97,10 @@ export async function reachable(target: ElementHandle, ref: string): Promise<voi
 /** The words of a check that a person is at the browser, which is the user's to pass. */
 const HUMAN_CHECK = /verify (that )?you('| a)re (a )?human|i'?m not a robot|human (check|verification)|captcha/i;
 
-/** A BrowserError when `target` (`ref`) is, or sits in, a check that a person is at the browser
- *  ("Verify you are human"): ticking it for them is passing as them. */
+/** A BrowserError when `target` (`ref`) is a check that a person is at the browser ("Verify you are
+ *  human"), by its own name: ticking it for them is passing as them. */
 async function notHumanCheck(target: ElementHandle, ref: string): Promise<void> {
-  const words: string = await target.evaluate((el) => {
-    const group = el.closest?.('[role="group"], fieldset, label, [aria-label]');
-    return [el.getAttribute("aria-label"), el.labels?.[0]?.innerText, el.innerText, el.value, group?.getAttribute?.("aria-label"), group?.tagName === "LABEL" ? group.innerText : ""].filter(Boolean).join(" ");
-  });
+  const words: string = await target.evaluate((el) => [el.getAttribute("aria-label"), el.labels?.[0]?.innerText, el.innerText, el.value].filter(Boolean).join(" "));
   const said = words.match(HUMAN_CHECK)?.[0];
   if (said) throw new BrowserError(`${ref} is a check that a person is at the browser ("${said}"): that's the user's to do, never yours. Tell them to tap the card, take the tab over, do it, and hand it back`);
 }
@@ -111,9 +112,8 @@ const SET_WHOLE: Record<string, string> = { date: "YYYY-MM-DD", time: "HH:MM", m
 /** Replaces what's in a field with `text`, typed as a person would, so the page sees it; never
  *  anything else (filling a link would click it). A date or time field is set whole (SET_WHOLE). */
 export async function fill(target: ElementHandle, text: string): Promise<void> {
-  const what = await notTyped(target);
+  const { what, type: kind } = await fieldKind(target);
   if (what) throw new BrowserError(`a ${what} isn't a field one types into`);
-  const kind: string = await target.evaluate((el) => (el.tagName === "INPUT" ? String(el.type) : ""));
   if (SET_WHOLE[kind]) {
     const took = await target.evaluate((el, value: string) => {
       // Through the input's own setter, as a picker sets it, so the page's framework sees the change.
@@ -146,12 +146,21 @@ export async function settle(page: Page, pause = 400): Promise<void> {
 export const settled = (page: Page, action: string): Promise<void> => settle(page, NAVIGATES.has(action) ? 400 : 0);
 
 /** A field that keeps a form from being sent (empty but required, say): its ref, if a read gave it
- *  one, and its label; or, `disabled`, the submit itself, which the page keeps disabled. */
+ *  one, and its label. */
 export interface Missing {
   ref: string | null;
   label: string;
-  disabled?: boolean;
 }
+
+/** Why typeIn didn't send the form: the fields it still needs, or the page keeping its submit
+ *  disabled (it wants something else first, a check only a person passes, say). */
+export interface Unsent {
+  missing: Missing[];
+  disabled: boolean;
+}
+
+/** Whether typeIn left the form unsent. */
+export const isUnsent = (u: Unsent): boolean => u.disabled || u.missing.length > 0;
 
 /** How long typeIn waits for a submit the page enables once its fields are filled (some check on a
  *  timer rather than on input). */
@@ -183,10 +192,10 @@ const unsent = (submit: ElementHandle): Promise<Missing[]> =>
   });
 
 /** For the agent, after typeIn: how the submit went, as a clause that follows "typed into the page". */
-export function submitted(submitRef: string | undefined, missing: Missing[]): string {
+export function submitted(submitRef: string | undefined, { missing, disabled }: Unsent): string {
   if (!submitRef) return ", but nothing was submitted: submit it with act (press Enter in the field, or click the button)";
+  if (disabled) return `, but ${submitRef} wasn't clicked: the page keeps it disabled, so it wants something else first. Read the page: fill what's left with act, or for a check only a person passes ("verify you are human", a CAPTCHA), have the user take the tab over and send it`;
   if (!missing.length) return ` and ${submitRef} clicked`;
-  if (missing[0].disabled) return `, but ${submitRef} wasn't clicked: the page keeps it disabled, so it wants something else first. Read the page: fill what's left with act, or for a check only a person passes ("verify you are human", a CAPTCHA), have the user take the tab over and send it`;
   const needs = missing.map((m) => [m.ref, m.label && `"${m.label}"`].filter(Boolean).join(" ") || "a field").join(", ");
   return `, but ${submitRef} wasn't clicked: the page still needs ${needs} first. Fill it with act, or for a check only a person passes (a CAPTCHA), have the user take the tab over and send it`;
 }
@@ -194,8 +203,9 @@ export function submitted(submitRef: string | undefined, missing: Missing[]): st
 /** Types a login or a code into the tab `at`: `secret` (the password or the code, hidden from every
  *  read after) into `secretRef`, and into `confirmRef` too (a new account's "Confirm password"), and a
  *  username first, if given; only while its page is still on `host`. Then clicks `submitRef`, unless
- *  the form still has fields keeping it from being sent (a CAPTCHA, say): answers those, unsent. */
-export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, confirmRef, secret }: { userRef?: string; user?: string; secretRef: string; confirmRef?: string; secret: string }, submitRef?: string): Promise<Missing[]> {
+ *  the form still has fields keeping it from being sent (a CAPTCHA, say), or the page keeps it
+ *  disabled: answers why it's unsent. */
+export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, confirmRef, secret }: { userRef?: string; user?: string; secretRef: string; confirmRef?: string; secret: string }, submitRef?: string): Promise<Unsent> {
   const now = hostOf(at.page.url());
   if (now !== host) throw new BrowserError(`the page moved to ${now || "another page"} meanwhile; nothing was typed`);
   const into = async (ref: string, text: string) => {
@@ -207,15 +217,15 @@ export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, 
   at.entry.secrets.add(secret);
   await into(secretRef, secret);
   if (confirmRef) await into(confirmRef, secret);
-  let missing: Missing[] = [];
+  const left: Unsent = { missing: [], disabled: false };
   if (submitRef) {
     const submit = await element(at.page, submitRef);
-    missing = await unsent(submit);
-    if (!missing.length && (await staysDisabled(submit))) missing = [{ ref: submitRef, label: "", disabled: true }];
-    if (!missing.length) await submit.click();
+    left.missing = await unsent(submit);
+    left.disabled = !left.missing.length && (await staysDisabled(submit));
+    if (!isUnsent(left)) await submit.click();
   }
   await settle(at.page);
-  return missing;
+  return left;
 }
 
 async function pressKey(page: Page, target: ElementHandle | null, key: string): Promise<void> {
@@ -237,19 +247,23 @@ async function select(target: ElementHandle, text: string): Promise<void> {
   await target.select(value);
 }
 
+/** The actions that type (press: into the focused field when no ref is given), never into a password field. */
+const TYPES = new Set(["fill", "type", "press"]);
 /** The actions that reach an element by clicking or typing, which a dialog over it would catch. */
 const REACHES = new Set(["click", "fill", "type", "select", "check", "uncheck"]);
+/** The actions that would pass a check that a person is at the browser. */
+const TICKS = new Set(["click", "check"]);
 
 /** Does `action` on `page`; `ref` and `text` as checkAct allows them. */
 export async function act(page: Page, action: string, ref: string, text: string): Promise<unknown> {
   checkAct(action, ref, text);
   const target = ref ? await element(page, ref) : null;
-  const typesInto = action === "fill" || action === "type" ? target : action === "press" ? (target ?? (await page.evaluateHandle(() => (globalThis as any).document.activeElement))) : null;
+  const typesInto = TYPES.has(action) ? (target ?? (await page.evaluateHandle(() => (globalThis as any).document.activeElement))) : null;
   if (typesInto && (await isPassword(typesInto))) {
     throw new BrowserError(`${ref || "the focused field"} is a password field, which act never types into, even with a password the page or the chat shows: use login, which types a saved login or what the user enters on the tab's page`);
   }
   if (target && REACHES.has(action)) await reachable(target, ref);
-  if (target && (action === "click" || action === "check")) await notHumanCheck(target, ref);
+  if (target && TICKS.has(action)) await notHumanCheck(target, ref);
   const navigation = { waitUntil: "domcontentloaded", timeout: NAVIGATE_MS };
   switch (action) {
     case "click":

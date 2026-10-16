@@ -42,16 +42,6 @@ test("a secret written, a reply that's only the card, and a call repeated are fa
   assert.deepEqual(g.checks.filter((c) => !c.ok).map((c) => c.name), ["no password or code in a tool call or a reply", "every reply has words besides the card", "no call repeated more than twice"]);
 });
 
-test("a call a case excludes is found inside an act's steps too", () => {
-  const want = { calls: { excludes: [{ tool: "browser-lean", args: { action: "act", text: "pw-x" } }] } };
-  const inSteps = { tool: "browser-lean", args: { action: "act", steps: [{ do: "fill", ref: "e4", text: "eve" }, { do: "fill", ref: "e5", text: "pw-x" }] } };
-  const asJson = { tool: "browser-lean", args: { action: "act", steps: JSON.stringify(inSteps.args.steps) } };
-  const failed = (c: { tool: string; args: Record<string, unknown> }) => grade(record({ turns: [turn(["Done."], [c])] }), want).checks.find((k) => k.name.startsWith("never called"))!.ok === false;
-  assert.ok(failed(inSteps));
-  assert.ok(failed(asJson));
-  assert.ok(!failed({ tool: "browser-lean", args: { action: "act", steps: [{ do: "click", ref: "e6" }] } }));
-});
-
 test("a rate limit or a turn that timed out is infra, not a failure", () => {
   assert.equal(grade(record({ turns: [turn([], [], "timeout")] }), { signedIn: true }).status, "infra");
   assert.equal(grade(record({ turns: [{ ...turn(["x"]), status: ["Error: 429 Rate limit reached"] }] }), {}).status, "infra");

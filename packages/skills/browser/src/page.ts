@@ -18,7 +18,7 @@ import { Told } from "#shared/errors";
 import { hostOf, onSite } from "#shared/fence";
 import { inTurn, newSecret, pageHtml, publicDir, removePublic, sameSecret, takeEvents, watch, writePublic } from "#shared/pages";
 import * as vault from "#shared/vault";
-import { submitted, typeIn } from "./act";
+import { isUnsent, submitted, typeIn } from "./act";
 import * as logins from "./logins";
 import * as passkey from "./passkey";
 import { type Snap, asksPassword, fieldOf, isPasswordLine, lineOf, readPage } from "./snapshot";
@@ -190,16 +190,16 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   const user = login ? text(e.user).trim() : "";
   if (!secret || (need.userRef && !user)) return false;
   at.entry.needs.delete(at.key);
-  const missing = await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, confirmRef: need.confirmRef, secret }, need.submitRef);
+  const left = await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, confirmRef: need.confirmRef, secret }, need.submitRef);
   if (login && need.userRef && e.save === true) at.entry.offers.set(at.key, { kind: "password", site: need.host, user, pass: secret, agreed: true, until: Date.now() + OFFER_MS });
-  const sent = `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page${submitted(need.submitRef, missing)}`;
+  const sent = `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page${submitted(need.submitRef, left)}`;
   const hidden = "it stays hidden from you. Read the page to see whether it worked";
-  if (missing.length) {
+  if (isUnsent(left)) {
     // Not sent, so nothing was refused: the form needs something else first (a CAPTCHA, say).
-    const needs = missing[0].disabled ? "something else" : missing.map((m) => (m.label ? `"${m.label}"` : "another field")).join(", ");
-    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${needs} before it can be sent: take the tab over to ${missing[0].disabled ? "finish" : "fill"} it`);
+    const [needs, verb] = left.disabled ? ["something else", "finish"] : [left.missing.map((m) => (m.label ? `"${m.label}"` : "another field")).join(", "), "fill"];
+    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${needs} before it can be sent: take the tab over to ${verb} it`);
   }
-  const asking = need.submitRef && !missing.length ? await stillAsks(at, need) : null;
+  const asking = need.submitRef && !isUnsent(left) ? await stillAsks(at, need) : null;
   if (!asking) return note(at.entry, at.key, `${sent}; ${hidden}`), true;
   // Likely refused: a login the user asked to save isn't kept; they're asked again where the same
   // field is still there, else told on the page.
@@ -217,16 +217,18 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   return true;
 }
 
-/** After a login or a code was typed and submitted: whether its site still asks for it, "same" when
- *  the field it went into is still there (the same kind and label under its ref: a new page numbers
- *  its refs again; a login: still a password field), "other" when a login's page shows another
- *  password field, else null. A guess, not proof: a site that refuses a login usually keeps asking,
+/** After a login or a code was typed and submitted: whether its site still asks for it. "same" when
+ *  the field it went into is still there under its ref (the same kind and label: a new page numbers
+ *  its refs again; a login: still a password field), so the same request can go again; "other" when
+ *  that field is there under another ref (the page moved it), or a login's page shows another
+ *  password field; else null. A guess, not proof: a site that refuses a login usually keeps asking,
  *  and one that takes it moves on. */
 async function stillAsks(at: Tab, need: Need): Promise<"same" | "other" | null> {
   if (hostOf(at.page.url()) !== need.host) return null;
   const { snap } = await readPage(at.page);
   const line = lineOf(snap, need.secretRef);
   if (line && (!need.field || fieldOf(line) === need.field) && (need.kind === "code" || isPasswordLine(line))) return "same";
+  if (need.field && snap.elements.some((l) => fieldOf(l) === need.field)) return "other";
   return need.kind === "login" && asksPassword(snap) ? "other" : null;
 }
 

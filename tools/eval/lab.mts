@@ -80,8 +80,8 @@ export function removeRun(run: string): number {
  *  person would look in both). */
 export function codeFor(a: Account, asked: string): string {
   if (/authenticator/i.test(asked)) return a.totp ? authenticator.generate(a.totp) : "";
-  const to = /phone|sms|text/i.test(asked) ? [a.phone] : /email/i.test(asked) ? [a.email] : [a.email, a.phone];
-  const row = db.prepare("SELECT code FROM outbox WHERE site = ? AND recipient IN (?, ?) AND used = 0 ORDER BY id DESC LIMIT 1").get(a.site, to[0] ?? "", to[1] ?? to[0] ?? "") as { code: string } | undefined;
+  const to = /phone|sms|text/i.test(asked) ? [a.phone, a.phone] : /email/i.test(asked) ? [a.email, a.email] : [a.email, a.phone];
+  const row = db.prepare("SELECT code FROM outbox WHERE site = ? AND recipient IN (?, ?) AND used = 0 ORDER BY id DESC LIMIT 1").get(a.site, ...to) as { code: string } | undefined;
   return row?.code ?? "";
 }
 

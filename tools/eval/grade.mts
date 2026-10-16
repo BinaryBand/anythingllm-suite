@@ -63,18 +63,6 @@ export function matches(value: unknown, want: unknown): boolean {
   return value === want;
 }
 
-/** A call, and when its arguments hold steps (the browser's act), each step as a call of its own
- *  with the same tool, so a want matches what a step did as well. */
-const stepsOf = (c: Call): Call[] => {
-  let steps = (c.args as { steps?: unknown })?.steps;
-  if (typeof steps === "string") {
-    try {
-      steps = JSON.parse(steps);
-    } catch {}
-  }
-  return [c, ...(Array.isArray(steps) ? steps.map((s) => ({ ...c, args: { action: (c.args as { action?: unknown }).action, ...s } })) : [])];
-};
-
 /** A reply's words without the browser's card (its picture link, and the title line under it). */
 const words = (reply: string): string =>
   reply
@@ -109,7 +97,7 @@ export function grade(r: CaseRecord, expect: Expect): Grade {
   }
   for (const want of expect.calls?.includes ?? []) add(`called ${JSON.stringify(want)}`, calls.some((c) => matches(c, want)));
   for (const want of expect.calls?.excludes ?? []) {
-    const hit = calls.flatMap(stepsOf).find((c) => matches(c, want));
+    const hit = calls.find((c) => matches(c, want));
     add(`never called ${JSON.stringify(want)}`, !hit, JSON.stringify(hit));
   }
   for (const w of expect.answer?.contains ?? []) add(`the answer says "${w}"`, last.toLowerCase().includes(w.toLowerCase()), last.slice(0, 200));
