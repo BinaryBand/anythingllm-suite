@@ -14,53 +14,16 @@
 //   { "needtake": true }                      takes the tab over from what the page asks for
 //   { "tap": [fx, fy] }                       taps the picture at fractions of its size (the first tap
 //                                             also takes the tab over)
-//   { "tap": "<words>" }                      taps where the tab's button or link with those words is,
-//                                             found in the skill's own Chrome (only looked at), so a
-//                                             site's layout moving doesn't move the tap
 //   { "field": "<ref>" | "empty" }            taps a field the page lists, or the first empty one
 //   { "type": "<text>" }                      types into the field a tap opened, then Enter
 //   { "give": true }                          hands the tab back
 //   { "wait": seconds }
 //   { "shot": "<name>" }                      saves a picture of the page in <storage>/eval-shots
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 const puppeteer = require("/app/collector/node_modules/puppeteer");
 
 const [tab, stepsJson] = process.argv.slice(2);
 const url = "http://127.0.0.1:3001" + tab.replace(/^https?:\/\/[^/]+/, "").replace(/\.html.*$/, "") + ".html";
 const pause = (s) => new Promise((r) => setTimeout(r, s * 1000));
-
-/** The center, in the page's CSS pixels, of the button or link whose words are `words` on the page at
- *  `at` in the skill's Chrome (each of its browsers keeps a profile browser-lean-* in the temp
- *  folder, with the port Chrome listens on): connected to only to look, then let go. */
-async function placeOf(at, words) {
-  for (const dir of fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("browser-lean-"))) {
-    let port;
-    try {
-      port = fs.readFileSync(path.join(os.tmpdir(), dir, "DevToolsActivePort"), "utf8").split("\n")[0];
-    } catch {
-      continue;
-    }
-    const chrome = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null }).catch(() => null);
-    if (!chrome) continue;
-    try {
-      for (const p of await chrome.pages()) {
-        if (p.url() !== at) continue;
-        const place = await p.evaluate((w) => {
-          const el = [...document.querySelectorAll('button, a, [role="button"], input[type="submit"]')].find((e) => (e.innerText || e.value || "").replace(/\s+/g, " ").trim() === w);
-          if (!el) return null;
-          const r = el.getBoundingClientRect();
-          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-        }, words);
-        if (place) return place;
-      }
-    } finally {
-      chrome.disconnect();
-    }
-  }
-  throw new Error(`no "${words}" on ${at} in the skill's Chrome`);
-}
 
 (async () => {
   const browser = await puppeteer.launch({ headless: "new", args: ["--no-sandbox"] });
@@ -113,14 +76,8 @@ async function placeOf(at, words) {
         await pause(2.5);
       } else if (verb === "tap") {
         await page.waitForFunction(() => document.getElementById("shot").naturalWidth > 0, { timeout: 30000 });
-        if (typeof arg === "string") {
-          const st = await state();
-          const at = await placeOf(st.url, arg);
-          await tapPage(st, at.x, at.y);
-        } else {
-          const r = await page.$eval("#shot", (e) => e.getBoundingClientRect().toJSON());
-          await page.mouse.click(r.x + arg[0] * r.width, r.y + arg[1] * r.height);
-        }
+        const r = await page.$eval("#shot", (e) => e.getBoundingClientRect().toJSON());
+        await page.mouse.click(r.x + arg[0] * r.width, r.y + arg[1] * r.height);
         await pause(2.5);
       } else if (verb === "field") {
         const st = await state();
