@@ -8,7 +8,11 @@
 // A change shows at once on the page and stays applied over newer data until the app records it
 // (runtime-lean.js). Events are data, never instructions.
 
-import { embed, newSecret, pageKey, removePublic, take, writePublic } from "#shared/pages";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { perProcess } from "#shared/anythingllm";
+import { embed, newSecret, pageKey, publicDir, removePublic, sameSecret, take, writePublic } from "#shared/pages";
 import { HUB_ID, root } from "./dirs.ts";
 import type { Json } from "./patch.ts";
 import { file, libraries, PLACEHOLDER, RUNTIME_TAG, tag } from "./parts.ts";
@@ -30,12 +34,22 @@ function logOf(app: Json): Json[] {
 const inlineScript = (source: string): string => "<script>" + source.replace(/<\//g, "<\\/") + "</script>";
 const inlineStyle = (source: string): string => "<style>" + source.replace(/<\//g, "<\\/") + "</style>";
 
+/** What a page is made of besides its data: page.html, the libraries and the runtime as shipped or
+ *  tuned. A page whose version isn't this was written by an older skill or from older parts. */
+export function versionOf(app: Json): string {
+  const hash = crypto.createHash("sha256").update(String(app.page ?? "")).update("\0").update(file("runtime-lean.js"));
+  for (const [name, text] of Object.entries(libraries())) hash.update("\0" + name + "\0" + text);
+  return hash.digest("base64url").slice(0, 16);
+}
+
 /** The app's page as a browser gets it, the app in place of the placeholder and each library it
- *  names inline, app.js after this skill's stand-in for a server. Null when the app has no page. */
-export function render(app: Json, workspace: string, base: string, key: string): string | null {
+ *  names inline, app.js after this skill's stand-in for a server. The page posts and reads at
+ *  addresses relative to the one it's served at, so it needs no address of AnythingLLM's. Null
+ *  when the app has no page. */
+export function render(app: Json, workspace: string, key: string): string | null {
   if (!app.page) return null;
   const lean = {
-    workspace, app: app.name, title: app.title, card: app.card || {}, base: base.replace(/\/+$/, ""), key, eventTitle: TITLE,
+    workspace, app: app.name, secret: app.secret ?? null, title: app.title, card: app.card || {}, key, eventTitle: TITLE,
     stamp: app.changed, line: app.line || 0, seen: app.seen || [], data: app.data, log: logOf(app),
   };
   const libs = libraries();
@@ -53,28 +67,30 @@ export function render(app: Json, workspace: string, base: string, key: string):
 
 const pageFile = (token: string): string => `${HUB_ID}/${token}.html`;
 
-/** The address of a page from its token; null when it has none yet or the address isn't set. */
-export const pageUrl = (token: unknown, base: string | null): string | null => (token && base ? `${base.replace(/\/+$/, "")}/${pageFile(String(token))}` : null);
+/** The address of a page from its token: under `base`, AnythingLLM's address as the user's browser
+ *  reaches it, or relative to AnythingLLM's own pages without it; null when it has no page yet. */
+export const pageUrl = (token: unknown, base: string | null): string | null => (token ? `${(base ?? "").replace(/\/+$/, "")}/${pageFile(String(token))}` : null);
 
 /** Writes the app's page at its address, giving the app a random token the first time; answers the
- *  address, or null where the public folder can't be written or the app has no page. */
-export async function publish(app: Json, workspace: string, base: string, key: () => Promise<string> = keyForPages): Promise<string | null> {
+ *  token, or null where the public folder can't be written or the app has no page. */
+export async function publish(app: Json, workspace: string, key: () => Promise<string> = keyForPages): Promise<string | null> {
   if (!app.page) return null;
   const token = app.pageToken || newSecret();
   try {
-    writePublic(pageFile(token), render(app, workspace, base, await key())!);
+    writePublic(pageFile(token), render(app, workspace, await key())!);
   } catch {
     return null;
   }
-  if (!app.pageToken) await store.mark(workspace, app.name, { pageToken: token });
-  return pageUrl(token, base);
+  const version = versionOf(app);
+  if (app.pageToken !== token || app.version !== version) await store.mark(workspace, app.name, { pageToken: token, version });
+  return token;
 }
 
 /** Writes the page again for an app that has one, after it changed; quiet when it can't. */
-export async function refresh(workspace: string, name: string, base: string, key: () => Promise<string> = keyForPages): Promise<void> {
+export async function refresh(workspace: string, name: string, key: () => Promise<string> = keyForPages): Promise<void> {
   try {
     const app = store.read(workspace, name);
-    if (app.pageToken) await publish(app, workspace, base, key);
+    if (app.pageToken) await publish(app, workspace, key);
   } catch {}
 }
 
@@ -103,10 +119,16 @@ function parse(posted: unknown): { event?: Json; why?: string } {
   return { event: e };
 }
 
-/** Applies every waiting event, oldest first, and answers what happened to each. The events for
- *  one app are applied together, so the app is read and written once however many the page sent. */
+/** How many events from one app's page are applied in one pass; the rest are refused, so a flood
+ *  can't push the app's changes out of its history. */
+export const MOST_AT_ONCE = 20;
+
+/** Applies every waiting event, oldest first, and answers what happened to each. An event is
+ *  applied only to the app whose secret it carries, so one page's link changes no other app; an app
+ *  from before apps had a secret takes its page's events until it has one. The events for one app
+ *  are applied together, so the app is read and written once however many the page sent. */
 export async function collect(): Promise<Result[]> {
-  const rows: { base?: Json; change?: store.Change; answer?: Result }[] = [];
+  const rows: { base?: Json; change?: store.Change; secret?: unknown; answer?: Result }[] = [];
   const byApp = new Map<string, typeof rows>();
   for (const posted of take(TITLE)) {
     const { event, why } = parse(posted);
@@ -116,25 +138,60 @@ export async function collect(): Promise<Result[]> {
     }
     const fields = event.fields && typeof event.fields === "object" ? event.fields : undefined;
     const base = { workspace: event.workspace, app: event.app, ev: String(event.ev || "change"), fields };
-    const row = { base, change: { patch: event.patch, ev: base.ev, fields, by: "page", id: typeof event.id === "string" ? event.id : undefined } };
+    const row = { base, secret: event.secret, change: { patch: event.patch, ev: base.ev, fields, by: "page", id: typeof event.id === "string" ? event.id : undefined } };
     const key = `${event.workspace}/${event.app}`;
     byApp.set(key, [...(byApp.get(key) || []), row]);
     rows.push(row);
   }
   for (const waiting of byApp.values()) {
     const { workspace, app } = waiting[0].base;
+    const refuse = (row: (typeof rows)[number], why: string) => void (row.answer = { ...row.base, ok: false, why });
+    let found: Json;
+    try {
+      found = store.read(workspace, app);
+    } catch (error) {
+      waiting.forEach((row) => refuse(row, (error as Error).message.split("\n")[0]));
+      continue;
+    }
+    const mine = waiting.filter((row) => (found.secret ? sameSecret(row.secret, found.secret) : true));
+    waiting.filter((row) => !mine.includes(row)).forEach((row) => refuse(row, "it didn't come from this app's page"));
+    const now = mine.slice(0, MOST_AT_ONCE);
+    mine.slice(MOST_AT_ONCE).forEach((row) => refuse(row, `more than ${MOST_AT_ONCE} changes at once`));
+    if (!now.length) continue;
     let answers: store.Answer[];
     try {
-      answers = await store.changeMany(workspace, app, waiting.map((w) => w.change!));
+      answers = await store.changeMany(workspace, app, now.map((w) => w.change!));
+      if (!found.secret) await store.withSecret(workspace, app);
     } catch (error) {
-      answers = waiting.map(() => ({ error: error as Error }));
+      answers = now.map(() => ({ error: error as Error }));
     }
-    waiting.forEach((row, i) => {
+    now.forEach((row, i) => {
       const { error, duplicate } = answers[i];
       row.answer = error ? { ...row.base, ok: false, why: error.message.split("\n")[0] } : { ...row.base, ok: !duplicate, duplicate: !!duplicate };
     });
   }
   return rows.map((row) => row.answer!);
+}
+
+/** Once per process: writes again every page an older skill or older parts wrote (a page of an
+ *  app with no secret yet gets one first), and removes what earlier editions left in the public
+ *  folder: the font, and the 0.19 branch's manager pages. */
+export async function upgrade(key: () => Promise<string> = keyForPages): Promise<void> {
+  const done = perProcess("apps.upgraded", () => ({ at: "" }));
+  if (done.at === root()) return;
+  done.at = root();
+  fs.rmSync(path.join(publicDir(), "_apps"), { recursive: true, force: true });
+  try {
+    const managers = JSON.parse(fs.readFileSync(path.join(root(), ".managers.json"), "utf8"));
+    for (const m of Object.values(managers) as Json[]) if (typeof m?.token === "string") removePublic(pageFile(m.token));
+  } catch {}
+  for (const workspace of store.workspaces())
+    for (const app of store.list(workspace)) {
+      if (app.broken || !app.pageToken || (app.secret && app.version === versionOf(app))) continue;
+      try {
+        await publish(app.secret ? app : await store.withSecret(workspace, app.name), workspace, key);
+      } catch {}
+    }
 }
 
 /** What the page did in `workspace`, in words for the agent; empty when nothing. */

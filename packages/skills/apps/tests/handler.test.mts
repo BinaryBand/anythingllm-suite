@@ -13,9 +13,9 @@ test("the agent creates an app from a template, changes it and shows it, with it
   assert.match(await call("home", { action: "list" }), /^This workspace has no apps yet\.\n\nTo make one: if a starter fits \(checklist, journal/);
   assert.match(await make("home", "groceries", "Groceries"), /^Made the app groceries: Groceries, from the column template, which holds no components yet: put each one's markup at <!--slot-->/);
   const patch = JSON.stringify([{ op: "add", path: "/items/-", value: { text: "Eggs", done: false } }]);
-  assert.match(await call("home", { action: "do", name: "groceries", ev: "add", patch }), /Done: add on groceries\.\n\nPut the card below in your reply exactly as given, with no label or heading\.\n\| \| \*\*Groceries\*\* · 1 of 1 left \|\n\|---\|---\|\n\| ☐ \| Eggs \|/);
+  assert.match(await call("home", { action: "do", name: "groceries", ev: "add", patch }), /Done: add on groceries\.\n\nPut the card below in your reply exactly as given, with no label or heading\.\n\| \| \*\*\[Groceries\]\(\/apps-lean\/[\w-]+\.html\)\*\* · 1 of 1 left \|\n\|---\|---\|\n\| ☐ \| Eggs \|/);
   assert.match(await call("home", { action: "read", name: "groceries" }), /Data: \{"items":\[\{"text":"Eggs","done":false\}\]\}/);
-  assert.match(await call("home", { action: "list" }), /^This workspace's apps \(change one that fits rather than making another\):\n- groceries: \*\*Groceries\*\* · 1 of 1 left\n\nTo make one: /);
+  assert.match(await call("home", { action: "list" }), /^This workspace's apps \(change one that fits rather than making another\):\n- groceries: \*\*\[Groceries\]\(\/apps-lean\/[\w-]+\.html\)\*\* · 1 of 1 left\n\nTo make one: /);
   assert.match(await call("home", { action: "undo", name: "groceries" }), /Took back add/);
 });
 
@@ -67,15 +67,17 @@ test("delete asks for approval through AnythingLLM and keeps the app when refuse
   assert.equal((await call("home", { action: "list" })).includes("- temp:"), false);
 });
 
-test("page asks for AnythingLLM's address first", async () => {
-  assert.match(await call("home", { action: "page", name: "groceries" }), /set it in AnythingLLM's Agent Skills, under Apps, as ANYTHINGLLM_URL/);
+test("page gives the page's link, relative until AnythingLLM's address is set", async () => {
+  const page = await call("home", { action: "page", name: "groceries" });
+  assert.match(page, /^Groceries's page is at \/apps-lean\/[\w-]+\.html\. [^\n]*the user sets AnythingLLM's address in Agent Skills, under Apps, as ANYTHINGLLM_URL\./, "a relative link, and how to get one for a phone");
+  assert.doesNotMatch(await call("home", { action: "page", name: "groceries" }, { ANYTHINGLLM_URL: "http://x:3001" }), /ANYTHINGLLM_URL/);
 });
 
 test("a starter makes a working app and page in one call, with the user's data over its own", async () => {
   const reply = await call("home", { action: "create", name: "focus", title: "Focus", starter: "focus-timer", data: { minutes: 50 } });
   assert.match(reply, /^Made the app focus: Focus, from the focus-timer starter: the focus template with timer, entry-form, working as it is\./);
   assert.match(reply, /\napp\.json:\n\{\n  "title": "Focus"[\s\S]*\npage\.html:\n<!doctype html>[\s\S]*data-ref="go"[\s\S]*data-ref="form"[\s\S]*Before giving the user the page:\nBefore showing the app/, "the page comes with the answer, and what to check");
-  assert.match(reply, /\*\*Focus\*\* · 50-minute timer · 0 sessions/);
+  assert.match(reply, /\*\*\[Focus\]\(\/apps-lean\/[\w-]+\.html\)\*\* · 50-minute timer · 0 sessions/);
   const shown = await call("home", { action: "read", name: "focus" });
   assert.match(shown, /Data: \{"minutes":50,"started":null,"entries":\[\]\}/);
   // A starter named as a template is taken as the starter.
@@ -132,7 +134,7 @@ test("create composes any components into a template, with their schemas merged 
   assert.match(await call("home", { action: "read", name: "water" }), /"required":\["count","target","days"\][\s\S]*Data: \{"count":3,"target":6,"days":\{\}\}/);
   // Named as text too, as a model may send them, and text adds what the parts don't give.
   const text = JSON.stringify({ about: "Glasses today.", card: { summary: "{/count} of {/target}" } });
-  assert.match(await call("home", { action: "create", plan: PLAN, name: "tea", template: "column", parts: "counter, date-grid", text }), /\*\*tea\*\* · 3 of 8/);
+  assert.match(await call("home", { action: "create", plan: PLAN, name: "tea", template: "column", parts: "counter, date-grid", text }), /\*\*\[tea\]\(\/apps-lean\/[\w-]+\.html\)\*\* · 3 of 8/);
   const refused = await call("home", { action: "create", plan: PLAN, name: "odd", template: "zoo", parts: ["timer", "nope", "timer", "fanout"] });
   assert.deepEqual(refused.split("\n- ").slice(1).map((p: string) => p.split(" ").slice(0, 3).join(" ")), ["template must be", "parts are components,", "a page holds", "schema: a JSON"]);
   assert.match(refused, /not nope, fanout\n- a page holds each component once, not timer twice/);
@@ -245,17 +247,16 @@ test("a starter needs no plan, and its alias or a starter-named template none ei
   assert.match(await call("plans", { action: "create", name: "s4", starter: "blank", template: "column", parts: ["stat"] }), /^Apps: the app can't be made:\n- plan: 40-600/, "blank means no starter, so a plan");
 });
 
-test("a card's title links to the app's page once the app has one and the address is set", async () => {
+test("a card's title links to the app's page: under AnythingLLM's address when it's set, else relative", async () => {
   const self = { ...inWorkspace("links"), runtimeArgs: { ANYTHINGLLM_URL: "http://x:3001/" } };
   await call("links", { action: "create", name: "linked", title: "Linked", starter: "checklist" });
-  assert.doesNotMatch(await handler().call(self, { action: "read", name: "linked" }), /\]\(http/, "no page yet, no link");
   await store.mark("links", "linked", { pageToken: "tok" });
   const link = "**[Linked](http://x:3001/apps-lean/tok.html)**";
   const read = await handler().call(self, { action: "read", name: "linked" });
   assert.ok(read.includes(`exactly as given, with no label or heading.\n${link}`), read);
   assert.ok((await handler().call(self, { action: "list" })).includes(`- linked: ${link}`), "list links too");
   assert.ok((await handler().call(self, { action: "do", name: "linked", ev: "add", patch: JSON.stringify([{ op: "add", path: "/items/-", value: { text: "Eggs", done: false } }]) })).includes(`| | ${link} · 1 of 1 left |`));
-  assert.doesNotMatch(await call("links", { action: "read", name: "linked" }), /\]\(http/, "without the address there is no link");
+  assert.match(await call("links", { action: "read", name: "linked" }), /\*\*\[Linked\]\(\/apps-lean\/tok\.html\)\*\*/, "relative without the address, which AnythingLLM's own chat opens");
 });
 
 test("the old names show, write, revert and open are gone, and the actions are listed", async () => {
@@ -268,7 +269,7 @@ test("every page a call touches is written, and they share one key for pages", a
     await call("keys", { action: "create", name, title: name, starter: "checklist" });
     await store.mark("keys", name, { pageToken: `tok-${name}` });
   }
-  post({ workspace: "keys", app: "two", id: "e1", ev: "add", patch: [{ op: "add", path: "/items/-", value: { text: "Jam", done: false } }] });
+  post({ workspace: "keys", app: "two", secret: store.read("keys", "two").secret, id: "e1", ev: "add", patch: [{ op: "add", path: "/items/-", value: { text: "Jam", done: false } }] });
   const patch = JSON.stringify([{ op: "add", path: "/items/-", value: { text: "Eggs", done: false } }]);
   await call("keys", { action: "do", name: "one", ev: "add", patch }, base);
   const page = (name: string) => fs.readFileSync(path.join(publicDir, "apps-lean", `tok-${name}.html`), "utf8");

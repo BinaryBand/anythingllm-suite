@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { locked, writeAtomic } from "#shared/atomic";
+import { newSecret } from "#shared/pages";
 import { Told } from "#shared/errors";
 import { root } from "./dirs.ts";
 import { apply, PatchError, type Json } from "./patch.ts";
@@ -26,6 +27,8 @@ export const KEEP = 20;
 export const VERSIONS = 10;
 /** How many page events an app remembers by id, so one sent twice applies once. */
 const SEEN = 100;
+/** How many changes a page sent that were refused an app remembers, with why, for its page. */
+const REFUSED = 20;
 const TITLE_MAX = 80;
 const CARD_KEYS = new Set(["summary", "lines", "items", "text", "done", "where"]);
 const FILES = ["app.json", "page.html"];
@@ -130,7 +133,7 @@ export async function create(workspace: string, name: unknown, definition: Json,
     if (why) found.push(why);
     else if (fs.existsSync(fileOf(workspace, name))) found.push(`this workspace already has an app named ${name}`);
     const t = now();
-    const app = checked({ name, rules: [], ...definition, line: 0, made: t, changed: t, ...(thread !== undefined ? { thread } : {}), history: [] }, found, "made");
+    const app = checked({ name, rules: [], ...definition, line: 0, made: t, changed: t, ...(thread !== undefined ? { thread } : {}), history: [], secret: newSecret() }, found, "made");
     save(workspace, app);
     return app;
   };
@@ -196,6 +199,10 @@ export async function changeMany(workspace: string, name: unknown, changes: Chan
         app = next;
         return {};
       } catch (error) {
+        // A page's change that was refused is seen too, so the page stops showing it, and kept
+        // with why, so the page can say so.
+        if (opts.id && !(app.seen || []).includes(opts.id))
+          app = { ...app, seen: [...(app.seen || []), opts.id].slice(-SEEN), refused: [...(app.refused || []), { id: opts.id, why: (error as Error).message.split("\n")[0] }].slice(-REFUSED) };
         return { error: error as Error };
       }
     });
@@ -325,6 +332,26 @@ export async function mark(workspace: string, name: unknown, fields: Json): Prom
     save(workspace, next);
     return next;
   });
+}
+
+/** The app with a secret for its page's events, made now for an app from before apps had one. */
+export async function withSecret(workspace: string, name: unknown): Promise<Json> {
+  return withLock(workspace, name, () => {
+    const app = read(workspace, name);
+    if (app.secret) return app;
+    const next = { ...app, secret: newSecret() };
+    save(workspace, next);
+    return next;
+  });
+}
+
+/** The workspaces that have apps. */
+export function workspaces(): string[] {
+  try {
+    return fs.readdirSync(root(), { withFileTypes: true }).filter((d) => d.isDirectory() && WORKSPACE.test(d.name)).map((d) => d.name);
+  } catch {
+    return [];
+  }
 }
 
 export async function remove(workspace: string, name: unknown): Promise<void> {

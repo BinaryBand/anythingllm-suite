@@ -34,8 +34,9 @@ var AppsLean = (() => {
 
   async function append(body) {
     const id = uuid();
-    const event = { apps_lean_event: 1, workspace: cfg.workspace, app: cfg.app, id, ev: body.ev || "change", fields: body.fields, patch: body.patch, t: new Date().toISOString() };
-    const r = await native(cfg.base + "/api/browser-extension/upload-content", {
+    const event = { apps_lean_event: 1, workspace: cfg.workspace, app: cfg.app, secret: cfg.secret, id, ev: body.ev || "change", fields: body.fields, patch: body.patch, t: new Date().toISOString() };
+    // Relative: the page is served by AnythingLLM itself, at whatever address the user reached it.
+    const r = await native("/api/browser-extension/upload-content", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
       body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.eventTitle, docSource: "apps-lean page" } }),

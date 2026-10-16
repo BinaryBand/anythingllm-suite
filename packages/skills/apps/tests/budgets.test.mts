@@ -56,4 +56,4 @@ test("the answers to create, do, read and list", async () => {
 // The explainer starter carries the pager's screen schema (figure, code, lines, tree, sources),
 // the format the agent writes every screen in, and research rules: its topic is 523 and its
 // create 1319; every other starter's topic is under 265.
-const LIMITS = { description: 175, everyTurn: 760, bareGuide: 1085, topic: 1300, starterTopic: 555, styles: 2100, createStarter: 1320, createTemplate: 415, do: 60, read: 215, list: 205 };
+const LIMITS = { description: 175, everyTurn: 760, bareGuide: 1085, topic: 1300, starterTopic: 555, styles: 2100, createStarter: 1345, createTemplate: 415, do: 60, read: 215, list: 290 };

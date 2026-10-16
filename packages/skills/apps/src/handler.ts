@@ -6,7 +6,7 @@
 import { Told } from "#shared/errors";
 import { card, headline } from "./card.ts";
 import type { HandlerContext } from "./host.ts";
-import { collect, described, keyForPages, pageUrl, publish, refresh, unpublish } from "./page.ts";
+import { collect, described, keyForPages, pageUrl, publish, refresh, unpublish, upgrade } from "./page.ts";
 import type { Json } from "./patch.ts";
 import * as parts from "./parts.ts";
 import { withDefaults } from "./schema.ts";
@@ -39,7 +39,8 @@ function baseOf(self: HandlerContext): string | null {
 // A sentence leads into the card rather than a label: a model copies a label line ("Card:") into
 // its reply along with the card.
 const cardBlock = (app: Json, url: string | null): string[] => ["", "Put the card below in your reply exactly as given, with no label or heading.", ...card(app, url)];
-/** The address of an app's page, once it has one and the address is set. */
+/** The address of an app's page once it has one: under AnythingLLM's address when it's set, else
+ *  relative, which AnythingLLM's own chat opens. */
 const urlOf = (self: HandlerContext, app: Json): string | null => pageUrl(app.pageToken, baseOf(self));
 const cardOf = (self: HandlerContext, app: Json): string[] => cardBlock(app, urlOf(self, app));
 
@@ -129,8 +130,7 @@ const ACTIONS: Record<string, Action> = {
           : `from the ${base.template} template, which holds no components yet: put each one's markup at <!--slot--> and its script at <!--scripts-->.`;
     // The page goes up as the app is made, and is written again after every change, so its link can
     // go in the reply that makes the app; an agent left to call page for it may not.
-    const address = baseOf(self);
-    const url = address ? await publish(made, workspace, address) : null;
+    const url = pageUrl(await publish(made, workspace), baseOf(self));
     const defaults = filled.length ? [`Filled in what the data left out: ${filled.join(", ")}, with false, 0 or [].`] : [];
     return [
       `Made the app ${made.name}: ${made.title}, ${how} Fit it to what the user asked with edit (page.html, app.json) and do (the data)${url ? "." : ", then give them the page."}`,
@@ -175,17 +175,15 @@ const ACTIONS: Record<string, Action> = {
   page: async ({ workspace }, p, self) => {
     const app = store.read(workspace, p.name);
     if (!app.page) return `${app.name} has no page.html yet: write one from a template and its components (guide), then try again.`;
-    const base = baseOf(self);
-    if (!base)
-      return "A page needs the address the user's browser reaches AnythingLLM at. Ask them to set it in AnythingLLM's Agent Skills, under Apps, as ANYTHINGLLM_URL (such as https://my-server:3001), then try again.";
-    const url = await publish(app, workspace, base);
+    const url = pageUrl(await publish(app, workspace), baseOf(self));
     if (!url)
       return [
         `${app.title}'s page can't be published here: AnythingLLM's public folder can't be written (as in AnythingLLM Desktop). The app works from the chat with do; tell the user its page isn't available on this instance.`,
         ...cardOf(self, app),
       ].join("\n");
+    const outside = baseOf(self) ? "" : " The link opens from AnythingLLM's own chat; for one that opens anywhere, such as a phone, the user sets AnythingLLM's address in Agent Skills, under Apps, as ANYTHINGLLM_URL.";
     return [
-      `${app.title}'s page is at ${url}. It opens in the user's browser, always shows the app as it is now, and saves taps back to AnythingLLM; they reach the app the next time any Apps action runs.`,
+      `${app.title}'s page is at ${url}. It always shows the app as it is now, and saves taps back to AnythingLLM; they reach the app the next time any Apps action runs.${outside}`,
       ...cardBlock(app, url),
     ].join("\n");
   },
@@ -235,18 +233,16 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   const act = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : undefined;
   if (!act) throw new AppError(`action is one of ${Object.keys(ACTIONS).join(", ")}`);
   const scope = scopeOf(self);
+  // One key for every page a call writes, asked for when the first needs it.
+  let asked: Promise<string> | undefined;
+  const key = () => (asked ??= keyForPages());
+  if (action !== "guide") await upgrade(key);
   // Changes made on app pages wait as event documents until the skill next runs.
   const fromPages = action === "guide" ? [] : await collect();
   const reply = await act(scope, params, self);
-  const base = baseOf(self);
-  if (base) {
-    const touched = new Map(fromPages.filter((r) => r.ok).map((r) => [`${r.workspace}/${r.app}`, { workspace: r.workspace!, app: r.app! }]));
-    if (CHANGES.has(action) && params.name) touched.set(`${scope.workspace}/${params.name}`, { workspace: scope.workspace, app: params.name });
-    // One key for every page, asked for when the first needs it.
-    let asked: Promise<string> | undefined;
-    const key = () => (asked ??= keyForPages());
-    for (const { workspace, app } of touched.values()) await refresh(workspace, app, base, key);
-  }
+  const touched = new Map(fromPages.filter((r) => r.ok).map((r) => [`${r.workspace}/${r.app}`, { workspace: r.workspace!, app: r.app! }]));
+  if (CHANGES.has(action) && params.name) touched.set(`${scope.workspace}/${params.name}`, { workspace: scope.workspace, app: params.name });
+  for (const { workspace, app } of touched.values()) await refresh(workspace, app, key);
   const lines = described(fromPages, scope.workspace);
   return lines.length ? [...lines, "", reply].join("\n") : reply;
 }
