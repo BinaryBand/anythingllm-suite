@@ -48,6 +48,19 @@ test("put writes the server, the entry and the skills, and a second put changes 
   assert.ok(put(dir, PAYLOAD, ENTRY, PAYLOAD.skills.slice(0, 1)).every((line) => line.startsWith("unchanged")));
 });
 
+test("an update removes what an older version of a skill left in its folder (the lean browser's modules), and checks find it first", () => {
+  const dir = storage();
+  const folder = path.join(dir, "plugins", "agent-skills", "memory-lean");
+  fs.mkdirSync(folder, { recursive: true });
+  for (const name of ["act.js", "guide.md", "handler.js"]) fs.writeFileSync(path.join(folder, name), "// lean\n");
+  const [memory] = PAYLOAD.skills;
+  assert.match(checks(dir, PAYLOAD).find(([what]) => what === "the memory skill")![2], /handler\.js, plugin\.json not this version's; act\.js, guide\.md left from an older version: run install again/);
+  const done = put(dir, PAYLOAD, ENTRY, [memory]);
+  assert.match(done.at(-1)!, /wrote the memory skill: .* \(removed what it no longer ships: act\.js, guide\.md\)$/);
+  assert.deepEqual(fs.readdirSync(folder).sort(), ["handler.js", "plugin.json"]);
+  assert.ok(checks(dir, PAYLOAD).find(([what]) => what === "the memory skill")![1]);
+});
+
 test("a skill's update keeps what AnythingLLM and the skill saved in its plugin.json: on or off, its settings, what it lists", () => {
   const dir = storage();
   const manifest = (url?: string, active = true, saved = "") => `${JSON.stringify({ active, version: "1", description: `Does things.${saved}`, setup_args: { URL: { type: "string", ...(url ? { value: url } : {}) } } }, null, 2)}\n`;

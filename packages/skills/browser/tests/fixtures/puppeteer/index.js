@@ -1,0 +1,154 @@
+// Stands in for AnythingLLM's collector's Puppeteer in the tests (BROWSER_LEAN_PUPPETEER points
+// here): pages are plain objects whose fields are plain JS objects, so the skill's own
+// handle.evaluate functions run on them, and a page's snapshot is answered as snapshot.ts would
+// read it. `world` is what the tests set up and look at.
+const fs = require("fs");
+
+const world = (globalThis.__browserLeanWorld ||= { launched: [], pages: [], sites: {}, apis: {}, fetched: [] });
+
+/** A site the stand-in browser opens: its title, text and fields by ref ({ kind, type, name, value }),
+ *  where a click or Enter goes, and the links a search reads from it ([{ title, href, near }]). */
+function site(url, { title = "", text = "", fields = {}, onclick = {}, onenter = null, links = [] } = {}) {
+  world.sites[url] = { title, text, fields, onclick, onenter, links };
+}
+
+class Handle {
+  constructor(page, ref) {
+    this.page = page;
+    this.ref = ref;
+    this.el = page.fields[ref];
+  }
+  async click() {
+    this.page.clicks.push(this.ref);
+    const then = this.page.onclick[this.ref];
+    if (then) await this.page.goto(then);
+  }
+  async type(text) {
+    this.el.value = (this.el.value || "") + text;
+  }
+  async focus() {}
+  async hover() {}
+  async select(value) {
+    this.el.value = value;
+  }
+  async evaluate(fn, ...args) {
+    return fn(this.el, ...args);
+  }
+}
+
+class Page {
+  constructor() {
+    this.closed = false;
+    this.clicks = [];
+    this.pressed = [];
+    this.address = "about:blank";
+    this.load({ title: "", text: "", fields: {}, onclick: {} });
+    this.keyboard = {
+      press: async (k) => {
+        this.pressed.push(k);
+        if (k === "Enter" && this.onenter) await this.goto(this.onenter);
+      },
+      down: async () => {},
+      up: async () => {},
+    };
+    this.mouse = { wheel: async () => {} };
+    world.pages.push(this);
+  }
+  load(s) {
+    this.titleText = s.title;
+    this.text = s.text;
+    this.fields = JSON.parse(JSON.stringify(s.fields));
+    this.onclick = s.onclick;
+    this.onenter = s.onenter;
+    this.links = s.links || [];
+  }
+  viewport() {
+    return this.screen || { width: 430, height: 932, deviceScaleFactor: 2 };
+  }
+  async setViewport(screen) {
+    this.screen = screen;
+  }
+  setDefaultTimeout() {}
+  setDefaultNavigationTimeout() {}
+  async setRequestInterception() {}
+  mainFrame() {
+    return this;
+  }
+  on() {}
+  once() {}
+  isClosed() {
+    return this.closed;
+  }
+  async close() {
+    this.closed = true;
+  }
+  url() {
+    return this.address;
+  }
+  async title() {
+    return this.titleText;
+  }
+  async goto(url) {
+    const s = world.sites[url];
+    if (!s) throw new Error(`net::ERR_NAME_NOT_RESOLVED at ${url}`);
+    this.address = url;
+    this.load(s);
+  }
+  async goBack() {}
+  async goForward() {}
+  async reload() {}
+  async waitForFunction() {}
+  async evaluateHandle() {
+    // The skill asks a page only for the focused element; nothing here has focus.
+    return { evaluate: async (fn, ...args) => fn({}, ...args) };
+  }
+  async $(selector) {
+    const ref = selector.match(/data-bw-ref="(e\d+)"/)?.[1];
+    return ref && this.fields[ref] ? new Handle(this, ref) : null;
+  }
+  async evaluate(fn, arg) {
+    // A call's fetch from this page: answered from world.apis by address.
+    if (arg && arg.url && arg.method) {
+      world.fetched.push({ from: this.address, ...arg });
+      return world.apis[arg.url] || { status: 404, headers: { "content-type": "text/plain" }, text: "not found", cut: false };
+    }
+    // Whether the page shows a password field.
+    if (arg && arg.passwordField) return Object.values(this.fields).some((f) => f.type === "password");
+    // A search's links, as research.ts reads them.
+    if (arg && arg.links) return this.links;
+    if (arg && arg.snapshot) {
+      const elements = Object.entries(this.fields).map(([ref, f]) => {
+        const line = `[${ref}] ${f.kind || `input[${f.type}]`} "${f.name || ""}"`;
+        if (f.type === "password") return f.value ? `${line} (filled)` : line;
+        return f.value ? `${line} value="${f.value}"` : line;
+      });
+      return { elements, text: this.text, more: false };
+    }
+    throw new Error("the stand-in page evaluates only what the skill sends it");
+  }
+  async screenshot({ path, clip }) {
+    fs.writeFileSync(path, clip ? "card" : "jpeg");
+  }
+}
+
+class Browser {
+  constructor(options) {
+    this.options = options;
+    this.closed = false;
+  }
+  on() {}
+  async newPage() {
+    return new Page();
+  }
+  async close() {
+    this.closed = true;
+  }
+}
+
+async function launch(options) {
+  const browser = new Browser(options);
+  world.launched.push(browser);
+  return browser;
+}
+
+module.exports = { launch, world, site };

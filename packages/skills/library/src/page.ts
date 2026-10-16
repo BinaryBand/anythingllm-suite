@@ -12,12 +12,11 @@
 // and rotated (a new token and secret) from the page. An OAuth provider sends the user back to
 // oauth.html, a fixed address; its event is taken only for a sign-in waiting with that state.
 
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { updateJson, writeAtomicIfChanged } from "#shared/atomic";
 import { Told } from "#shared/errors";
-import { embed, listPublic, pageKey, publicDir, removePublic, take, watch } from "#shared/pages";
+import { listPublic, newSecret, pageHtml, pageKey, publicDir, removePublic, sameSecret, takeEvents, watch } from "#shared/pages";
 import * as vault from "#shared/vault";
 import { LibraryError } from "./errors";
 import * as listing from "./listing";
@@ -47,8 +46,7 @@ interface PageFile {
 }
 
 const pageFile = () => path.join(store.libraryDir(), "page.json");
-const random = () => crypto.randomBytes(18).toString("base64url");
-const fresh = (): PageFile => ({ token: random(), secret: random(), needs: [], watchUntil: 0 });
+const fresh = (): PageFile => ({ token: newSecret(), secret: newSecret(), needs: [], watchUntil: 0 });
 /** A file of the skill's in AnythingLLM's public folder. */
 const pub = (name: string) => `library-lean/${name}`;
 
@@ -95,8 +93,7 @@ const writeState = (p: PageFile, base: string | null) => putPublic(`${p.token}.j
 export async function show(base: string | null): Promise<string> {
   const kept = read();
   const p = kept && kept.watchUntil - Date.now() > WATCH_MS / 2 ? kept : await change((p) => ((p.watchUntil = Date.now() + WATCH_MS), p));
-  const cfg = { token: p.token, secret: p.secret, key: await pageKey(store.libraryDir()), pub: await vault.publicKey(), title: TITLE };
-  putPublic(`${p.token}.html`, template("library").replace("/*CONFIG*/null", embed(cfg)));
+  putPublic(`${p.token}.html`, await pageHtml(template("library"), store.libraryDir(), { token: p.token, secret: p.secret, title: TITLE }));
   writeState(p, base);
   watch(TITLE, () => drain(base), () => read()?.watchUntil ?? 0);
   return `${base ?? ""}/${pub(`${p.token}.html`)}`;
@@ -124,7 +121,6 @@ export const need = (label: string, site: string, kind: Need["kind"]): Promise<v
     p.needs = [...p.needs.filter((n) => n.label !== label && n.until > Date.now()), { label, site, kind, until: Date.now() + NEED_MS }];
   });
 
-const sameSecret = (a: unknown, b: string) => typeof a === "string" && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const text = (v: unknown, n = 500) => String(v ?? "").trim().slice(0, n);
 
 /** What applying an event did beyond the vault and the store: a need it met, a new link, or a
@@ -172,7 +168,7 @@ async function apply(e: Record<string, unknown>, secret: string): Promise<Applie
 /** Applies every event the page posted since the last time, in order, then writes the page's state
  *  again (or a new page, after a rotate). One that fails is skipped; the page shows the state. */
 export async function drain(base: string | null): Promise<void> {
-  const events = take(TITLE).filter((e): e is Record<string, unknown> => !!e && typeof e === "object" && (e as { library_lean_event?: unknown }).library_lean_event === 1);
+  const events = takeEvents(TITLE, "library_lean_event");
   if (!events.length) return;
   const page = read() ?? (await change((p) => p));
   const applied: Applied[] = [];
@@ -188,7 +184,7 @@ export async function drain(base: string | null): Promise<void> {
   if (applied.some((a) => a?.relist)) listing.refresh();
   const now = await change((p) => {
     p.needs = p.needs.filter((n) => !met.has(n.label));
-    if (rotate) Object.assign(p, { token: random(), secret: random() });
+    if (rotate) Object.assign(p, { token: newSecret(), secret: newSecret() });
     return p;
   });
   if (rotate) {

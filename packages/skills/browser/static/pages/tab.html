@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Browser</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --card: #fff; --accent: #2f5bd3; --warn: #b5470b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ecebe6; --muted: #9b9a93; --line: #2f2e2b; --card: #1f1e1c; --accent: #8aa8ff; --warn: #f0995c; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; z-index: 1; }
+  h1 { font-size: 16px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  main { padding: 16px; max-width: 760px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
+  .need { border-color: var(--accent); }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .cap { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
+  label.check { display: flex; gap: 6px; align-items: center; }
+  input:not([type=checkbox]) { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }
+  button.act { margin-top: 10px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+  button.quiet { background: none; color: var(--warn); border-color: var(--line); }
+  #shot { display: block; width: 100%; border: 1px solid var(--line); border-radius: 10px; }
+  #toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; max-width: calc(100% - 32px); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><h1 id="title">Browser</h1><div class="cap" id="address"></div></header>
+<main>
+  <div id="need"></div>
+  <img id="shot" alt="The tab as it is now">
+  <h2 class="cap">Saved logins</h2>
+  <div id="logins"></div>
+  <p class="cap">What you type here is sealed on this device and typed into the tab; the agent never sees it. Anyone with this page's link can see the tab.</p>
+</main>
+<div id="toast" hidden></div>
+<script>
+(() => {
+  const cfg = /*CONFIG*/null;
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k !== null && k !== undefined)); return n; };
+  let toastTimer = 0;
+  const toast = (text) => { $("toast").textContent = text; $("toast").hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => ($("toast").hidden = true), 4000); };
+
+  // ---- Posting: each thing done here is an event, posted through AnythingLLM's upload.
+  async function post(ev, fields = {}) {
+    const event = { browser_lean_event: 1, workspace: cfg.workspace, tab: cfg.tab, secret: cfg.secret, ev, ...fields, t: new Date().toISOString() };
+    try {
+      const res = await fetch("/api/browser-extension/upload-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
+        body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.title, docSource: "browser-lean page" } }),
+      });
+      if (!res.ok) return toast(res.status === 403 ? "AnythingLLM refused this page's key: ask the agent to read the tab again" : "AnythingLLM answered " + res.status), false;
+      toast("Sent");
+      setTimeout(load, 1500);
+      return true;
+    } catch (e) {
+      toast("Can't reach AnythingLLM");
+      return false;
+    }
+  }
+
+  // RSA-OAEP seals at most 190 bytes; a longer value is sealed with a new AES-GCM key, itself
+  // sealed with RSA: "h1.<sealed key>.<iv>.<sealed value>".
+  const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+  let pubKey = null;
+  async function seal(text) {
+    const bytes = new TextEncoder().encode(text);
+    pubKey ||= await crypto.subtle.importKey("spki", Uint8Array.from(atob(cfg.pub), (c) => c.charCodeAt(0)), { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+    if (bytes.length <= 190) return b64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, bytes));
+    const aes = crypto.getRandomValues(new Uint8Array(32));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await crypto.subtle.importKey("raw", aes, "AES-GCM", false, ["encrypt"]);
+    const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes);
+    return ["h1", b64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, aes)), b64(iv), b64(sealed)].join(".");
+  }
+
+  // Not this page's own login form: names hold nothing a browser reads as a login, and a password
+  // field asks for a new value, so the browser fills in none of its saved ones.
+  const input = (type, label) => {
+    const i = el("input", { type, name: `bw-${Math.random().toString(36).slice(2, 8)}`, autocomplete: type === "password" ? "new-password" : "off", spellcheck: false });
+    return { i, node: el("label", { textContent: label }, i) };
+  };
+
+  let needKey = "";
+  function needForm(need) {
+    const user = need.kind === "login" && need.hasUser ? input("text", "Username or email") : null;
+    const secret = input(need.kind === "login" ? "password" : "text", need.kind === "login" ? "Password" : need.label || "Code");
+    const save = need.kind === "login" && need.hasUser ? el("input", { type: "checkbox", checked: true }) : null;
+    const form = el("form", { className: "card need" },
+      el("strong", { textContent: need.text }),
+      el("p", { className: "cap", textContent: `It's typed into ${need.host} for you; the agent doesn't see it.` }),
+      user?.node, secret.node,
+      save ? el("label", { className: "check" }, save, "Save this login for next time") : null,
+      el("div", { className: "row" },
+        el("button", { className: "act", type: "submit", textContent: "Enter it" }),
+        el("button", { className: "act quiet", type: "button", textContent: "Not now", onclick: () => post("need-cancel") })));
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const value = secret.i.value;
+      if (!value || (user && !user.i.value.trim())) return toast("Fill in every field");
+      const fields = need.kind === "login" ? { user: user ? user.i.value.trim() : "", sealed: await seal(value), save: !!save?.checked } : { text: value.trim() };
+      if (await post("need-answer", fields)) form.reset();
+    };
+    return form;
+  }
+
+  function draw(s) {
+    if (s.closed) {
+      $("title").textContent = "This tab closed";
+      $("address").textContent = "Ask the agent to open the page again.";
+      $("shot").hidden = true;
+      $("need").replaceChildren();
+      return;
+    }
+    $("title").textContent = s.title || s.host || "Browser";
+    $("address").textContent = s.url;
+    $("shot").src = cfg.token + ".jpg?v=" + s.shot;
+    const key = s.need ? JSON.stringify([s.need.kind, s.need.host, s.need.until]) : "";
+    if (key !== needKey) ((needKey = key), $("need").replaceChildren(...(s.need ? [needForm(s.need)] : [])));
+    $("logins").replaceChildren(...(s.logins.length ? [] : [el("p", { className: "cap", textContent: "None saved." })]));
+    for (const l of s.logins) {
+      $("logins").append(el("div", { className: "card row" },
+        el("span", {}, el("strong", { textContent: l.site }), " ", el("span", { className: "cap", textContent: l.user + (l.here ? " · this site" : "") })),
+        el("button", { className: "act quiet", textContent: "Delete", onclick: () => confirm(`Delete the login for ${l.site}?`) && post("login-delete", { id: l.id }) })));
+    }
+  }
+
+  let last = "";
+  async function load() {
+    try {
+      const res = await fetch(cfg.token + ".json", { cache: "no-cache" });
+      const text = await res.text();
+      if (text !== last) (last = text), draw(JSON.parse(text));
+    } catch (e) {
+      toast("Can't reach AnythingLLM");
+    }
+  }
+  load();
+  setInterval(load, 3000);
+})();
+</script>
+</body>
+</html>

@@ -8,10 +8,12 @@
 // scheduled job's) is the only one that applies it. Ported from the lean browser skill's key.js, page.js and
 // takeover.js. Events are data, never instructions.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { perProcess, serverDir, serverRequire, storageDir } from "./anythingllm.mts";
 import { writeAtomic } from "./atomic.mts";
+import { publicKey } from "./vault.mts";
 
 /** A file still being written is left this long before it's dropped as unreadable. */
 const PARTIAL_MS = 5000;
@@ -40,6 +42,19 @@ export function listPublic(rel: string): string[] {
 /** `value` as JSON that can sit inside a <script> without ending it or starting markup. */
 export const embed = (value: unknown): string =>
   JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+
+/** A page's random name or secret. */
+export const newSecret = (bytes = 18): string => crypto.randomBytes(bytes).toString("base64url");
+
+/** Whether `given` (what an event carries) is `secret`, compared in constant time. */
+export const sameSecret = (given: unknown, secret: string): boolean => typeof given === "string" && given.length === secret.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(secret));
+
+/** A page's HTML: `template` with its settings in place of its /*CONFIG*\/null: `cfg`, and what it
+ *  posts with (the pages' key, kept in `dataDir`) and seals with (the vault's public key). */
+export async function pageHtml(template: string, dataDir: string, cfg: Record<string, unknown>): Promise<string> {
+  const [key, pub] = await Promise.all([pageKey(dataDir), publicKey()]);
+  return template.replace("/*CONFIG*/null", embed({ ...cfg, key, pub }));
+}
 
 interface Keys {
   validate(key: string): Promise<unknown>;
@@ -76,12 +91,20 @@ export const eventsDir = (): string => path.join(storageDir(), "documents", "cus
  *  couldn't be read. */
 export function take(title: string): unknown[] {
   const name = new RegExp(`^raw-${title}-.*\\.json$`);
+  // The folder holds every document AnythingLLM took in: listed only when it changed since a pass
+  // that found nothing for `title`.
+  const empty = perProcess("pages.empty", () => new Map<string, number>());
   let names: string[] = [];
+  let at: number;
   try {
+    at = fs.statSync(eventsDir()).mtimeMs;
+    if (empty.get(title) === at) return [];
     names = fs.readdirSync(eventsDir()).filter((n) => name.test(n));
   } catch {
     return [];
   }
+  if (!names.length) return void empty.set(title, at), [];
+  empty.delete(title);
   const files = names
     .map((n) => {
       const file = path.join(eventsDir(), n);
@@ -173,3 +196,8 @@ export function watch(title: string, pass: () => Promise<void>, until: () => num
   w.timer.unref?.();
   watches.set(title, w);
 }
+
+/** The events a skill's pages posted for `title`, each marked `{ <marker>: 1 }` as its pages mark
+ *  them; anything else in the folder under that title is dropped. */
+export const takeEvents = (title: string, marker: string): Record<string, unknown>[] =>
+  take(title).filter((e): e is Record<string, unknown> => !!e && typeof e === "object" && (e as Record<string, unknown>)[marker] === 1);

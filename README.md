@@ -5,7 +5,7 @@ Everything that extends a stock AnythingLLM, in one repository: an MCP server an
 | Part | Folder | Runs | Toolchain |
 | --- | --- | --- | --- |
 | Control server (MCP: chat and schedule) | `packages/control` | started by AnythingLLM, from its storage folder, with `node` | Node 18+, no dependencies shipped |
-| Agent skills (memory; library under way; apps and browser to come) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+; nothing installed beside them (library bundles QuickJS) |
+| Agent skills (memory, library, browser; apps to come) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+; nothing installed beside them (library bundles QuickJS; browser uses the Chrome AnythingLLM's image ships) |
 | Bridge to AnythingLLM's internal API, and the installer | `packages/bridge` | the command you run; the bridge beside AnythingLLM, as a service | Node 20.3+, no dependencies shipped |
 | Phone app (AnywhereLLM Lite) | `app` | on the phone | Flutter |
 
@@ -62,4 +62,4 @@ dist/               build output, ignored
 
 ## Status
 
-Moved in: the bridge, the control server (chat and schedule, ported from Python to TypeScript; AnythingLLM 1.16.2 starts it from its storage and `make e2e` drives it there) and the `memory` skill (AnythingLLM lists it after install; not yet called by a real agent). Not yet: `app/` (holds a `.gitkeep`), the `apps` and `browser` skills, a run on real macOS and Windows machines. The memory and sandbox MCP servers stay in `anythingllm-mcp`.
+Moved in: the bridge, the control server (chat and schedule, ported from Python to TypeScript; AnythingLLM 1.16.2 starts it from its storage and `make e2e` drives it there) and the `memory` skill (AnythingLLM lists it after install; not yet called by a real agent). The `library` and `browser` skills are in too (see their READMEs). Not yet: `app/` (holds a `.gitkeep`), the `apps` skill, the browser's takeover and passkeys, a run on real macOS and Windows machines. The memory and sandbox MCP servers stay in `anythingllm-mcp`.

@@ -169,13 +169,24 @@ export function put(storage: string, payload: Payload, wantedEntry: Obj, skills:
   const done = [write(controlFile(storage), payload.control) ? `wrote the control server: ${controlFile(storage)}` : `unchanged: ${controlFile(storage)}`];
   done.push(setEntry(storage, wantedEntry));
   for (const skill of skills) {
-    const changed = Object.entries(skill.files).filter(([name, text]) => {
-      const file = path.join(skillDir(storage, skill), name);
-      return write(file, skillFile(file, text));
-    });
-    done.push(`${changed.length ? "wrote" : "unchanged:"} the ${skill.name} skill: ${skillDir(storage, skill)}`);
+    const dir = skillDir(storage, skill);
+    const changed = Object.entries(skill.files).filter(([name, text]) => write(path.join(dir, name), skillFile(path.join(dir, name), text)));
+    const old = leftovers(storage, skill);
+    for (const name of old) writable(dir, () => fs.rmSync(path.join(dir, name), { recursive: true, force: true }));
+    done.push(`${changed.length || old.length ? "wrote" : "unchanged:"} the ${skill.name} skill: ${dir}${old.length ? ` (removed what it no longer ships: ${old.join(", ")})` : ""}`);
   }
   return done;
+}
+
+/** What's in a skill's folder that this version doesn't ship: an older version's files, which
+ *  AnythingLLM would otherwise keep beside it. A skill ships its files flat (build.mjs inlines its
+ *  static/ folder), and keeps its data elsewhere in the storage, so the folder is its files alone. */
+function leftovers(storage: string, skill: Skill): string[] {
+  try {
+    return fs.readdirSync(skillDir(storage, skill)).filter((name) => !(name in skill.files));
+  } catch {
+    return [];
+  }
 }
 
 /** Takes out what `put` put in (the skills it knows of); what it did. A skill's data stays. */
@@ -206,8 +217,10 @@ export function checks(storage: string, payload: Payload): Check[] {
     const stale = Object.entries(skill.files).filter(([name, text]) => {
       const file = path.join(skillDir(storage, skill), name);
       return !holds(file, skillFile(file, text));
-    });
-    found.push([`the ${skill.name} skill`, !stale.length, stale.length ? `${stale.map(([n]) => n).join(", ")} not this version's: run install again` : ""]);
+    }).map(([name]) => name);
+    const old = leftovers(storage, skill);
+    const why = [...(stale.length ? [`${stale.join(", ")} not this version's`] : []), ...(old.length ? [`${old.join(", ")} left from an older version`] : [])];
+    found.push([`the ${skill.name} skill`, !why.length, why.length ? `${why.join("; ")}: run install again` : ""]);
   }
   return found;
 }

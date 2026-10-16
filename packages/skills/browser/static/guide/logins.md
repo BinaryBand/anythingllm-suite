@@ -1,0 +1,5 @@
+- Sign in with login: user_ref (the username field), pass_ref (the password field) and submit_ref (the button). A login the user saved for the site is typed in by itself. With none saved, the user is asked on the tab's page: tell them to tap the card and enter it there; when they say they're done, read the page.
+- A code (a verification code, an authenticator's, one sent by SMS or email): login with what ("code", "authenticator", "sms" or "email"), ref (the field) and submit_ref. The user enters it on the tab's page the same way.
+- You never see a password or a code, and never ask for one in the chat. act never types into a password field.
+- The user can save a login on the tab's page as they enter it; the next login on that site types it by itself. They delete one there too.
+- If the site shows a check only a person passes (a CAPTCHA), tell the user; this browser can't hand the tab over to them yet.

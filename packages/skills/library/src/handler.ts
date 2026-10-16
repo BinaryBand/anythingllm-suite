@@ -13,7 +13,7 @@ import { push, pushTo, workspaceOf } from "#shared/anythingllm";
 import { answerText, flag, keepOf, objectOf, textOf } from "#shared/answer";
 import { Told } from "#shared/errors";
 import { checkUrl } from "#shared/fence";
-import type { StaticFiles } from "#shared/static";
+import { entryOf } from "#shared/static";
 import { LibraryError } from "./errors";
 import type { HandlerContext } from "./host";
 import * as listing from "./listing";
@@ -35,26 +35,13 @@ const clean = (v: unknown): string => String(v ?? "").trim();
  *  then the page's links are relative, which only AnythingLLM's own chat opens. */
 const baseOf = (self: HandlerContext): string | null => clean(self.runtimeArgs?.ANYTHINGLLM_URL).replace(/\/+$/, "") || null;
 
-/** One of the static files the agent reads by name: a guide topic or a snippet, with where it
- *  lives when it's tuned on this instance, so a drift is visible. */
-function entry(s: StaticFiles, folder: string, ext: string, what: string, raw: unknown, fallback = ""): { name: string; text: string } {
-  const given = clean(raw).toLowerCase();
-  const name = (given.endsWith(ext) ? given.slice(0, -ext.length) : given) || fallback;
-  const file = s.get(`${folder}/${name}${ext}`);
-  if (!file) {
-    const there = s.list(`${folder}/`).map((f) => f.slice(0, -ext.length)).filter((f) => f !== "index");
-    throw new LibraryError(`there's no ${what} "${name}"; the ${what}s are: ${there.join(", ") || "none yet"}`);
-  }
-  return { name, text: file.text.trim() + (file.tuned ? `\n\n(Tuned on this instance: ${file.tuned})` : "") };
-}
-
 function guide(args: Args): string {
   const s = store.statics();
   if (clean(args.snippet)) {
-    const { name, text } = entry(s, "snippets", ".js", "snippet", args.snippet);
+    const { name, text } = entryOf(s, "snippets", ".js", "snippet", args.snippet);
     return `Snippet ${name} (a worked example: adapt it, don't save it as is):\n\n${text}`;
   }
-  return entry(s, "guide", ".md", "topic", args.topic, "index").text;
+  return entryOf(s, "guide", ".md", "topic", args.topic, "index").text;
 }
 
 /** The scripts every function runs after, by their names. */

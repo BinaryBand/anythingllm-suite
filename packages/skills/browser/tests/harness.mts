@@ -1,0 +1,94 @@
+// What the browser's tests share: AnythingLLM's storage, public folder and server modules standing
+// in, the collector's Puppeteer standing in (fixtures/puppeteer), the built handler.js called as
+// AnythingLLM's agent calls it, and what a tab's page posts, written as AnythingLLM's collector
+// writes it.
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { after } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
+export const testsDir = path.dirname(fileURLToPath(import.meta.url));
+export const skillDir = path.join(testsDir, "..");
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "browser-lean-"));
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+export const storage = path.join(tmp, "storage");
+export const publicDir = path.join(tmp, "public");
+process.env.STORAGE_DIR = storage;
+process.env.ANYTHINGLLM_PUBLIC_DIR = publicDir;
+process.env.ANYTHINGLLM_SERVER_DIR = path.join(testsDir, "fixtures", "server");
+process.env.BROWSER_LEAN_PUPPETEER = path.join(testsDir, "fixtures", "puppeteer", "index.js");
+process.env.SIG_KEY = "test-sig-key";
+process.env.SIG_SALT = "test-sig-salt";
+
+export interface Site {
+  title?: string;
+  text?: string;
+  fields?: Record<string, { kind?: string; type?: string; name?: string; value?: string }>;
+  onclick?: Record<string, string>;
+  onenter?: string;
+  links?: { title: string; href: string; near: string }[];
+}
+
+export const { world, site } = require(process.env.BROWSER_LEAN_PUPPETEER) as {
+  world: { launched: unknown[]; pages: { clicks: string[]; fields: Record<string, { value?: string }>; url(): string }[]; apis: Record<string, unknown>; fetched: Record<string, unknown>[] };
+  site: (url: string, s: Site) => void;
+};
+
+const bundle = path.join(skillDir, "build", "browser-lean", "handler.js");
+const handler = (): ((this: unknown, args: Record<string, unknown>) => Promise<string>) => {
+  delete require.cache[bundle];
+  return require(bundle).runtime.handler;
+};
+
+export interface Call {
+  workspace?: string | null;
+  thread?: number | null;
+  base?: string;
+  settings?: Record<string, string>;
+}
+
+/** Calls the skill as AnythingLLM's agent would: from `workspace` and `thread` (null: none), with
+ *  ANYTHINGLLM_URL set to `base`. The agent can't show a question card: the skill never asks one. */
+export function call(args: Record<string, unknown>, { workspace = "home", thread = 1, base, settings = {} }: Call = {}): Promise<string> {
+  const invocation = workspace ? { workspace: { slug: workspace }, thread_id: thread } : {};
+  const self = { super: { handlerProps: { invocation }, introspect: () => {} }, runtimeArgs: { ...(base ? { ANYTHINGLLM_URL: base } : {}), ...settings }, logger: () => {} };
+  return handler().call(self, args);
+}
+
+/** A tab's page's settings, as its page has them: its token, secret, keys, workspace and tab. */
+export function tabConfig(workspace = "home", tab = "1"): { token: string; secret: string; key: string; pub: string; workspace: string; tab: string } {
+  const { token } = JSON.parse(fs.readFileSync(path.join(storage, "browser-lean", workspace, "tabs.json"), "utf8"))[tab];
+  const html = fs.readFileSync(path.join(publicDir, "browser-lean", `${token}.html`), "utf8");
+  return JSON.parse(html.match(/const cfg = (\{.*?\});/)![1]);
+}
+
+/** A tab's state, as its page reads it. */
+export function tabState(workspace = "home", tab = "1"): Record<string, any> {
+  return JSON.parse(fs.readFileSync(path.join(publicDir, "browser-lean", `${tabConfig(workspace, tab).token}.json`), "utf8"));
+}
+
+/** `text` sealed as the page seals it: WebCrypto's RSA-OAEP (SHA-256) with the vault's public key. */
+export function seal(text: string, pub = tabConfig().pub): string {
+  const key = crypto.createPublicKey({ key: Buffer.from(pub, "base64"), format: "der", type: "spki" });
+  return crypto.publicEncrypt({ key, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(text)).toString("base64");
+}
+
+let posts = 0;
+
+/** What a tab's page posts, written as AnythingLLM's collector writes it, each after the one before. */
+export function post(event: Record<string, unknown>, { workspace = "home", tab = "1" } = {}): void {
+  const dir = path.join(storage, "documents", "custom-documents");
+  fs.mkdirSync(dir, { recursive: true });
+  const cfg = tabConfig(workspace, tab);
+  const id = crypto.randomUUID();
+  const file = path.join(dir, `raw-browser-lean-event-${id}.json`);
+  fs.writeFileSync(file, JSON.stringify({ id, pageContent: JSON.stringify({ browser_lean_event: 1, workspace, tab, secret: cfg.secret, ...event }) }));
+  const at = new Date(Date.now() + ++posts * 10);
+  fs.utimesSync(file, at, at);
+}

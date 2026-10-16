@@ -49,20 +49,26 @@ const generateKeyPair = promisify(crypto.generateKeyPair);
 export const vaultDir = (): string => path.join(storageDir(), "vault-lean");
 const fileOf = (dir: string) => path.join(dir, "vault.json");
 
-/** The key the vault is encrypted with. */
-function masterKey(dir: string): Buffer {
+/** A key derived from AnythingLLM's own secret for `info`; null where SIG_KEY and SIG_SALT aren't set. */
+function derivedKey(info: string): Buffer | null {
   const { SIG_KEY, SIG_SALT } = process.env;
-  if (SIG_KEY && SIG_SALT) return Buffer.from(crypto.hkdfSync("sha256", SIG_KEY, SIG_SALT, INFO, 32));
+  return SIG_KEY && SIG_SALT ? Buffer.from(crypto.hkdfSync("sha256", SIG_KEY, SIG_SALT, info, 32)) : null;
+}
+
+/** The 32-byte key kept in `file`; null when there's none. */
+function keptKey(file: string): Buffer | null {
+  try {
+    const key = Buffer.from(fs.readFileSync(file, "utf8").trim(), "base64");
+    return key.length === 32 ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The key the vault is encrypted with: derived, else kept beside it (made the first time). */
+function masterKey(dir: string): Buffer {
   const file = path.join(dir, "vault.key");
-  const read = () => {
-    try {
-      const key = Buffer.from(fs.readFileSync(file, "utf8").trim(), "base64");
-      return key.length === 32 ? key : null;
-    } catch {
-      return null;
-    }
-  };
-  const kept = read();
+  const kept = derivedKey(INFO) ?? keptKey(file);
   if (kept) return kept;
   fs.mkdirSync(dir, { recursive: true });
   try {
@@ -70,7 +76,7 @@ function masterKey(dir: string): Buffer {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; // another process made it first
   }
-  const made = read();
+  const made = keptKey(file);
   if (!made) throw new VaultError(`the vault's key in ${file} can't be read`);
   return made;
 }
@@ -199,4 +205,12 @@ export function openSealed(sealed: string, dir: string = vaultDir()): string {
   } catch {
     throw new VaultError("a sealed value couldn't be opened; reload the page");
   }
+}
+
+/** What an older vault file holds, opened: the lean skills kept one per workspace, sealed as this
+ *  one is under a key derived for `info` (or kept in `keyFile`). Null when there's no key for it;
+ *  never makes one. Throws when it can't be opened. */
+export function openLegacy(file: string, info: string, keyFile: string): unknown {
+  const key = derivedKey(info) ?? keptKey(keyFile);
+  return key ? unseal(key, (JSON.parse(fs.readFileSync(file, "utf8")) as { box: Box }).box) : null;
 }

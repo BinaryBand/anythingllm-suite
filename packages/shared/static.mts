@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { Told } from "./errors.mts";
 
 export interface StaticFile {
   text: string;
@@ -42,4 +43,18 @@ export function staticFiles(shipped: Record<string, string>, overrideDir: string
       return [...names].filter((name) => !name.includes("/")).sort();
     },
   };
+}
+
+/** One of the static files the agent reads by name (a guide topic, a snippet: `folder`/<name><ext>),
+ *  with where it lives when it's tuned on this instance, so a drift is visible; `fallback` when no
+ *  name is given. A Told naming the others when there's none. */
+export function entryOf(s: StaticFiles, folder: string, ext: string, what: string, raw: unknown, fallback = ""): { name: string; text: string } {
+  const given = String(raw ?? "").trim().toLowerCase();
+  const name = (given.endsWith(ext) ? given.slice(0, -ext.length) : given) || fallback;
+  const file = s.get(`${folder}/${name}${ext}`);
+  if (!file) {
+    const there = s.list(`${folder}/`).map((f) => f.slice(0, -ext.length)).filter((f) => f !== "index");
+    throw new Told(`there's no ${what} "${name}"; the ${what}s are: ${there.join(", ") || "none yet"}`);
+  }
+  return { name, text: file.text.trim() + (file.tuned ? `\n\n(Tuned on this instance: ${file.tuned})` : "") };
 }
