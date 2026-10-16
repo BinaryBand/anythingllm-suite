@@ -24,6 +24,7 @@ export interface Viewport {
 export interface CDPSession {
   send(method: string, params?: Record<string, unknown>): Promise<any>;
   on(event: string, fn: (payload: any) => void): unknown;
+  detach(): Promise<void>;
 }
 
 /** An element on a page. `evaluate` runs `fn` in the page with the element. */
@@ -85,6 +86,7 @@ export interface Page {
 
 export interface Browser {
   newPage(): Promise<Page>;
+  pages(): Promise<Page[]>;
   close(): Promise<void>;
   on(event: "disconnected", fn: () => void): unknown;
 }

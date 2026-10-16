@@ -34,6 +34,10 @@ It writes the control server, its entry in AnythingLLM's MCP servers file and th
 | Docker Desktop on macOS or Windows | `install --storage DIR` | not yet; best effort |
 | The bridge's service: systemd, launchd, Task Scheduler | `install --bridge` | systemd's commands as before; launchd and Task Scheduler only against scripted commands |
 
+## Secrets
+
+The library's keys and sign-ins and the browser's logins, passkeys and cookies are in one encrypted file, `vault-lean/vault.json` in AnythingLLM's storage. Its key is derived from AnythingLLM's `SIG_KEY` and `SIG_SALT`, which are in AnythingLLM's `.env`, in the same storage, so a copy of the storage could open it. To keep the key apart, put 32 random bytes in a file outside the storage (`openssl rand -base64 32 > vault.key`, readable only by the user AnythingLLM runs as) and set `VAULT_KEY_FILE` to that file's path in AnythingLLM's environment: for Docker, mount the file into the container (a Docker or podman secret, or a read-only volume) and pass `-e VAULT_KEY_FILE=/run/secrets/...`. Not in AnythingLLM's `.env`: AnythingLLM writes that file again with only the settings it knows. The next time a skill opens the vault, it's sealed again under the new key. Keep a copy of the key file somewhere safe: without it the vault can't be opened.
+
 ## Layout
 
 ```text

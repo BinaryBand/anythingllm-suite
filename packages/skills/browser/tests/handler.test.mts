@@ -171,3 +171,30 @@ test("a chat with no thread (AnythingLLM's developer API) gets the workspace's o
   await called({ action: "open", url: "https://shop.example/" }, { workspace: "api", thread: null });
   assert.ok(JSON.parse(fs.readFileSync(path.join(storage, "browser-lean", "api", "tabs.json"), "utf8"))._, "the tab \"_\"");
 });
+
+test("a workspace's cookies are kept in the vault and given back, and Chrome's profile is never in the storage", async () => {
+  const oldProfile = path.join(storage, "browser-lean", "keep", "profile");
+  fs.mkdirSync(path.join(oldProfile, "Default"), { recursive: true });
+  await called({ action: "open", url: "https://shop.example/" }, { workspace: "keep" });
+  const first = world.launched.at(-1) as { options: { userDataDir: string }; cookies: Record<string, unknown>[] };
+  assert.ok(!first.options.userDataDir.startsWith(storage), "the profile is a temporary folder");
+  assert.ok(!fs.existsSync(oldProfile), "the profile kept in the storage before is gone");
+  const now = Date.now() / 1000;
+  first.cookies.push(
+    { name: "sid", value: "s-123", domain: "shop.example", path: "/", expires: now + 3600, size: 9, httpOnly: true, secure: true, session: false, sameSite: "Lax" },
+    { name: "cart", value: "c-1", domain: "shop.example", path: "/", expires: -1, session: true },
+    { name: "old", value: "o-1", domain: "shop.example", path: "/", expires: now - 60, session: false },
+    { name: "embed", value: "e-1", domain: "widget.example", path: "/", expires: now + 60, session: false, partitionKey: "https://shop.example" },
+  );
+  for (const other of ["keep-2", "keep-3", "keep-4"]) await called({ action: "open", url: "https://shop.example/" }, { workspace: other }); // past 3 browsers, the oldest closes
+  const vaultText = fs.readFileSync(path.join(storage, "vault-lean", "vault.json"), "utf8");
+  assert.ok(!vaultText.includes("s-123"), "kept encrypted");
+  await called({ action: "open", url: "https://shop.example/" }, { workspace: "keep" });
+  const again = world.launched.at(-1) as { cookies: Record<string, unknown>[] };
+  assert.notEqual(again, first);
+  assert.deepEqual(
+    again.cookies.map((c) => [c.name, c.value, "expires" in c, "size" in c]),
+    [["cart", "c-1", false, false], ["sid", "s-123", true, false]],
+    "unexpired, unpartitioned, as setCookies takes them",
+  );
+});

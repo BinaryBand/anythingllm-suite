@@ -5,7 +5,8 @@
 // the password given on the tab's page (sealed with the vault's key, posted as AnythingLLM's
 // collector writes it), take the tab over and sign in by tapping and typing, make a passkey while
 // holding the tab and sign in with it from another tab (the site checking its signature and count),
-// and search and look at a stand-in search page.
+// search and look at a stand-in search page, and stay signed in (the site's cookie, kept in the
+// vault) after the browser closes and starts again.
 // Prints "ok" or throws.
 const assert = require("assert");
 const crypto = require("crypto");
@@ -82,9 +83,16 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, SITE);
     if (url.pathname === "/login" && req.method === "POST") {
       const form = new URLSearchParams(body);
-      if (form.get("user") === "ada" && form.get("pass") === "e2e-pass-123") return res.end(page("Home", "<p>Welcome, ada.</p>"));
-      if (form.get("user") === "bea" && form.get("pass") === "e2e-pass-456") return res.end(page("Home", "<p>Welcome, bea.</p>"));
+      for (const [user, pass] of [["ada", "e2e-pass-123"], ["bea", "e2e-pass-456"]]) {
+        if (form.get("user") !== user || form.get("pass") !== pass) continue;
+        res.setHeader("Set-Cookie", `sid=${user}; Path=/; HttpOnly; Max-Age=3600`);
+        return res.end(page("Home", `<p>Welcome, ${user}.</p>`));
+      }
       return res.end(page("Sign in", "<p>Wrong password.</p>"));
+    }
+    if (url.pathname === "/me") {
+      const sid = /(?:^|; )sid=(\w+)/.exec(req.headers.cookie || "");
+      return res.end(page("Me", sid ? "<p>Signed in.</p>" : "<p>Not signed in.</p>"));
     }
     if (url.pathname === "/login") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><button>Sign in</button></form>'));
     if (url.pathname.startsWith("/pk")) return passkeyRoute(url, body, res);
@@ -99,9 +107,9 @@ const server = http.createServer((req, res) => {
   await new Promise((r) => server.listen(PORT, r));
   assert.ok(ImportedPlugin.validateImportedPluginHandler(HUB_ID), "the handler is where AnythingLLM looks");
   const plugin = ImportedPlugin.loadPluginByHubId(HUB_ID).plugin({ SEARCH_URL: `${SITE}/search?q={q}` });
-  const call = async (args, thread = 7) => {
+  const call = async (args, thread = 7, workspace = "e2e") => {
     let fn;
-    const agent = { handlerProps: { invocation: { workspace: { slug: "e2e" }, thread_id: thread }, log: (m) => console.error(m) }, introspect: () => {}, function: (def) => (fn = def) };
+    const agent = { handlerProps: { invocation: { workspace: { slug: workspace }, thread_id: thread }, log: (m) => console.error(m) }, introspect: () => {}, function: (def) => (fn = def) };
     plugin.setup(agent);
     assert.equal(fn.name, HUB_ID);
     return fn.handler.call(fn, args);
@@ -194,6 +202,13 @@ const server = http.createServer((req, res) => {
   assert.match(found, /1\. Docs for export\n {3}http:\/\/localhost:\d+\/docs/, found);
   assert.match(await call({ action: "look", url: DOCS, find: "export" }), /The export button is under Settings\./);
   assert.match(await call({ action: "open", url: "http://10.1.2.3/" }), /isn't a public address/);
+
+  // Signed in, the browser closes (past three browsers, the oldest does) and starts again signed in.
+  assert.match(await call({ action: "open", url: `${SITE}/me` }), /Signed in\./);
+  for (const other of ["e2e-2", "e2e-3", "e2e-4"]) await call({ action: "open", url: DOCS }, 1, other);
+  assert.ok(!fs.readFileSync(path.join(storage, "vault-lean", "vault.json"), "utf8").includes("sid"), "the cookie is in the vault, encrypted");
+  assert.ok(!fs.existsSync(path.join(storage, "browser-lean", "e2e", "profile")), "no profile in the storage");
+  assert.match(await call({ action: "open", url: `${SITE}/me` }), /Signed in\./, "signed in again after the restart");
 
   server.close();
   console.log("ok");

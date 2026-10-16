@@ -189,6 +189,7 @@ async function onTab(scope: Scope, run: () => Promise<string> | string): Promise
     return await run();
   } finally {
     entry?.busy.delete(key);
+    state().browsers.get(scope.workspace)?.touch(); // its cookies are saved a while after the step, not only before it
   }
 }
 

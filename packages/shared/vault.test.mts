@@ -17,6 +17,7 @@ beforeEach(() => {
   dir = path.join(tmp, `v${n++}`);
   process.env.SIG_KEY = "sig-key";
   process.env.SIG_SALT = "sig-salt";
+  delete process.env.VAULT_KEY_FILE;
 });
 
 const entry = (user: string) => ({ id: newId(), kind: "key", site: "api.example.com", user, value: `secret-${user}` });
@@ -65,6 +66,49 @@ test("without SIG_KEY and SIG_SALT, a random key is kept beside the vault", asyn
   const key = fs.readFileSync(path.join(dir, "vault.key"), "utf8");
   assert.equal(Buffer.from(key.trim(), "base64").length, 32);
   assert.equal(load(dir).entries.length, 1);
+});
+
+/** A key file outside the vault's folder, as VAULT_KEY_FILE names it. */
+function keyFileWith(text = crypto.randomBytes(32).toString("base64") + "\n"): string {
+  const file = path.join(tmp, `key-${n++}`);
+  fs.writeFileSync(file, text, { mode: 0o600 });
+  return file;
+}
+
+/** Whether the vault's file opens under SIG_KEY alone, as before VAULT_KEY_FILE. */
+function opensWithSigKey(): boolean {
+  const file = process.env.VAULT_KEY_FILE;
+  delete process.env.VAULT_KEY_FILE;
+  try {
+    load(dir);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    process.env.VAULT_KEY_FILE = file;
+  }
+}
+
+test("with VAULT_KEY_FILE, a vault sealed under SIG_KEY opens and is sealed again under the file's key", async () => {
+  await update((v) => void v.entries.push(entry("a")), dir);
+  process.env.VAULT_KEY_FILE = keyFileWith();
+  assert.equal(load(dir).entries[0].value, "secret-a");
+  for (let i = 0; i < 100 && opensWithSigKey(); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(!opensWithSigKey(), "a copy of the storage, .env and all, no longer opens it");
+  assert.equal(load(dir).entries[0].value, "secret-a");
+  delete process.env.VAULT_KEY_FILE;
+  assert.throws(() => load(dir), (e: Error) => e instanceof VaultError && /VAULT_KEY_FILE isn't set/.test(e.message));
+});
+
+test("a new vault with VAULT_KEY_FILE is sealed under its key; a file without one is refused", async () => {
+  process.env.VAULT_KEY_FILE = keyFileWith();
+  await update((v) => void v.entries.push(entry("a")), dir);
+  assert.ok(!opensWithSigKey());
+  assert.ok(!fs.existsSync(path.join(dir, "vault.key")), "no key is kept beside it");
+  process.env.VAULT_KEY_FILE = keyFileWith("not a key\n");
+  assert.throws(() => load(dir), (e: Error) => e instanceof VaultError && /holds no key: .*openssl rand -base64 32/.test(e.message));
+  process.env.VAULT_KEY_FILE = keyFileWith();
+  assert.throws(() => load(dir), (e: Error) => e instanceof VaultError && /can't be opened with the key in VAULT_KEY_FILE/.test(e.message));
 });
 
 test("changes from one process all land, in turn", async () => {

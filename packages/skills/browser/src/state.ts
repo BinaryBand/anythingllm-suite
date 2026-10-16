@@ -93,6 +93,9 @@ export interface Entry {
   fence: ReturnType<typeof makeFence>;
   last: number;
   timer: NodeJS.Timeout | null;
+  /** The save of its cookies to come (browser.ts), and what's saved now (sessions.ts). */
+  saving: NodeJS.Timeout | null;
+  saved: string | null;
   /** Keeps the browser open IDLE_MS from now (browser.ts). */
   touch: () => void;
   /** The tabs the agent is doing a step in, which the user can't take over meanwhile. */

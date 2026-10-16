@@ -1,13 +1,15 @@
 // Chrome, run by this skill inside AnythingLLM's own process: the Puppeteer and the Chrome that
 // AnythingLLM's collector ships with, required at run time, so the skill brings none of its own.
-// Each workspace gets a browser of its own with a profile in AnythingLLM's storage, so its logins
-// last; each chat thread gets a tab. A browser closes after IDLE_MS unused, and at most
+// Each workspace gets a browser of its own, with a profile in a temporary folder that goes when it
+// closes; its cookies are kept in the vault (sessions.ts), saved SAVE_MS after it was last used and
+// as it closes, so its sign-ins last. Each chat thread gets a tab. A browser closes after IDLE_MS unused, and at most
 // MAX_BROWSERS run at once. Every request a page makes goes through the fence (#shared/fence), and
 // every tab has a passkey authenticator (passkey.ts).
 // What must outlive a reload (the browsers, their tabs) is kept per process (state.ts).
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { FENCED, makeFence } from "#shared/fence";
 import { ACT_MS, NAVIGATE_MS, settle } from "./act";
@@ -15,10 +17,13 @@ import { BrowserError } from "./errors";
 import type { Browser, Page, Puppeteer } from "./host";
 import { forgetTab, redraw } from "./page";
 import * as passkey from "./passkey";
+import * as sessions from "./sessions";
 import { type Entry, type Tab, VIEWPORT, firstLine, note, state, threadKey, workspaceDir } from "./state";
 
 const PUPPETEER = "/app/collector/node_modules/puppeteer";
 const IDLE_MS = 20 * 60 * 1000;
+/** How long after a browser was last used its cookies are saved. */
+const SAVE_MS = 10 * 1000;
 const MAX_BROWSERS = 3;
 /** The screen a research page reads at, so docs show their desktop layout. */
 const DESKTOP = { width: 1280, height: 900, deviceScaleFactor: 1 };
@@ -40,26 +45,22 @@ function puppeteer(): Puppeteer {
   throw new BrowserError(`this AnythingLLM has no Puppeteer the browser can use (looked in ${tried.join(", ")}); set BROWSER_LEAN_PUPPETEER in AnythingLLM's environment to one`);
 }
 
-/** Takes the lock of a Chrome that's gone (AnythingLLM restarted under it) off a profile. */
-function clearStaleLock(profile: string): void {
-  let target: string;
-  try {
-    target = fs.readlinkSync(path.join(profile, "SingletonLock"));
-  } catch {
-    return;
-  }
-  try {
-    process.kill(Number(target.split("-").pop()), 0);
-  } catch {
-    for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) fs.rmSync(path.join(profile, name), { force: true });
-  }
+/** A profile for one run of Chrome, in a temporary folder, with Chrome's own password saving off. */
+function makeProfile(): string {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "browser-lean-"));
+  fs.mkdirSync(path.join(profile, "Default"));
+  fs.writeFileSync(path.join(profile, "Default", "Preferences"), JSON.stringify(PREFERENCES));
+  return profile;
 }
 
-function prepareProfile(profile: string): void {
-  fs.mkdirSync(path.join(profile, "Default"), { recursive: true, mode: 0o700 });
-  const preferences = path.join(profile, "Default", "Preferences");
-  if (!fs.existsSync(preferences)) fs.writeFileSync(preferences, JSON.stringify(PREFERENCES));
-  clearStaleLock(profile);
+/** The page cookies are read and set through: the one Chrome starts with. */
+const firstPage = async (browser: Browser): Promise<Page> => (await browser.pages())[0] ?? (await browser.newPage());
+
+/** Saves the workspace's cookies into the vault, if they changed; a failure leaves them as last saved. */
+async function saveNow(workspace: string, entry: Entry): Promise<void> {
+  clearTimeout(entry.saving ?? undefined);
+  if (!entry.browser) return;
+  entry.saved = await sessions.save(workspace, await firstPage(entry.browser), entry.saved).catch(() => entry.saved);
 }
 
 /** Forgets a thread's tab, however it closed: its page then says the tab closed. */
@@ -79,29 +80,44 @@ function dropEntry(workspace: string, entry: Entry): void {
   if (browsers.get(workspace) !== entry) return;
   browsers.delete(workspace);
   clearTimeout(entry.timer ?? undefined);
+  clearTimeout(entry.saving ?? undefined);
   for (const key of [...entry.tabs.keys()]) dropTab(workspace, entry, key);
 }
 
 async function closeEntry(workspace: string): Promise<void> {
   const entry = state().browsers.get(workspace);
   if (!entry) return;
+  await saveNow(workspace, entry);
   dropEntry(workspace, entry);
   await (await entry.ready.catch(() => null))?.close().catch(() => {});
 }
 
-/** Keeps a workspace's browser open IDLE_MS from now. */
+/** Keeps a workspace's browser open IDLE_MS from now, and saves its cookies SAVE_MS from now. */
 function touch(workspace: string, entry: Entry): void {
   entry.last = Date.now();
   clearTimeout(entry.timer ?? undefined);
   entry.timer = setTimeout(() => void closeEntry(workspace), IDLE_MS);
   entry.timer.unref?.();
+  clearTimeout(entry.saving ?? undefined);
+  entry.saving = setTimeout(() => void saveNow(workspace, entry), SAVE_MS);
+  entry.saving.unref?.();
 }
 
 async function launch(workspace: string): Promise<Browser> {
-  const profile = path.join(workspaceDir(workspace), "profile");
-  prepareProfile(profile);
-  const browser = await puppeteer().launch({ headless: "new", userDataDir: profile, args: ARGS, defaultViewport: VIEWPORT, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
+  fs.rmSync(path.join(workspaceDir(workspace), "profile"), { recursive: true, force: true }); // a profile kept in the storage before the vault kept the cookies
+  const profile = makeProfile();
+  // Chrome may still be writing it as it goes, so it's removed in the background, with retries, and
+  // never throws: this runs in an event handler, where a throw would take AnythingLLM down.
+  const gone = () => fs.rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {});
+  let browser: Browser;
+  try {
+    browser = await puppeteer().launch({ headless: "new", userDataDir: profile, args: ARGS, defaultViewport: VIEWPORT, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
+  } catch (e) {
+    gone();
+    throw e;
+  }
   browser.on("disconnected", () => {
+    gone();
     const entry = state().browsers.get(workspace);
     if (entry?.browser === browser) dropEntry(workspace, entry);
   });
@@ -116,8 +132,11 @@ async function entryFor(workspace: string): Promise<Entry> {
   if (!entry) {
     const others = [...browsers.entries()].sort((a, b) => a[1].last - b[1].last);
     while (others.length >= MAX_BROWSERS) await closeEntry(others.shift()![0]);
-    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, ready: null!, touch: () => touch(workspace, made), busy: new Set() };
-    made.ready = launch(workspace).then((browser) => (made.browser = browser));
+    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, saving: null, saved: null, ready: null!, touch: () => touch(workspace, made), busy: new Set() };
+    made.ready = launch(workspace).then(async (browser) => {
+      made.saved = await sessions.restore(workspace, await firstPage(browser)).catch(() => null);
+      return (made.browser = browser);
+    });
     browsers.set(workspace, (entry = made));
     try {
       await entry.ready;
