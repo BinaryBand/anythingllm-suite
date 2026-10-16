@@ -142,6 +142,7 @@ test("the lean browser's vaults are imported once: logins, passkeys and keys, no
     { id: "b", kind: "key", site: "api.old.example", user: "old-api", value: "k-123", writes: false },
     { id: "c", kind: "oauth", site: "mail.example", user: "mail", oauth: {} },
     { id: "d", site: "older.example", user: "bob", pass: "p" },
+    { id: "e", kind: "passkey", site: "keys.old.example", user: "ada", credential: { credentialId: "old-cred", rpId: "keys.old.example", privateKey: "old-private-key", signCount: 3, isResidentCredential: true } },
   ];
   const data = Buffer.concat([cipher.update(JSON.stringify({ priv: null, logins }), "utf8"), cipher.final()]);
   fs.writeFileSync(path.join(lean, "vault.json"), JSON.stringify({ pub: null, box: { iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") } }));
@@ -151,8 +152,10 @@ test("the lean browser's vaults are imported once: logins, passkeys and keys, no
   const sites = tabState("imports").logins.map((l: { site: string }) => l.site).sort();
   assert.ok(sites.includes("old.example") && sites.includes("older.example"), "passwords, and a login saved before kinds");
   assert.equal(sites.filter((s: string) => s === "old.example").length, 1, "once");
+  assert.ok(tabState("imports").logins.some((l: { kind: string; site: string }) => l.kind === "passkey" && l.site === "keys.old.example"), "a passkey");
+  assert.equal(world.pages.at(-1)!.session!.credentials.get("old-cred")?.signCount, 3, "and it's in the tab's authenticator");
   const vault = fs.readFileSync(path.join(storage, "vault-lean", "vault.json"), "utf8");
-  assert.ok(!vault.includes("old-pass"), "kept encrypted");
+  assert.ok(!vault.includes("old-pass") && !vault.includes("old-private-key"), "kept encrypted");
 });
 
 test("guide gives the overview, each topic it lists, and names the topics when one isn't there", async () => {

@@ -2,10 +2,11 @@
 // site in a real Chrome, run by this skill inside AnythingLLM with a tab per chat (browser.ts). In
 // the tab the agent opens an address, reads the page as text with a ref on each element, and acts by
 // those refs; call sends a request from the tab, with its signed-in session, for a site's own JSON.
-// Each answer about the tab ends with its card, which opens the tab's page (page.ts). A login comes
-// from the saved logins (logins.ts, in the instance's vault) or from the user on the tab's page,
-// straight to this skill, which types it into the page: the model never sees it. An API with a key
-// is the library skill's.
+// Each answer about the tab ends with its card, which opens the tab's page (page.ts), where the user
+// can also take the tab over (takeover.ts): the agent then reads but doesn't act until it's handed
+// back. A login comes from the saved logins (logins.ts, in the instance's vault) or from the user on
+// the tab's page, straight to this skill, which types it into the page: the model never sees it. A
+// saved passkey signs in by itself (passkey.ts). An API with a key is the library skill's.
 //
 // esbuild bundles this into the one handler.js AnythingLLM loads.
 
@@ -19,11 +20,12 @@ import { existing, load, tab } from "./browser";
 import { BrowserError } from "./errors";
 import type { HandlerContext } from "./host";
 import * as logins from "./logins";
-import { NEED_MS, card, drain, keepOffer } from "./page";
+import { NEED_MS, card, caughtUp } from "./page";
 import * as research from "./research";
 import { type Scope, scopeOf } from "./scope";
 import { readPage } from "./snapshot";
-import { type Need, type Tab, firstLine, note, statics, takeNotes } from "./state";
+import { type Need, type Tab, firstLine, holder, note, state, statics, takeNotes, threadKey } from "./state";
+import { free } from "./takeover";
 import { render } from "./view";
 
 type Args = Record<string, unknown>;
@@ -47,14 +49,14 @@ const CODES: Record<string, string> = {
 const baseOf = (self: HandlerContext): string | null => clean(self.runtimeArgs?.ANYTHINGLLM_URL).replace(/\/+$/, "") || null;
 
 /** The page as the agent reads it, then its card; `page` false when the tab has no page the user
- *  could answer on. A login the user offered to save is saved once the page took it. */
+ *  could answer on. */
 async function reply(self: HandlerContext, at: Tab, lead: string, find = "", from: unknown = 0): Promise<{ text: string; page: boolean }> {
   const { snap, title, url } = await readPage(at.page);
-  await keepOffer(at, snap.elements.some((e) => e.includes("input[password]"))); // before the page shows the logins
-  const drawn = await card(at, baseOf(self));
+  const drawn = await card(at, baseOf(self), { snap, title });
+  const held = holder(at.entry, at.key) ? "The user has taken this tab over on its page: read it, but don't act in it until they hand it back.\n" : "";
   const read = render({ title, url, snap, notes: takeNotes(at.entry, at.key), find, from, secrets: at.entry.secrets });
-  const put = "Put the card below in your reply exactly as given, with no label or heading: tapping it opens the tab's page, where the user watches it and gives what you ask them for.";
-  return { text: [lead, "", read, "", put, ...drawn.lines].join("\n"), page: drawn.page };
+  const put = "Put the card below in your reply exactly as given, with no label or heading: tapping it opens the tab's page, where the user watches it, gives what you ask them for, or takes it over.";
+  return { text: [held + lead, "", read, "", put, ...drawn.lines].join("\n"), page: drawn.page };
 }
 
 const answer = async (self: HandlerContext, at: Tab, lead: string, find = "", from: unknown = 0) => (await reply(self, at, lead, find, from)).text;
@@ -132,7 +134,7 @@ async function askCode(self: HandlerContext, at: Tab, args: Args): Promise<strin
 async function signIn(self: HandlerContext, at: Tab, args: Args): Promise<string> {
   const [userRef, passRef, submitRef] = [refOf(args.user_ref), refOf(args.pass_ref), refOf(args.submit_ref)];
   const here = hostOf(at.page.url());
-  if (here && !logins.forHost(here) && logins.forHost(here, "passkey")) throw new BrowserError(`no password is saved for ${here}, only a passkey, which this browser can't sign in with yet: ask the user to sign in themselves`);
+  if (here && !logins.forHost(here) && logins.forHost(here, "passkey")) throw new BrowserError(`no password is saved for ${here}, but a passkey is: click the site's passkey sign-in with act (a "Sign in with a passkey" button, say) and it signs in by itself`);
   if (!passRef) throw new BrowserError("login needs pass_ref, the password field's ref (and user_ref, the username's); or what and ref, for a code");
   if (!(await isPassword(await element(at.page, passRef)))) throw new BrowserError(`${passRef} isn't a password field`);
   if (userRef) await element(at.page, userRef);
@@ -173,6 +175,23 @@ async function call(scope: Scope, args: Args): Promise<string> {
   return answerText({ ...got, text: binary ? "" : got.text, bytes: got.text.length, binary }, `${method} ${url} (with the tab's session)`, keep, [...at.entry.secrets]);
 }
 
+/** The actions that change the tab: refused while the user holds it, and the user can't take it over
+ *  while one runs. */
+const ON_TAB = new Set(["open", "act", "login", "call"]);
+
+/** Runs an action that changes the thread's tab, unless the user holds it (takeover.ts). */
+async function onTab(scope: Scope, run: () => Promise<string> | string): Promise<string> {
+  const entry = state().browsers.get(scope.workspace);
+  const key = threadKey(scope.thread);
+  if (entry) free(entry, key);
+  entry?.busy.add(key);
+  try {
+    return await run();
+  } finally {
+    entry?.busy.delete(key);
+  }
+}
+
 const ACTIONS: Record<string, (self: HandlerContext, scope: Scope, args: Args) => Promise<string> | string> = {
   guide: (self, scope, args) => entryOf(statics(), "guide", ".md", "topic", args.topic, "index").text,
   search: (self, scope, args) => {
@@ -208,10 +227,11 @@ export const runtime = {
     try {
       if (workspaceOf(this)) {
         // What the user did on a tab's page since the last call, and the lean browser's logins, once.
-        await drain().catch((e) => this.logger?.(`browser-lean couldn't apply the tab pages' events: ${firstLine(e)}`));
+        await caughtUp().catch((e) => this.logger?.(`browser-lean couldn't apply the tab pages' events: ${firstLine(e)}`));
         await logins.importLean(this.logger).catch((e) => this.logger?.(`browser-lean couldn't import the lean logins: ${firstLine(e)}`));
       }
-      return await fn(this, scopeOf(this), args);
+      const scope = scopeOf(this);
+      return await (ON_TAB.has(action) ? onTab(scope, () => fn(this, scope, args)) : fn(this, scope, args));
     } catch (e) {
       if (e instanceof Told) return `Browser: ${e.message.replace(/\.$/, "")}.`;
       this.logger?.(`browser-lean ${action} failed: ${(e as Error)?.stack || e}`);

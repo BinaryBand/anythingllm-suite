@@ -1,6 +1,6 @@
 - open an address, then read. Each element has a ref like e12. act does one thing by ref, or several in one call with steps: [{ "do": "fill", "ref": "e3", "text": "…" }, { "do": "click", "ref": "e4" }]. Steps stop at the first that fails.
 - read with find to see only what holds a word, and with from to page through long text. Prefer this to scrolling.
 - A ref stays with its element while the page lives; after the page changes, read again for current refs.
-- Every answer about the tab ends with its card: put it in your reply exactly as given. Tapping it opens the tab's page, where the user watches it and enters what you ask for.
+- Every answer about the tab ends with its card: put it in your reply exactly as given. Tapping it opens the tab's page, where the user watches it, enters what you ask for, or takes it over to use it themselves. While they have it, only read works; when they hand it back, you're told on the next read.
 - call with auth "session" sends a request from the tab, on the site's own address, with its signed-in session: for a site's own JSON. You never set Authorization or Cookie.
 - The browser reaches the public web only (and the hosts the user lets through in FENCE_ALLOW). If it refuses an address, that's final.

@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { updateJson, writeAtomicIfChanged } from "#shared/atomic";
 import { Told } from "#shared/errors";
-import { listPublic, newSecret, pageHtml, pageKey, publicDir, removePublic, sameSecret, takeEvents, watch } from "#shared/pages";
+import { listPublic, newSecret, pageHtml, pageKey, publicDir, removePublic, sameSecret, takeEvents, watch, inTurn } from "#shared/pages";
 import * as vault from "#shared/vault";
 import { LibraryError } from "./errors";
 import * as listing from "./listing";
@@ -165,9 +165,12 @@ async function apply(e: Record<string, unknown>, secret: string): Promise<Applie
   }
 }
 
+/** Applies what the page posted, for a call, in its turn with the watch's (#shared/pages inTurn). */
+export const caughtUp = (base: string | null): Promise<void> => inTurn(TITLE, () => drain(base));
+
 /** Applies every event the page posted since the last time, in order, then writes the page's state
  *  again (or a new page, after a rotate). One that fails is skipped; the page shows the state. */
-export async function drain(base: string | null): Promise<void> {
+async function drain(base: string | null): Promise<void> {
   const events = takeEvents(TITLE, "library_lean_event");
   if (!events.length) return;
   const page = read() ?? (await change((p) => p));

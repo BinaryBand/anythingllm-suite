@@ -140,7 +140,17 @@ export function take(title: string): unknown[] {
   return events;
 }
 
-type Watch = { pass: () => Promise<void>; until: () => number; running: Promise<void> | null; again: boolean; seen: number; dir: number; watcher?: fs.FSWatcher; timer?: NodeJS.Timeout; stop: () => void };
+type Watch = { pass: () => Promise<void>; until: () => number; queued: boolean; seen: number; dir: number; watcher?: fs.FSWatcher; timer?: NodeJS.Timeout; stop: () => void };
+
+/** Runs `pass` for `title` after the one before it, whoever asked for it (the watch, or a call): one
+ *  pass at a time, so two never split a page's events between them, and a call reads the page after
+ *  what was posted for it was applied, not halfway through. A pass that fails doesn't stop the next. */
+export function inTurn(title: string, pass: () => Promise<void>): Promise<void> {
+  const turns = perProcess("pages.turns", () => new Map<string, Promise<void>>());
+  const mine = (turns.get(title) ?? Promise.resolve()).then(pass);
+  turns.set(title, mine.catch(() => {}));
+  return mine;
+}
 
 /** The events folder's inode: a new one is a folder made again, which an old fs.watch doesn't see. */
 const folderId = (): number => {
@@ -152,8 +162,9 @@ const folderId = (): number => {
 };
 
 /** Applies the events posted for `title` as they come, with `pass` (which takes and applies them
- *  all, in order), until `until()` is past; one pass at a time. Calling it again while it watches
- *  hands it the newer `pass` and `until`, so a reloaded skill's code takes over. */
+ *  all, in order) in its turn (inTurn), until `until()` is past; one waits at most, since it takes
+ *  all there are when it starts. Calling it again while it watches hands it the newer `pass` and
+ *  `until`, so a reloaded skill's code takes over. */
 export function watch(title: string, pass: () => Promise<void>, until: () => number): void {
   const watches = perProcess("pages.watches", () => new Map<string, Watch>());
   // A folder made here is a new one, whatever its inode (ext4 gives a removed folder's to the next):
@@ -162,7 +173,7 @@ export function watch(title: string, pass: () => Promise<void>, until: () => num
   const kept = watches.get(title);
   if (kept && !made && kept.dir === folderId()) return void Object.assign(kept, { pass, until });
   kept?.stop();
-  const w: Watch = { pass, until, running: null, again: false, seen: 0, dir: folderId(), stop: () => {} };
+  const w: Watch = { pass, until, queued: false, seen: 0, dir: folderId(), stop: () => {} };
   const changed = () => {
     try {
       return fs.statSync(eventsDir()).mtimeMs !== w.seen;
@@ -175,15 +186,9 @@ export function watch(title: string, pass: () => Promise<void>, until: () => num
     try {
       w.seen = fs.statSync(eventsDir()).mtimeMs;
     } catch {}
-    if (w.running) return void (w.again = true);
-    w.running = (async () => {
-      do {
-        w.again = false;
-        await w.pass();
-      } while (w.again);
-    })()
-      .catch(() => {})
-      .finally(() => (w.running = null));
+    if (w.queued) return;
+    w.queued = true;
+    inTurn(title, () => ((w.queued = false), w.pass())).catch(() => {});
   };
   w.stop = () => {
     w.watcher?.close();

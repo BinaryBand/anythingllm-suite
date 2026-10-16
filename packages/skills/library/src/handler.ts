@@ -297,7 +297,7 @@ const ACTIONS: Record<string, (args: Args, self: HandlerContext) => Promise<stri
 async function fromPage(self: HandlerContext): Promise<void> {
   if (!workspaceOf(self)) return;
   try {
-    await page.drain(baseOf(self));
+    await page.caughtUp(baseOf(self));
   } catch (e) {
     self.logger?.(`library-lean couldn't apply the Library page's events: ${(e as Error)?.message || e}`);
   }

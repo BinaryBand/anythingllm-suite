@@ -4,10 +4,38 @@
 // read it. `world` is what the tests set up and look at.
 const fs = require("fs");
 
-const world = (globalThis.__browserLeanWorld ||= { launched: [], pages: [], sites: {}, apis: {}, fetched: [] });
+const world = (globalThis.__browserLeanWorld ||= { launched: [], pages: [], sites: {}, apis: {}, fetched: [], authenticators: [] });
 
-/** A site the stand-in browser opens: its title, text and fields by ref ({ kind, type, name, value }),
- *  where a click or Enter goes, and the links a search reads from it ([{ title, href, near }]). */
+/** A page's DevTools session, for its WebAuthn domain alone: each virtual authenticator keeps its
+ *  credentials by id, and `emit` plays an event Chrome would send. */
+class Session {
+  constructor() {
+    this.handlers = {};
+    this.credentials = new Map();
+  }
+  on(name, fn) {
+    (this.handlers[name] ||= []).push(fn);
+  }
+  async emit(name, payload) {
+    await Promise.all((this.handlers[name] || []).map((fn) => fn(payload)));
+    await new Promise((resolve) => setTimeout(resolve, 50)); // what the skill does after, on its own
+  }
+  async send(method, params = {}) {
+    if (method === "WebAuthn.enable") return {};
+    if (method === "WebAuthn.addVirtualAuthenticator") {
+      this.options = params.options;
+      world.authenticators.push(this);
+      return { authenticatorId: `auth-${world.authenticators.length}` };
+    }
+    if (method === "WebAuthn.addCredential") return void this.credentials.set(params.credential.credentialId, { ...params.credential });
+    if (method === "WebAuthn.removeCredential") return void this.credentials.delete(params.credentialId);
+    throw new Error(`the stand-in has no ${method}`);
+  }
+}
+
+/** A site the stand-in browser opens: its title, text and fields by ref ({ kind, type, name, value,
+ *  box: { x, y, w, h } where it shows }), where a click or Enter goes, and the links a search reads
+ *  from it ([{ title, href, near }]). */
 function site(url, { title = "", text = "", fields = {}, onclick = {}, onenter = null, links = [] } = {}) {
   world.sites[url] = { title, text, fields, onclick, onenter, links };
 }
@@ -51,7 +79,14 @@ class Page {
       down: async () => {},
       up: async () => {},
     };
-    this.mouse = { wheel: async () => {} };
+    this.taps = [];
+    this.wheels = [];
+    this.navs = [];
+    this.mouse = {
+      click: async (x, y) => void this.taps.push([x, y]),
+      wheel: async ({ deltaY }) => void this.wheels.push(deltaY),
+    };
+    this.session = null;
     world.pages.push(this);
   }
   load(s) {
@@ -74,6 +109,9 @@ class Page {
   mainFrame() {
     return this;
   }
+  target() {
+    return { createCDPSession: async () => (this.session = new Session()) };
+  }
   on() {}
   once() {}
   isClosed() {
@@ -94,9 +132,13 @@ class Page {
     this.address = url;
     this.load(s);
   }
-  async goBack() {}
+  async goBack() {
+    this.navs.push("back");
+  }
   async goForward() {}
-  async reload() {}
+  async reload() {
+    this.navs.push("reload");
+  }
   async waitForFunction() {}
   async evaluateHandle() {
     // The skill asks a page only for the focused element; nothing here has focus.
@@ -122,7 +164,10 @@ class Page {
         if (f.type === "password") return f.value ? `${line} (filled)` : line;
         return f.value ? `${line} value="${f.value}"` : line;
       });
-      return { elements, text: this.text, more: false };
+      const fields = Object.entries(this.fields)
+        .filter(([, f]) => f.box)
+        .map(([ref, f]) => ({ ref, ...f.box, kind: f.type || "text", filled: !!f.value }));
+      return { elements, text: this.text, more: false, fields };
     }
     throw new Error("the stand-in page evaluates only what the skill sends it");
   }

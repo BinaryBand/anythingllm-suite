@@ -13,10 +13,16 @@ export interface HandlerContext {
   logger?: (message: string) => void;
 }
 
-interface Viewport {
+export interface Viewport {
   width: number;
   height: number;
   deviceScaleFactor?: number;
+}
+
+/** A DevTools Protocol session with a page, for its WebAuthn domain (passkey.ts). */
+export interface CDPSession {
+  send(method: string, params?: Record<string, unknown>): Promise<any>;
+  on(event: string, fn: (payload: any) => void): unknown;
 }
 
 /** An element on a page. `evaluate` runs `fn` in the page with the element. */
@@ -71,7 +77,8 @@ export interface Page {
   once(event: "close", fn: () => void): unknown;
   isClosed(): boolean;
   close(): Promise<void>;
-  mouse: { wheel(delta: { deltaY: number }): Promise<void> };
+  target(): { createCDPSession(): Promise<CDPSession> };
+  mouse: { click(x: number, y: number): Promise<void>; wheel(delta: { deltaY: number }): Promise<void> };
   keyboard: { press(key: string): Promise<void>; down(key: string): Promise<void>; up(key: string): Promise<void> };
 }
 

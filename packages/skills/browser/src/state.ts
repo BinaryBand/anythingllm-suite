@@ -7,10 +7,58 @@ import { perProcess, storageDir } from "#shared/anythingllm";
 import type { makeFence } from "#shared/fence";
 import { staticFiles, type StaticFiles } from "#shared/static";
 import { BrowserError } from "./errors";
-import type { Browser, Page } from "./host";
+import type { Browser, CDPSession, Page, Viewport } from "./host";
 
-/** A tab's screen: a phone's, drawn sharp. */
+/** A tab's screen until its page says how much room it has: a phone's, drawn sharp. */
 export const VIEWPORT = { width: 430, height: 932, deviceScaleFactor: 2 };
+/** The screens a tab's page may ask for, in CSS pixels; wider than phoneMax is drawn at 1x, so a
+ *  picture stays a few hundred kilobytes. */
+const SCREEN = { minWidth: 320, maxWidth: 1920, minHeight: 400, maxHeight: 1600, phoneMax: 900 };
+/** How long the user holds a tab without a step before it's the agent's again. */
+const HOLD_MS = 10 * 60 * 1000;
+/** How long a login or a passkey waits to be saved, or for the user's answer to the offer. */
+export const OFFER_MS = 10 * 60 * 1000;
+
+/** What a page sent, as text of at most `n` characters. */
+export const clip = (v: unknown, n: number): string => String(v ?? "").slice(0, n);
+
+/** `n` as a number kept between `lo` and `hi`; `lo` when it isn't one. */
+export const clamp = (n: unknown, lo: number, hi: number): number => Math.min(hi, Math.max(lo, Number(n) || lo));
+
+/** The screen a tab's page asks for (its width, height and pixel ratio), kept within SCREEN. */
+export function screenFor(w: unknown, h: unknown, dpr: unknown): Viewport {
+  const width = Math.round(clamp(w, SCREEN.minWidth, SCREEN.maxWidth));
+  const height = Math.round(clamp(h, SCREEN.minHeight, SCREEN.maxHeight));
+  return { width, height, deviceScaleFactor: width > SCREEN.phoneMax ? 1 : clamp(dpr, 1, 2) };
+}
+
+/** The user holding a tab, taken over on its page: when they last did a step, and what they typed
+ *  on the site they're on (a login the page may offer to save). */
+export interface Hold {
+  last: number;
+  typed: { host: string; user: string; pass: string } | null;
+}
+
+/** A passkey as Chrome's virtual authenticator gives and takes it. */
+export interface Credential {
+  credentialId: string;
+  rpId: string;
+  privateKey: string;
+  userHandle?: string;
+  signCount: number;
+  isResidentCredential: boolean;
+}
+
+/** A login to keep: one the user agreed to save when they entered it for the agent (saved once the
+ *  page no longer asks for a password), or one the page offers them, a password they typed or a
+ *  passkey a site made while they held the tab. Dropped when it runs out or the tab leaves its site. */
+export type Offer = { site: string; user: string; until: number } & ({ kind: "password"; pass: string; agreed: boolean } | { kind: "passkey"; credential: Credential });
+
+/** A tab page's passkey authenticator (passkey.ts): its DevTools session and its id. */
+export interface Authenticator {
+  cdp: CDPSession;
+  id: string;
+}
 
 /** What the agent asked the user to enter on the tab's page: a login or a code, typed into the
  *  fields by their refs once the user gives it there, while the page is still on `host`. */
@@ -33,14 +81,22 @@ export interface Entry {
   /** What happened in a tab since its last read, for the agent. */
   notes: Map<string, string[]>;
   needs: Map<string, Need>;
-  /** A login the user entered on a tab's page and asked to save: saved at the tab's next read once
-   *  its page no longer asks for a password (it was taken), dropped when the tab leaves its site. */
-  offers: Map<string, { site: string; user: string; pass: string; until: number }>;
+  offers: Map<string, Offer>;
+  /** The tabs the user holds. */
+  holds: Map<string, Hold>;
+  /** The screen each tab's page asked for, given to every page the tab has. */
+  screens: Map<string, Viewport>;
+  /** Each tab page's passkey authenticator (passkey.ts). */
+  authenticators: Map<Page, Authenticator>;
   /** What was typed into its pages that only the user may know, hidden from every read. */
   secrets: Set<string>;
   fence: ReturnType<typeof makeFence>;
   last: number;
   timer: NodeJS.Timeout | null;
+  /** Keeps the browser open IDLE_MS from now (browser.ts). */
+  touch: () => void;
+  /** The tabs the agent is doing a step in, which the user can't take over meanwhile. */
+  busy: Set<string>;
 }
 
 export const state = () =>
@@ -83,12 +139,25 @@ export function takeNotes(entry: Entry, key: string): string[] {
   return notes;
 }
 
-/** A chat's tab: its workspace's browser entry, its page, and its thread's key. */
+/** The user's hold on a thread's tab, or null; one with no step for HOLD_MS lapses, and the agent
+ *  is told. */
+export function holder(entry: Entry, key: string): Hold | null {
+  const hold = entry.holds.get(key);
+  if (hold && Date.now() - hold.last > HOLD_MS) {
+    entry.holds.delete(key);
+    note(entry, key, "the user took the tab over but did nothing on it for 10 minutes, so it's yours again. Read the page before going on");
+  }
+  return entry.holds.get(key) ?? null;
+}
+
+/** A chat's tab: its workspace's browser entry, its page, and its thread's key; `msg` is what its
+ *  page says to the user once it's drawn. */
 export interface Tab {
   workspace: string;
   entry: Entry;
   page: Page;
   key: string;
+  msg?: string;
 }
 
 /** The first line of what an error says. */

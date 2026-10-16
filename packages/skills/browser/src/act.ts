@@ -48,7 +48,7 @@ export async function element(page: Page, ref: string): Promise<ElementHandle> {
 export const isPassword = (target: ElementHandle): Promise<boolean> => target.evaluate((el) => el.type === "password");
 
 /** Replaces what's in a field with `text`, typed as a person would, so the page sees it. */
-async function fill(target: ElementHandle, text: string): Promise<void> {
+export async function fill(target: ElementHandle, text: string): Promise<void> {
   await target.click({ clickCount: 3 });
   await target.evaluate((el) => {
     if ("value" in el) el.value = "";
@@ -79,8 +79,6 @@ export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, 
   if (submitRef) await (await element(at.page, submitRef)).click();
   await settle(at.page);
 }
-
-
 
 async function pressKey(page: Page, target: ElementHandle | null, key: string): Promise<void> {
   const [modifier, rest] = key.split("+");

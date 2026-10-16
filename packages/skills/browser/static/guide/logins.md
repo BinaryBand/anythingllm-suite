@@ -2,4 +2,5 @@
 - A code (a verification code, an authenticator's, one sent by SMS or email): login with what ("code", "authenticator", "sms" or "email"), ref (the field) and submit_ref. The user enters it on the tab's page the same way.
 - You never see a password or a code, and never ask for one in the chat. act never types into a password field.
 - The user can save a login on the tab's page as they enter it; the next login on that site types it by itself. They delete one there too.
-- If the site shows a check only a person passes (a CAPTCHA), tell the user; this browser can't hand the tab over to them yet.
+- If the site shows a check only a person passes (a CAPTCHA), or a sign-in you can't do by refs, tell the user to tap the card, take the tab over, do it, and hand it back. While they have it, only read works; wait until they say they're done, then read the page.
+- A passkey: if the user saved one for the site, choose the site's passkey sign-in with act (a "Sign in with a passkey" button, say) and it signs in by itself. Only the user adds a passkey, by taking the tab over and making one on the site; the page then offers to save it.

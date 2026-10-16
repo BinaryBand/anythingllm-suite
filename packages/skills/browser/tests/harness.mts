@@ -29,14 +29,32 @@ process.env.SIG_SALT = "test-sig-salt";
 export interface Site {
   title?: string;
   text?: string;
-  fields?: Record<string, { kind?: string; type?: string; name?: string; value?: string }>;
+  fields?: Record<string, { kind?: string; type?: string; name?: string; value?: string; box?: { x: number; y: number; w: number; h: number } }>;
   onclick?: Record<string, string>;
   onenter?: string;
   links?: { title: string; href: string; near: string }[];
 }
 
+/** A stand-in page's DevTools session: its authenticator's credentials, and `emit` to play Chrome. */
+export interface Session {
+  options: Record<string, unknown>;
+  credentials: Map<string, Record<string, unknown>>;
+  emit(name: string, payload: unknown): Promise<void>;
+}
+
+export interface StandInPage {
+  clicks: string[];
+  taps: [number, number][];
+  wheels: number[];
+  navs: string[];
+  fields: Record<string, { value?: string }>;
+  session: Session | null;
+  url(): string;
+  viewport(): { width: number; height: number; deviceScaleFactor: number };
+}
+
 export const { world, site } = require(process.env.BROWSER_LEAN_PUPPETEER) as {
-  world: { launched: unknown[]; pages: { clicks: string[]; fields: Record<string, { value?: string }>; url(): string }[]; apis: Record<string, unknown>; fetched: Record<string, unknown>[] };
+  world: { launched: unknown[]; pages: StandInPage[]; apis: Record<string, unknown>; fetched: Record<string, unknown>[]; authenticators: Session[] };
   site: (url: string, s: Site) => void;
 };
 

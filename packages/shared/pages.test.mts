@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, beforeEach, test } from "node:test";
-import { embed, eventsDir, pageKey, take, watch, writePublic, publicDir } from "./pages.mts";
+import { embed, eventsDir, inTurn, pageKey, take, watch, writePublic, publicDir } from "./pages.mts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pages-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -80,6 +80,21 @@ test("the watch applies events as they land, until it's told to stop", async () 
   for (let i = 0; i < 100 && !seen.length; i++) await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(seen, [{ n: 1 }]);
   until = 0;
+});
+
+test("passes for a title run one at a time, whoever asks, and one that fails doesn't stop the next", async () => {
+  const seen: string[] = [];
+  const pass = (name: string, fail = false) => async () => {
+    seen.push(`${name} starts`);
+    await new Promise((r) => setTimeout(r, 20));
+    seen.push(`${name} ends`);
+    if (fail) throw new Error(name);
+  };
+  const runs = [inTurn("q", pass("a", true)), inTurn("q", pass("b")), inTurn("other", pass("c"))];
+  await Promise.allSettled(runs);
+  await assert.rejects(runs[0], /a/);
+  assert.deepEqual(seen.filter((x) => !x.startsWith("c")), ["a starts", "a ends", "b starts", "b ends"]);
+  assert.ok(seen.indexOf("c starts") < seen.indexOf("a ends"), "another title's pass doesn't wait");
 });
 
 test("embedded JSON can't end a script or start markup", () => {

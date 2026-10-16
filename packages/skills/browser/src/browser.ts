@@ -2,7 +2,8 @@
 // AnythingLLM's collector ships with, required at run time, so the skill brings none of its own.
 // Each workspace gets a browser of its own with a profile in AnythingLLM's storage, so its logins
 // last; each chat thread gets a tab. A browser closes after IDLE_MS unused, and at most
-// MAX_BROWSERS run at once. Every request a page makes goes through the fence (#shared/fence).
+// MAX_BROWSERS run at once. Every request a page makes goes through the fence (#shared/fence), and
+// every tab has a passkey authenticator (passkey.ts).
 // What must outlive a reload (the browsers, their tabs) is kept per process (state.ts).
 
 import fs from "node:fs";
@@ -12,7 +13,8 @@ import { FENCED, makeFence } from "#shared/fence";
 import { ACT_MS, NAVIGATE_MS, settle } from "./act";
 import { BrowserError } from "./errors";
 import type { Browser, Page, Puppeteer } from "./host";
-import { forgetTab } from "./page";
+import { forgetTab, redraw } from "./page";
+import * as passkey from "./passkey";
 import { type Entry, type Tab, VIEWPORT, firstLine, note, state, threadKey, workspaceDir } from "./state";
 
 const PUPPETEER = "/app/collector/node_modules/puppeteer";
@@ -66,6 +68,8 @@ function dropTab(workspace: string, entry: Entry, key: string): void {
   entry.notes.delete(key);
   entry.needs.delete(key);
   entry.offers.delete(key);
+  entry.holds.delete(key);
+  entry.screens.delete(key);
   forgetTab(workspace, key);
 }
 
@@ -85,6 +89,7 @@ async function closeEntry(workspace: string): Promise<void> {
   await (await entry.ready.catch(() => null))?.close().catch(() => {});
 }
 
+/** Keeps a workspace's browser open IDLE_MS from now. */
 function touch(workspace: string, entry: Entry): void {
   entry.last = Date.now();
   clearTimeout(entry.timer ?? undefined);
@@ -111,7 +116,7 @@ async function entryFor(workspace: string): Promise<Entry> {
   if (!entry) {
     const others = [...browsers.entries()].sort((a, b) => a[1].last - b[1].last);
     while (others.length >= MAX_BROWSERS) await closeEntry(others.shift()![0]);
-    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, ready: null! };
+    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, ready: null!, touch: () => touch(workspace, made), busy: new Set() };
     made.ready = launch(workspace).then((browser) => (made.browser = browser));
     browsers.set(workspace, (entry = made));
     try {
@@ -145,10 +150,14 @@ async function fenced(entry: Entry, page: Page, key?: string): Promise<void> {
   });
 }
 
-/** Sets up a tab of `key`'s: the fence on every request, dialogs answered and noted, a popup it
- *  opens made the thread's tab until it closes. */
-async function adopt(entry: Entry, key: string, page: Page): Promise<Page> {
+/** Sets up a tab of `key`'s in `workspace`'s browser: the screen its page asked for, the fence on
+ *  every request, a passkey authenticator, dialogs answered and noted, a popup it opens made the
+ *  thread's tab until it closes. */
+async function adopt(workspace: string, entry: Entry, key: string, page: Page): Promise<Page> {
+  const screen = entry.screens.get(key);
+  if (screen) await page.setViewport(screen).catch(() => {});
   await fenced(entry, page, key);
+  await passkey.attach(entry, key, page, () => void redraw(workspace, entry, key).catch(() => {}));
   page.on("dialog", async (dialog) => {
     const accept = dialog.type() === "alert" || dialog.type() === "beforeunload";
     note(entry, key, `the page showed a ${dialog.type()} ("${dialog.message().slice(0, 200)}"), which was ${accept ? "accepted" : "dismissed"}`);
@@ -157,7 +166,7 @@ async function adopt(entry: Entry, key: string, page: Page): Promise<Page> {
   page.on("popup", async (popup) => {
     if (!popup) return;
     const opener = entry.tabs.get(key);
-    await adopt(entry, key, popup);
+    await adopt(workspace, entry, key, popup);
     entry.tabs.set(key, popup);
     note(entry, key, "the page opened a new window, which is this chat's tab until it closes");
     popup.once("close", () => {
@@ -189,7 +198,7 @@ export async function tab(workspace: string, thread?: string | number): Promise<
   const key = threadKey(thread);
   let page = entry.tabs.get(key);
   if (!page || page.isClosed()) {
-    page = await adopt(entry, key, await entry.browser!.newPage());
+    page = await adopt(workspace, entry, key, await entry.browser!.newPage());
     entry.tabs.set(key, page);
   }
   return { workspace, entry, page, key };

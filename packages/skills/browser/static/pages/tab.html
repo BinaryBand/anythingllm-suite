@@ -2,66 +2,133 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
 <title>Browser</title>
 <style>
-  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --card: #fff; --accent: #2f5bd3; --warn: #b5470b; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ecebe6; --muted: #9b9a93; --line: #2f2e2b; --card: #1f1e1c; --accent: #8aa8ff; --warn: #f0995c; } }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; z-index: 1; }
-  h1 { font-size: 16px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  main { padding: 16px; max-width: 760px; margin: 0 auto; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
-  .need { border-color: var(--accent); }
-  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-  .cap { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
-  label.check { display: flex; gap: 6px; align-items: center; }
-  input:not([type=checkbox]) { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }
-  button.act { margin-top: 10px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
-  button.quiet { background: none; color: var(--warn); border-color: var(--line); }
-  #shot { display: block; width: 100%; border: 1px solid var(--line); border-radius: 10px; }
-  #toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; max-width: calc(100% - 32px); }
-  [hidden] { display: none !important; }
+/* The agent's browser tab: its picture between the controls at the top and the bottom, refreshed as
+   it changes. Tap it to take it over; tap a field to type with this device's keyboard. The tab's
+   screen follows the room between the controls, so it fills a phone or a desktop alike. Inside
+   AnywhereLLM Lite, which draws its own bar for handing the tab back, the bottom row is left out. */
+:root{--bg:oklch(0.982 0.008 75);--panel:oklch(0.995 0.003 75);--line:oklch(0.895 0.014 75);--line2:oklch(0.928 0.012 75);--ink:oklch(0.27 0.025 280);--ink2:oklch(0.4 0.025 280);--muted:oklch(0.5 0.02 280);--accent:oklch(0.52 0.16 272);--onaccent:oklch(1 0 0);--badfg:oklch(0.47 0.16 20);--okdot:oklch(0.62 0.14 160);--page:oklch(0.99 0 0);
+--float:0 12px 32px -8px oklch(0.3 0.04 280 / 0.28),0 2px 6px oklch(0.3 0.03 280 / 0.16);--sans:system-ui,-apple-system,'Segoe UI',sans-serif;--mono:ui-monospace,Menlo,monospace;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:oklch(0.215 0.018 280);--panel:oklch(0.26 0.02 280);--line:oklch(0.36 0.022 280);--line2:oklch(0.31 0.02 280);--ink:oklch(0.93 0.01 75);--ink2:oklch(0.81 0.014 75);--muted:oklch(0.72 0.018 280);--accent:oklch(0.78 0.1 272);--onaccent:oklch(0.2 0.03 280);--badfg:oklch(0.83 0.085 20);--okdot:oklch(0.72 0.14 160);--page:oklch(0.18 0.01 280);--float:0 12px 32px -8px oklch(0 0 0 / 0.5),0 2px 6px oklch(0 0 0 / 0.3);color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--page);color:var(--ink);font:15px/1.4 var(--sans);overflow:hidden;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+input{font:inherit;color:var(--ink)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden],.hosted #hint,.hosted #mine{display:none!important}
+#stage{position:fixed;inset:0;overflow:hidden;touch-action:none}
+#shot{position:absolute;display:block;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;pointer-events:none;background:#fff}
+.mine #stage::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 3px var(--ink);pointer-events:none}
+#take{position:absolute;inset:0;width:100%;height:100%}
+.tap{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:var(--accent);opacity:.3;pointer-events:none;animation:ripple .4s ease-out forwards}
+@keyframes ripple{from{transform:scale(.4);opacity:.35}to{transform:scale(1.4);opacity:0}}
+@media (prefers-reduced-motion:reduce){.tap{animation:fade .3s forwards}@keyframes fade{to{opacity:0}}}
+.over{position:absolute;margin:0;border:0;outline:2px solid var(--accent);outline-offset:1px;border-radius:6px;background:#fff;color:#111;padding:0 8px;font-size:16px;box-shadow:var(--float)}
+.top{position:fixed;left:0;right:0;top:0;z-index:3;padding:calc(12px + env(safe-area-inset-top,0px)) 12px 0;display:flex;align-items:center;gap:8px;pointer-events:none}.top>*{pointer-events:auto}
+.fb{flex:none;width:48px;height:48px;border-radius:50%;background:var(--panel);color:var(--ink);display:flex;align-items:center;justify-content:center;box-shadow:var(--float)}
+.where{flex:1;min-width:0;margin:0;min-height:40px;padding:0 14px;border-radius:99px;background:var(--panel);box-shadow:var(--float);display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.vt{flex:1;min-width:0;margin:0;font-size:19px;font-weight:600}
+.where .u{min-width:0;font:12px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bdot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--okdot)}.mine .bdot{background:var(--ink)}
+.tk{flex:none;min-height:44px;padding:0 16px;border-radius:99px;background:var(--accent);color:var(--onaccent);font-size:15px;font-weight:600;box-shadow:var(--float)}
+.upd{position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;gap:8px;min-height:36px;padding:0 14px;border-radius:99px;background:var(--panel);box-shadow:var(--float);font-size:13.5px;font-weight:500;white-space:nowrap}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}.live{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.6s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.live{animation:none}}
+.dock{position:fixed;left:0;right:0;bottom:0;z-index:3;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:stretch;gap:10px;pointer-events:none}.dock>*{pointer-events:auto}
+.sheet{padding:16px 18px;border-radius:22px;background:var(--panel);box-shadow:var(--float);display:flex;flex-direction:column;gap:10px}.sheet b{font-size:16px;line-height:1.25}.sheet p{margin:0;font-size:14px;line-height:1.5;color:var(--ink2)}.sheet small{display:block;font:12.5px var(--mono);color:var(--muted)}
+.row{display:flex;gap:8px}
+.btn{flex:1;min-height:44px;padding:0 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);font-size:15px;font-weight:500;text-align:center}.pri{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}
+.give{background:var(--ink);border-color:var(--ink);color:var(--bg);font-weight:600}
+.hint{align-self:center;min-height:48px;display:flex;align-items:center;padding:0 16px;border-radius:99px;background:var(--panel);box-shadow:var(--float);font-size:13.5px;color:var(--ink2)}
+.wait{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.full{position:fixed;inset:0;z-index:2;background:var(--bg);overflow:auto;padding:76px 16px 24px;display:flex;flex-direction:column;gap:16px}
+.cap{margin:0;padding:0 8px;font-size:13px;line-height:1.45;color:var(--muted)}
+.lab{padding:0 20px;margin-bottom:-8px;font-size:12px;font-weight:500;letter-spacing:.48px;text-transform:uppercase;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line2);border-radius:24px;padding:0 20px;display:flex;flex-direction:column}
+.lg{display:flex;align-items:center;gap:12px;min-height:68px;border-top:1px solid var(--line2)}.lg:first-child{border-top:0}
+.lg>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.lg b{font-size:16px;font-weight:500}.lg small{font:12.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.del{flex:none;min-height:40px;padding:0 14px;border-radius:99px;color:var(--badfg)}
+.form{padding:20px;gap:12px}.ff{display:flex;flex-direction:column;gap:6px}.ff span{padding:0 8px;font-size:13px;color:var(--muted)}
+.fld{min-height:52px;padding:0 16px;border-radius:16px;border:1px solid var(--line);background:var(--bg);font-size:16px;width:100%}.fld.ro{font:13.5px var(--mono);color:var(--muted);border-color:transparent}
+.tgl{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:15px}
+.sw{width:52px;height:44px;flex:none;display:flex;align-items:center;justify-content:center}.sw span{position:relative;width:38px;height:22px;border-radius:99px;background:var(--line)}.sw span::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--panel)}.sw[aria-checked="true"] span{background:var(--accent)}.sw[aria-checked="true"] span::after{left:18px}
+.toast{position:fixed;left:20px;right:20px;bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:5;padding:12px 16px;border-radius:16px;background:var(--ink);color:var(--bg);font-size:14px;text-align:center}
+.gone{position:fixed;inset:0;z-index:6;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center}.gone b{font-size:20px}.gone p{margin:0;color:var(--muted)}
+.side #upd{display:none!important}
 </style>
 </head>
 <body>
-<header><h1 id="title">Browser</h1><div class="cap" id="address"></div></header>
-<main>
-  <div id="need"></div>
-  <img id="shot" alt="The tab as it is now">
-  <h2 class="cap">Saved logins</h2>
-  <div id="logins"></div>
-  <p class="cap">What you type here is sealed on this device and typed into the tab; the agent never sees it. Anyone with this page's link can see the tab.</p>
-</main>
-<div id="toast" hidden></div>
+<main id="stage" aria-label="The browser tab"><img id="shot" alt=""><button id="take" aria-label="Take the tab over"></button></main>
+<header class="top" id="top">
+  <button class="fb" id="back" aria-label="Close"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="backicon" d="M4 4l8 8M12 4l-8 8"/></svg></button>
+  <h1 class="vt" id="vt" hidden>Saved logins</h1><h1 class="where" id="where"><span class="bdot" aria-hidden="true"></span><span id="who">Agent</span><span class="u" id="addr"></span></h1>
+  <button class="tk" id="tk">Logins</button>
+</header>
+<div class="upd" id="upd" role="status" hidden><span class="live" aria-hidden="true"></span>Updating the page…</div>
+<section class="full" id="logins" hidden></section>
+<section class="full" id="needform" hidden></section>
+<footer class="dock">
+  <div class="sheet" id="need" role="group" aria-labelledby="needwhat" hidden>
+    <b id="needwhat"></b>
+    <p>The agent is waiting at the page. It never sees what you enter.</p>
+    <div class="wait"><span class="live" aria-hidden="true"></span><span id="needleft"></span></div>
+    <button class="btn pri" id="needenter"></button>
+    <div class="row"><button class="btn" id="needtake">Take over</button><button class="btn" id="needno">Not now</button></div>
+  </div>
+  <div class="sheet" id="offer" hidden><div><b id="offerwhat">Save this login?</b><small id="offerwho"></small></div><div class="row"><button class="btn" id="offerno">Not now</button><button class="btn pri" id="offeryes">Save</button></div></div>
+  <span class="hint" id="hint">Tap the page to take it over</span>
+  <div class="row" id="mine" hidden><button class="btn" id="navback">Back</button><button class="btn" id="reload">Reload</button><button class="btn give" id="give">Hand back</button></div>
+</footer>
+<div class="toast" id="toast" role="status" hidden></div>
+<div class="gone" id="gone" hidden><b>This tab closed</b><p>Ask the agent to open the page again.</p></div>
 <script>
 (() => {
   const cfg = /*CONFIG*/null;
   const $ = (id) => document.getElementById(id);
-  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k !== null && k !== undefined)); return n; };
-  let toastTimer = 0;
-  const toast = (text) => { $("toast").textContent = text; $("toast").hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => ($("toast").hidden = true), 4000); };
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+  const field = (label, input) => el("label", { className: "ff" }, el("span", { textContent: label }), input);
+  // AnywhereLLM Lite's channel, when this page shows inside it: told who has the tab and when it was
+  // handed back; it draws the bar under the page that hands the tab back.
+  const host = window.AnywhereLLMBrowser || null;
+  if (host) document.body.classList.add("hosted");
+  let st = null, size = { w: 430, h: 932 }, scale = 1, left = 0, top = 68, bottom = 0, view = "page", over = null, shot = 0, swiped = false;
+  let needOpen = false, dismissed = 0, skew = 0, lastText = "";
+  // A step posted from here: "Updating" until a newer picture than `from` comes (or a few seconds,
+  // for a step that changed nothing), showing `who` as this page set it until then.
+  let pending = null, pendingTimer = 0;
+  function settled() {
+    clearTimeout(pendingTimer);
+    pending = null;
+    $("upd").hidden = true;
+  }
 
-  // ---- Posting: each thing done here is an event, posted through AnythingLLM's upload.
-  async function post(ev, fields = {}) {
+  // ---- Posting: each step is an event, posted in order through AnythingLLM's upload.
+  let queue = Promise.resolve();
+  function post(ev, fields = {}) {
     const event = { browser_lean_event: 1, workspace: cfg.workspace, tab: cfg.tab, secret: cfg.secret, ev, ...fields, t: new Date().toISOString() };
-    try {
-      const res = await fetch("/api/browser-extension/upload-content", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
-        body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.title, docSource: "browser-lean page" } }),
-      });
-      if (!res.ok) return toast(res.status === 403 ? "AnythingLLM refused this page's key: ask the agent to read the tab again" : "AnythingLLM answered " + res.status), false;
-      toast("Sent");
-      setTimeout(load, 1500);
-      return true;
-    } catch (e) {
-      toast("Can't reach AnythingLLM");
-      return false;
-    }
+    pending = { from: shot, who: pending?.who };
+    $("upd").hidden = false;
+    clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(settled, 4000);
+    queue = queue.then(async () => {
+      try {
+        const r = await fetch("/api/browser-extension/upload-content", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
+          body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.title, docSource: "browser-lean page" } }),
+        });
+        if (!r.ok) toast(r.status === 403 ? "AnythingLLM refused this page's key: ask the agent to read the tab again" : "AnythingLLM answered " + r.status);
+      } catch (e) {
+        toast("Can't reach AnythingLLM");
+      }
+      soon(); // the step's picture comes within a second: look for it now
+    });
+    return queue;
   }
 
   // RSA-OAEP seals at most 190 bytes; a longer value is sealed with a new AES-GCM key, itself
@@ -69,8 +136,9 @@
   const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
   let pubKey = null;
   async function seal(text) {
-    const bytes = new TextEncoder().encode(text);
+    if (!window.crypto || !crypto.subtle) throw new Error("Open this page over https to send a password");
     pubKey ||= await crypto.subtle.importKey("spki", Uint8Array.from(atob(cfg.pub), (c) => c.charCodeAt(0)), { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+    const bytes = new TextEncoder().encode(text);
     if (bytes.length <= 190) return b64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, bytes));
     const aes = crypto.getRandomValues(new Uint8Array(32));
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -79,69 +147,346 @@
     return ["h1", b64(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, aes)), b64(iv), b64(sealed)].join(".");
   }
 
-  // Not this page's own login form: names hold nothing a browser reads as a login, and a password
-  // field asks for a new value, so the browser fills in none of its saved ones.
-  const input = (type, label) => {
-    const i = el("input", { type, name: `bw-${Math.random().toString(36).slice(2, 8)}`, autocomplete: type === "password" ? "new-password" : "off", spellcheck: false });
-    return { i, node: el("label", { textContent: label }, i) };
-  };
+  let toastTimer = 0;
+  function toast(text) {
+    $("toast").textContent = text;
+    $("toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => ($("toast").hidden = true), 2600);
+  }
 
-  let needKey = "";
-  function needForm(need) {
-    const user = need.kind === "login" && need.hasUser ? input("text", "Username or email") : null;
-    const secret = input(need.kind === "login" ? "password" : "text", need.kind === "login" ? "Password" : need.label || "Code");
-    const save = need.kind === "login" && need.hasUser ? el("input", { type: "checkbox", checked: true }) : null;
-    const form = el("form", { className: "card need" },
-      el("strong", { textContent: need.text }),
-      el("p", { className: "cap", textContent: `It's typed into ${need.host} for you; the agent doesn't see it.` }),
-      user?.node, secret.node,
-      save ? el("label", { className: "check" }, save, "Save this login for next time") : null,
-      el("div", { className: "row" },
-        el("button", { className: "act", type: "submit", textContent: "Enter it" }),
-        el("button", { className: "act quiet", type: "button", textContent: "Not now", onclick: () => post("need-cancel") })));
-    form.onsubmit = async (e) => {
+  // ---- The picture, fitted between the controls, measured on each resize.
+  function reserve() {
+    top = Math.round($("top").getBoundingClientRect().bottom) + 8;
+    const row = [$("hint"), $("mine")].find((b) => !b.hidden);
+    bottom = !host && row ? Math.round(innerHeight - row.getBoundingClientRect().top) + 8 : 0;
+    $("upd").style.top = top + "px";
+    $("toast").style.bottom = bottom + 16 + "px";
+  }
+  function layout() {
+    if (!st) return;
+    const W = innerWidth, H = Math.max(1, innerHeight - top - bottom);
+    scale = Math.min(W / size.w, H / size.h);
+    left = (W - size.w * scale) / 2;
+    Object.assign($("shot").style, { width: size.w * scale + "px", height: size.h * scale + "px", left: left + "px", top: top + "px" });
+    if (over) place(over.input, over.field);
+  }
+  addEventListener("resize", () => (reserve(), layout(), askSize()));
+
+  // ---- The tab's screen: this window's room between the controls, asked for once it settles; the
+  // skill keeps it within the screens it draws.
+  let sizeTimer = 0, asked = null;
+  function askSize() {
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(() => {
+      if (!st) return;
+      const want = { w: innerWidth, h: innerHeight - top - bottom, dpr: devicePixelRatio || 1 };
+      const have = asked || size;
+      if (Math.abs(want.w - have.w) <= 8 && Math.abs(want.h - have.h) <= 8 && (!asked || want.dpr === asked.dpr)) return;
+      asked = want;
+      post("size", want);
+    }, 500);
+  }
+  const toPage = (e) => ({ x: Math.round((e.clientX - left) / scale), y: Math.round((e.clientY - top) / scale) });
+  const inside = (p, f) => p.x >= f.x && p.x <= f.x + f.w && p.y >= f.y && p.y <= f.y + f.h;
+
+  // ---- Typing: a real input over the field the user tapped, so this device's keyboard opens.
+  function place(input, f) {
+    Object.assign(input.style, { left: left + f.x * scale + "px", top: top + f.y * scale + "px", width: Math.max(f.w * scale, 120) + "px", height: Math.max(f.h * scale, 40) + "px" });
+  }
+  const KINDS = { email: "email", password: "password", tel: "tel", url: "url", search: "search" };
+  function nextField(f) {
+    const after = (st.fields || []).filter((g) => g.ref !== f.ref && (g.y > f.y + 2 || (Math.abs(g.y - f.y) <= 2 && g.x > f.x)));
+    return after.sort((a, b) => a.y - b.y || a.x - b.x)[0] || null;
+  }
+  function openField(f) {
+    closeField(false);
+    const input = el("input", { className: "over", type: KINDS[f.kind] || "text", autocomplete: f.kind === "password" ? "new-password" : "off", autocapitalize: "off", spellcheck: false, placeholder: f.filled ? "Type to replace" : "" });
+    if (f.kind === "number") input.inputMode = "decimal";
+    input.setAttribute("aria-label", f.kind === "password" ? "Password" : "Field on the page");
+    input.enterKeyHint = nextField(f) ? "next" : "go";
+    place(input, f);
+    $("stage").appendChild(input);
+    over = { input, field: f };
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
       e.preventDefault();
-      const value = secret.i.value;
-      if (!value || (user && !user.i.value.trim())) return toast("Fill in every field");
-      const fields = need.kind === "login" ? { user: user ? user.i.value.trim() : "", sealed: await seal(value), save: !!save?.checked } : { text: value.trim() };
-      if (await post("need-answer", fields)) form.reset();
-    };
-    return form;
+      const goNext = input.enterKeyHint === "next" && nextField(f);
+      send(f, input.value, goNext ? "Tab" : "Enter");
+      if (goNext) openField(goNext);
+      else closeField(false);
+    });
+    input.addEventListener("blur", () => setTimeout(() => over && over.input === input && closeField(true), 0));
+    input.focus();
   }
-
-  function draw(s) {
-    if (s.closed) {
-      $("title").textContent = "This tab closed";
-      $("address").textContent = "Ask the agent to open the page again.";
-      $("shot").hidden = true;
-      $("need").replaceChildren();
-      return;
-    }
-    $("title").textContent = s.title || s.host || "Browser";
-    $("address").textContent = s.url;
-    $("shot").src = cfg.token + ".jpg?v=" + s.shot;
-    const key = s.need ? JSON.stringify([s.need.kind, s.need.host, s.need.until]) : "";
-    if (key !== needKey) ((needKey = key), $("need").replaceChildren(...(s.need ? [needForm(s.need)] : [])));
-    $("logins").replaceChildren(...(s.logins.length ? [] : [el("p", { className: "cap", textContent: "None saved." })]));
-    for (const l of s.logins) {
-      $("logins").append(el("div", { className: "card row" },
-        el("span", {}, el("strong", { textContent: l.site }), " ", el("span", { className: "cap", textContent: l.user + (l.here ? " · this site" : "") })),
-        el("button", { className: "act quiet", textContent: "Delete", onclick: () => confirm(`Delete the login for ${l.site}?`) && post("login-delete", { id: l.id }) })));
-    }
+  function closeField(keep) {
+    if (!over) return;
+    const { input, field: f } = over;
+    over = null;
+    if (keep && input.value) send(f, input.value, null);
+    input.remove();
   }
-
-  let last = "";
-  async function load() {
+  async function send(f, value, then) {
+    if (f.kind !== "password") return post("type", { ref: f.ref, text: value, then });
     try {
-      const res = await fetch(cfg.token + ".json", { cache: "no-cache" });
-      const text = await res.text();
-      if (text !== last) (last = text), draw(JSON.parse(text));
+      return post("type", { ref: f.ref, sealed: await seal(value), then });
     } catch (e) {
-      toast("Can't reach AnythingLLM");
+      toast(e.message);
     }
   }
-  load();
-  setInterval(load, 3000);
+
+  // ---- Taps and swipes on the picture, each shown at once: a ripple where the finger lands, and
+  // the picture following a swipe until the scrolled one comes.
+  let down = null, slid = 0;
+  const onPicture = (e) => e.target === $("stage") || e.target === $("shot") || e.target === $("take");
+  const mine = () => st && st.who === "user";
+  function ripple(e) {
+    const dot = el("span", { className: "tap" });
+    Object.assign(dot.style, { left: e.clientX + "px", top: e.clientY + "px" });
+    dot.addEventListener("animationend", () => dot.remove());
+    $("stage").appendChild(dot);
+  }
+  function slide(dy) {
+    clearTimeout(slid);
+    $("shot").style.transform = dy ? `translateY(${dy}px)` : "";
+  }
+  const isSwipe = (dx, dy) => Math.abs(dy) > 24 && Math.abs(dy) > Math.abs(dx);
+  $("stage").addEventListener("pointerdown", (e) => {
+    if (!onPicture(e)) return;
+    down = { x: e.clientX, y: e.clientY };
+    ripple(e);
+  });
+  $("stage").addEventListener("pointermove", (e) => {
+    if (!down || !mine()) return;
+    const dy = e.clientY - down.y;
+    if (isSwipe(e.clientX - down.x, dy)) slide(Math.max(-size.h * scale, Math.min(size.h * scale, dy)));
+  });
+  $("stage").addEventListener("pointerup", (e) => {
+    const d = down;
+    down = null;
+    if (!d || !mine()) return;
+    const dy = e.clientY - d.y;
+    swiped = isSwipe(e.clientX - d.x, dy);
+    if (!swiped) return slide(0);
+    post("scroll", { dy: Math.round(-dy / scale) });
+    slid = setTimeout(() => slide(0), 3000); // no picture came: put it back
+  });
+  // A tap on the picture: a field opens for typing, anything else is tapped in the tab.
+  function tapAt(e) {
+    const p = toPage(e);
+    if (p.x < 0 || p.y < 0 || p.x > size.w || p.y > size.h) return;
+    const f = (st.fields || []).find((g) => inside(p, g));
+    if (f) return openField(f);
+    closeField(true);
+    post("tap", p);
+  }
+  $("stage").addEventListener("click", (e) => {
+    if (swiped) return void (swiped = false);
+    if (!mine() || e.target === $("take") || !onPicture(e)) return;
+    tapAt(e);
+  });
+  // Takes the tab over, shown at once; the state file catches up. The first tap is a tap too.
+  function takeOver() {
+    st.who = "user";
+    paint();
+    post("take");
+    pending.who = "user";
+  }
+  $("take").addEventListener("click", (e) => {
+    if (!st) return;
+    takeOver();
+    tapAt(e);
+  });
+  function give() {
+    if (!mine()) return Promise.resolve();
+    closeField(true);
+    st.who = "agent";
+    paint();
+    const done = post("give");
+    pending.who = "agent";
+    return done;
+  }
+  $("give").addEventListener("click", give);
+  $("navback").addEventListener("click", () => (closeField(true), post("nav", { do: "back" })));
+  $("reload").addEventListener("click", () => (closeField(true), post("nav", { do: "reload" })));
+  // AnywhereLLM Lite's bar hands the tab back through this, before it sends a message to the agent.
+  window.browserLean = { give: () => give().then(() => host && host.postMessage('{"gave":true}')) };
+  let told = null;
+  const tell = (who) => host && who !== told && host.postMessage(JSON.stringify({ who: (told = who) }));
+  $("back").addEventListener("click", () => (view === "logins" ? setView("page") : history.length > 1 ? history.back() : window.close()));
+  $("tk").addEventListener("click", () => setView("logins"));
+
+  // ---- What the agent asked for: a login or a code, entered here and typed into the page for it.
+  const remaining = () => (st && st.need ? Math.round((st.need.until - (Date.now() + skew)) / 1000) : 0);
+  const asking = () => !!(st && st.need) && st.need.until !== dismissed && remaining() > 0;
+  let ticker = 0;
+  function tick() {
+    if (!asking() || $("need").hidden) return;
+    const s = remaining();
+    $("needleft").textContent = "Waiting · " + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " left";
+  }
+  $("needenter").addEventListener("click", () => ((needOpen = true), needForm(), paint()));
+  $("needno").addEventListener("click", () => ((dismissed = st.need.until), post("need-cancel", { reason: "later" }), paint()));
+  $("needtake").addEventListener("click", () => {
+    dismissed = st.need.until;
+    post("need-cancel", { reason: "takeover" });
+    takeOver();
+  });
+  function needForm() {
+    const need = st.need;
+    const login = need.kind === "login";
+    let keep = true;
+    const user = login && need.hasUser ? el("input", { className: "fld", autocapitalize: "off", autocomplete: "off", spellcheck: false }) : null;
+    const secret = el("input", { className: "fld", type: login ? "password" : "text", autocomplete: login ? "new-password" : "one-time-code", autocapitalize: "off" });
+    const sw = el("button", { className: "sw", role: "switch" }, el("span"));
+    sw.setAttribute("aria-checked", "true");
+    sw.setAttribute("aria-label", "Save this login for next time");
+    sw.onclick = () => sw.setAttribute("aria-checked", String((keep = !keep)));
+    const no = el("button", { className: "btn", textContent: "Cancel", onclick: () => ((needOpen = false), paint()) });
+    const go = el("button", { className: "btn pri", textContent: login ? "Sign in" : "Send" });
+    go.onclick = async () => {
+      if (user && !user.value.trim()) return toast("Give the username");
+      if (!secret.value.trim()) return toast(login ? "Give the password" : "Give the code");
+      let fields;
+      try {
+        fields = login ? { user: user ? user.value.trim() : "", sealed: await seal(secret.value), save: keep && !!user } : { text: secret.value.trim() };
+      } catch (e) {
+        return toast(e.message);
+      }
+      dismissed = need.until;
+      needOpen = false;
+      post("need-answer", fields);
+      paint();
+    };
+    $("needform").replaceChildren(el("div", { className: "card form" }, el("b", { textContent: login ? "Sign in to " + need.host : need.label || "Enter the code" }),
+      field("Site", el("input", { className: "fld ro", value: need.host, readOnly: true })),
+      ...(user ? [field("Username or email", user)] : []),
+      field(login ? "Password" : need.label || "Code", secret),
+      ...(user ? [el("div", { className: "tgl" }, el("span", { textContent: "Save this login for next time" }), sw)] : []),
+      el("p", { className: "cap", style: "padding:0", textContent: login ? "Sealed on this device before it's sent, and typed into the page for the agent, which never sees it." : "Typed into the page for the agent, which never sees it." }),
+      el("div", { className: "row" }, no, go)));
+    (user || secret).focus();
+  }
+  $("offerno").addEventListener("click", () => (($("offer").hidden = true), post("offer", { save: false })));
+  $("offeryes").addEventListener("click", () => (($("offer").hidden = true), post("offer", { save: true })));
+
+  // ---- Saved logins and passkeys, by site and username; never their passwords.
+  function setView(v) {
+    view = v;
+    needOpen = false;
+    closeField(true);
+    paint();
+  }
+  function loginsView() {
+    const list = [...(st.logins || [])].sort((a, b) => b.here - a.here);
+    const card = el("div", { className: "card" }, ...list.map((l) => {
+      const passkey = l.kind === "passkey";
+      const del = el("button", { className: "del", textContent: "Delete" });
+      del.setAttribute("aria-label", "Delete the " + (passkey ? "passkey" : "login") + " for " + l.site);
+      del.onclick = () => {
+        const said = passkey ? "Delete the passkey for " + l.site + "? The agent can't sign in with it after. Remove it in the site's own settings too." : "Delete the login for " + l.site + "?";
+        if (confirm(said)) post("login-delete", { id: l.id });
+      };
+      return el("div", { className: "lg" }, el("div", {}, el("b", { textContent: l.site }), el("small", { textContent: passkey ? (l.user ? l.user + " · " : "") + "Passkey" : l.user + (l.here ? " · this site" : "") })), del);
+    }));
+    $("logins").replaceChildren(
+      el("p", { className: "cap", textContent: "Saved on your AnythingLLM server, encrypted. The agent signs in with them, on their own site only, but never reads them. A passkey is added by taking the tab over and making one on the site." }),
+      el("div", { className: "lab", textContent: "Saved logins" }),
+      list.length ? card : el("p", { className: "cap", textContent: "None saved yet." }));
+  }
+
+  // ---- Drawing what the state file says.
+  function paint() {
+    if (!st) return;
+    const held = mine();
+    document.body.classList.toggle("mine", held);
+    document.body.classList.toggle("side", view !== "page" || needOpen);
+    $("who").textContent = held ? "You" : "Agent";
+    $("addr").textContent = (st.url || "").replace(/^https?:\/\//, "");
+    $("where").setAttribute("aria-label", (held ? "You have the tab" : "The agent has the tab") + ": " + (st.title || st.url));
+    $("take").hidden = held;
+    $("mine").hidden = !held || view !== "page";
+    $("hint").hidden = held || view !== "page";
+    tell(st.who);
+    const ask = asking() && !needOpen && view === "page";
+    $("need").hidden = !ask;
+    if (ask !== !!ticker) ticker = ask ? setInterval(tick, 1000) : (clearInterval(ticker), 0);
+    if (ask) {
+      $("needwhat").textContent = st.need.text;
+      $("needenter").textContent = st.need.kind === "login" ? "Enter a login" : "Enter the code";
+      tick();
+    }
+    $("needform").hidden = !needOpen;
+    $("offer").hidden = !st.offer || view !== "page" || ask;
+    if (st.offer) {
+      const passkey = st.offer.kind === "passkey";
+      $("offerwhat").textContent = passkey ? "Save this passkey?" : "Save this login?";
+      $("offerwho").textContent = st.offer.site + (st.offer.user ? " · " + st.offer.user : passkey ? " · passkey" : "");
+    }
+    $("logins").hidden = view !== "logins";
+    $("tk").hidden = view === "logins";
+    $("where").hidden = view === "logins";
+    $("vt").hidden = view !== "logins";
+    $("backicon").setAttribute("d", view === "logins" ? "M10 3.5 5.5 8l4.5 4.5" : "M4 4l8 8M12 4l-8 8");
+    $("back").setAttribute("aria-label", view === "logins" ? "Back to the tab" : "Close");
+    if (view === "logins") loginsView();
+    reserve();
+    layout();
+  }
+
+  // The state file, asked for often while a step is pending and less when idle.
+  async function poll() {
+    if (document.hidden && st) return; // out of sight: no polling, but the first state still draws
+    let next, text;
+    try {
+      const r = await fetch(cfg.token + ".json", { cache: "no-cache" });
+      const d = Date.parse(r.headers.get("Date") || "");
+      if (d) skew = d - Date.now();
+      text = await r.text();
+      next = JSON.parse(text);
+    } catch (e) {
+      return; // not reached, or not the state file: the next poll tries again
+    }
+    if (next.closed) {
+      $("gone").hidden = false;
+      return tell("agent");
+    }
+    $("gone").hidden = true;
+    const same = text === lastText;
+    if (!same) {
+      const first = !st;
+      st = next;
+      if (st.shot !== shot) {
+        const fresh = shot !== 0; // a message already there when the page opened isn't news
+        shot = st.shot;
+        slide(0);
+        if (st.size) size = st.size;
+        $("shot").src = cfg.token + ".jpg?v=" + shot;
+        if (pending && shot !== pending.from) settled();
+        if (fresh && st.msg) toast(st.msg);
+      }
+      if (first) askSize(); // the first state: ask for this window's room
+    }
+    const was = st.who;
+    if (pending && pending.who) st.who = pending.who; // taken or handed back here; the state file catches up
+    if (needOpen && !asking()) (needOpen = false), toast("That request is over");
+    // What a field being typed into or the request's form would lose is drawn once they close.
+    if ((!same || st.who !== was) && !over && !needOpen) (lastText = text), paint();
+  }
+  let pollTimer = 0;
+  function loop() {
+    poll().finally(() => {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(loop, pending ? 250 : 2000);
+    });
+  }
+  function soon() {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(loop, 250);
+  }
+  reserve();
+  loop();
+  document.addEventListener("visibilitychange", poll);
 })();
 </script>
 </body>

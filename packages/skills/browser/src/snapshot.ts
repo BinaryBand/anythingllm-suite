@@ -1,20 +1,33 @@
 // The page as the agent reads it (view.ts): its visible interactive elements, each tagged with a ref
 // (data-bw-ref) that act targets, then its visible text. A ref stays with its element for the life
 // of the page, so refs from an earlier read still work while the element is there. Open shadow
-// roots are walked; frames aren't. `snapshot` runs in the page (page.evaluate), so it uses nothing
-// outside itself.
+// roots are walked; frames aren't. It also gives where each field one types into sits in view, for
+// the tab's page to put an input over while the user holds the tab. `snapshot` runs in the page
+// (page.evaluate), so it uses nothing outside itself.
 
 import type { Page } from "./host";
 import { firstLine } from "./state";
+
+/** A field in view one types into: its ref, its box in the page's CSS pixels, its input type. */
+export interface Field {
+  ref: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  kind: string;
+  filled: boolean;
+}
 
 export interface Snap {
   elements: string[];
   text: string;
   more: boolean;
+  fields: Field[];
 }
 
 function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
-  const { document, window, getComputedStyle } = globalThis as any;
+  const { document, window, getComputedStyle, innerWidth, innerHeight } = globalThis as any;
   const INTERACTIVE = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"]);
   const ROLES = new Set(["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "combobox", "textbox", "searchbox", "slider", "spinbutton"]);
   const clip = (s: string, n: number) => {
@@ -70,8 +83,19 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
     if (el.disabled || el.getAttribute("aria-disabled") === "true") line += " (disabled)";
     return line;
   };
+  const MAX_FIELDS = 60;
+  const NOT_TYPED = new Set(["checkbox","radio", "hidden", "button", "submit", "reset", "image", "file", "range", "color"]);
+  const field = (el: any, ref: string): Field | null => {
+    const typed = (el.tagName === "INPUT" && !NOT_TYPED.has(el.type)) || el.tagName === "TEXTAREA" || (el.isContentEditable && el.parentElement?.isContentEditable !== true);
+    if (!typed || el.disabled || el.readOnly) return null;
+    const r = el.getBoundingClientRect();
+    if (r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) return null;
+    const kind = el.tagName === "INPUT" ? el.type || "text" : el.tagName === "TEXTAREA" ? "textarea" : "text";
+    return { ref, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), kind, filled: !!("value" in el ? el.value : el.textContent) };
+  };
   let next: number = window.__bwNext || 1;
   const lines: string[] = [];
+  const fields: Field[] = [];
   const walk = (root: any) => {
     for (const el of root.querySelectorAll("*")) {
       if (el.shadowRoot) walk(el.shadowRoot);
@@ -83,6 +107,8 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
         el.setAttribute("data-bw-ref", ref);
       }
       lines.push(`[${ref}] ${describe(el)}`);
+      const f = field(el, ref);
+      if (f && fields.length < MAX_FIELDS) fields.push(f);
     }
   };
   walk(document);
@@ -93,7 +119,7 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
     .filter((l: string, i: number, all: string[]) => l || (i > 0 && all[i - 1]))
     .join("\n")
     .trim();
-  return { elements: lines, text, more: lines.length >= maxElements };
+  return { elements: lines, text, more: lines.length >= maxElements, fields };
 }
 
 /** What snapshot lists at most; view.ts shows fewer and says there are more. */
@@ -102,7 +128,7 @@ const SNAPSHOT_ELEMENTS = 400;
 /** The page now: { snap, title, url }, with a snap saying why when it can't be read. */
 export async function readPage(page: Page): Promise<{ snap: Snap; title: string; url: string }> {
   const [snap, title] = await Promise.all([
-    page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false })),
+    page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false, fields: [] })),
     page.title().catch(() => ""),
   ]);
   return { snap, title, url: page.url() };

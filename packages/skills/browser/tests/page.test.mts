@@ -9,11 +9,12 @@ import { call, post, site, skillDir, tabState } from "./harness.mts";
 
 const pageSource = () => fs.readFileSync(path.join(skillDir, "static", "pages", "tab.html"), "utf8");
 const handled = fs.readFileSync(path.join(skillDir, "src", "page.ts"), "utf8");
+const takeover = fs.readFileSync(path.join(skillDir, "src", "takeover.ts"), "utf8").match(/const EVENTS = [^\n]*/)![0];
 
 test("every event the page posts is one the skill applies", () => {
   const posted = [...pageSource().matchAll(/post\("([a-z-]+)"/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(posted)].sort(), ["login-delete", "need-answer", "need-cancel"]);
-  for (const ev of posted) assert.ok(handled.includes(`"${ev}"`), ev);
+  assert.deepEqual([...new Set(posted)].sort(), ["give", "login-delete", "nav", "need-answer", "need-cancel", "offer", "scroll", "size", "take", "tap", "type"]);
+  for (const ev of posted) assert.ok(handled.includes(`"${ev}"`) || takeover.includes(`"${ev}"`), ev);
 });
 
 test("every field the page reads from its state is one the skill writes", async () => {
@@ -25,7 +26,7 @@ test("every field the page reads from its state is one the skill writes", async 
   await call({ action: "read" }, opts);
   const state = tabState("drift");
   const html = pageSource();
-  for (const [, field] of html.matchAll(/\bs\.([a-z_]+)/g)) assert.ok(field === "closed" || field in state, `s.${field}`);
+  for (const [, field] of html.matchAll(/\bst\.([a-z_]+)/g)) assert.ok(field in state, `st.${field}`);
   assert.ok(state.need, "a need that couldn't be met stays");
   for (const [, field] of html.matchAll(/\bneed\.([a-zA-Z_]+)/g)) assert.ok(field in state.need, `need.${field}`);
 });

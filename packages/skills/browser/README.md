@@ -28,4 +28,6 @@ Each answer about the tab ends with its card, a picture of the tab that opens it
 
 `anythingllm-suite install` puts it in, over the lean `browser-lean` (its old files go; its logins, passkeys and keys are imported into the shared vault on the first call). Switch on Browser under Agent Skills, and set its ANYTHINGLLM_URL to the address you open AnythingLLM at, so the card opens anywhere. It needs AnythingLLM's Docker image (Chrome comes with its collector); elsewhere, set `BROWSER_LEAN_PUPPETEER` to a Puppeteer.
 
-Not yet: taking the tab over to tap and type on it, and passkeys (the lean browser's are imported and kept for then).
+On the tab's page the user can also take the tab over: tap, swipe to scroll, type into a field with their own keyboard (a password sealed on their device), go back or reload, then hand it back. The agent reads but doesn't act meanwhile, and a hold with no step for 10 minutes lapses. After the user signs in that way, the page offers to save the login.
+
+Passkeys: every tab has Chrome's virtual authenticator holding the saved passkeys, so a site's passkey sign-in works by itself. A passkey a site makes while the user holds the tab is offered for saving; one made while the agent has it is taken out again. The lean browser's passkeys are imported.

@@ -3,7 +3,9 @@
 // agent would, and drives the real Chrome of the collector's Puppeteer against a site this script
 // serves on 127.0.0.1 and localhost (FENCE_ALLOW lets them through): open and read a page, act on it, sign in with
 // the password given on the tab's page (sealed with the vault's key, posted as AnythingLLM's
-// collector writes it), and search and look at a stand-in search page.
+// collector writes it), take the tab over and sign in by tapping and typing, make a passkey while
+// holding the tab and sign in with it from another tab (the site checking its signature and count),
+// and search and look at a stand-in search page.
 // Prints "ok" or throws.
 const assert = require("assert");
 const crypto = require("crypto");
@@ -16,10 +18,62 @@ const PORT = 18090;
 const SITE = `http://127.0.0.1:${PORT}`;
 /** The same server under another name, for a search result that isn't on the engine's own site. */
 const DOCS = `http://localhost:${PORT}/docs`;
+/** The passkey page, on localhost: a secure context, so WebAuthn works over http. */
+const PASSKEYS = `http://localhost:${PORT}/pk`;
 
 const ImportedPlugin = require(`${APP}/utils/agents/imported.js`);
 
 const page = (title, body) => `<!doctype html><title>${title}</title><body>${body}</body>`;
+
+// The passkey page: Add a passkey makes one and sends its public key here; Sign in with a passkey
+// signs a challenge, which this server checks against that key and the count.
+const passkeys = { keys: new Map(), challenges: new Set(), log: [] };
+const PK_PAGE = page("Passkeys", `<button id="add" style="position:fixed;left:0;top:0;width:320px;height:80px">Add a passkey</button>
+<button id="in" style="position:fixed;left:0;top:100px;width:320px;height:80px">Sign in with a passkey</button><p id="out" style="margin-top:200px">Not signed in</p>
+<script>
+const b64 = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+const say = (t) => (document.getElementById("out").textContent = t);
+const to = (path, body) => fetch(path, { method: "POST", body: JSON.stringify(body) }).then((r) => r.text());
+document.getElementById("add").onclick = async () => {
+  try {
+    const c = await navigator.credentials.create({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), rp: { name: "Passkeys", id: location.hostname }, user: { id: new TextEncoder().encode("u1"), name: "anna", displayName: "Anna" }, pubKeyCredParams: [{ type: "public-key", alg: -7 }], authenticatorSelection: { residentKey: "required", userVerification: "required" } } });
+    say(await to("/pk/registered", { id: c.id, pub: b64(c.response.getPublicKey()) }));
+  } catch (e) { say("Passkey refused: " + e.name); }
+};
+document.getElementById("in").onclick = async () => {
+  try {
+    const challenge = await (await fetch("/pk/challenge")).text();
+    const a = await navigator.credentials.get({ publicKey: { challenge: Uint8Array.from(atob(challenge.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)), rpId: location.hostname, userVerification: "required" } });
+    say(await to("/pk/assert", { id: a.id, cd: b64(a.response.clientDataJSON), ad: b64(a.response.authenticatorData), sig: b64(a.response.signature) }));
+  } catch (e) { say("Passkey refused: " + e.name); }
+};
+</script>`);
+
+function passkeyRoute(url, body, res) {
+  if (url.pathname === "/pk") return res.end(PK_PAGE);
+  if (url.pathname === "/pk/challenge") {
+    const challenge = crypto.randomBytes(32).toString("base64url");
+    passkeys.challenges.add(challenge);
+    return res.end(challenge);
+  }
+  const sent = JSON.parse(body || "{}");
+  if (url.pathname === "/pk/registered") {
+    passkeys.keys.set(sent.id, { pub: sent.pub, count: 0 });
+    passkeys.log.push("registered");
+    return res.end("Passkey added");
+  }
+  const known = passkeys.keys.get(sent.id);
+  const cd = Buffer.from(sent.cd, "base64url");
+  const ad = Buffer.from(sent.ad, "base64url");
+  const client = JSON.parse(cd);
+  const signed = Buffer.concat([ad, crypto.createHash("sha256").update(cd).digest()]);
+  const key = known && crypto.createPublicKey({ key: Buffer.from(known.pub, "base64url"), format: "der", type: "spki" });
+  const count = ad.readUInt32BE(33);
+  const ok = !!key && passkeys.challenges.delete(client.challenge) && ad.subarray(0, 32).equals(crypto.createHash("sha256").update("localhost").digest()) && crypto.verify("sha256", signed, key, Buffer.from(sent.sig, "base64url")) && count > known.count;
+  if (ok) known.count = count;
+  passkeys.log.push(ok ? "signed in" : "refused");
+  res.end(ok ? `Signed in with a passkey, count ${count}` : "Refused");
+}
 const server = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
@@ -29,9 +83,11 @@ const server = http.createServer((req, res) => {
     if (url.pathname === "/login" && req.method === "POST") {
       const form = new URLSearchParams(body);
       if (form.get("user") === "ada" && form.get("pass") === "e2e-pass-123") return res.end(page("Home", "<p>Welcome, ada.</p>"));
+      if (form.get("user") === "bea" && form.get("pass") === "e2e-pass-456") return res.end(page("Home", "<p>Welcome, bea.</p>"));
       return res.end(page("Sign in", "<p>Wrong password.</p>"));
     }
     if (url.pathname === "/login") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><button>Sign in</button></form>'));
+    if (url.pathname.startsWith("/pk")) return passkeyRoute(url, body, res);
     if (url.pathname === "/search") return res.end(page("Search", `<div><a href="${SITE}/go?u=${encodeURIComponent(DOCS)}">Docs for ${url.searchParams.get("q")}</a> The docs</div>`));
     if (url.pathname === "/docs") return res.end(page("Docs", "<h1>Docs</h1><p>The export button is under Settings.</p>"));
     res.statusCode = 404;
@@ -43,9 +99,9 @@ const server = http.createServer((req, res) => {
   await new Promise((r) => server.listen(PORT, r));
   assert.ok(ImportedPlugin.validateImportedPluginHandler(HUB_ID), "the handler is where AnythingLLM looks");
   const plugin = ImportedPlugin.loadPluginByHubId(HUB_ID).plugin({ SEARCH_URL: `${SITE}/search?q={q}` });
-  const call = async (args) => {
+  const call = async (args, thread = 7) => {
     let fn;
-    const agent = { handlerProps: { invocation: { workspace: { slug: "e2e" }, thread_id: 7 }, log: (m) => console.error(m) }, introspect: () => {}, function: (def) => (fn = def) };
+    const agent = { handlerProps: { invocation: { workspace: { slug: "e2e" }, thread_id: thread }, log: (m) => console.error(m) }, introspect: () => {}, function: (def) => (fn = def) };
     plugin.setup(agent);
     assert.equal(fn.name, HUB_ID);
     return fn.handler.call(fn, args);
@@ -60,20 +116,79 @@ const server = http.createServer((req, res) => {
   assert.match(await call({ action: "act", do: "fill", ref: pass, text: "nope" }), /password field, which act never types into/);
   assert.match(await call({ action: "login", user_ref: user, pass_ref: pass, submit_ref: submit }), /The user is asked on the tab's page/);
 
+  // A thread's tab page: its settings, its state, and what it posts (written as AnythingLLM's
+  // collector writes an upload), each applied by the next call.
   const storage = process.env.STORAGE_DIR || `${APP}/storage`;
-  const { token } = JSON.parse(fs.readFileSync(`${storage}/browser-lean/e2e/tabs.json`, "utf8"))["7"];
-  const cfg = JSON.parse(fs.readFileSync(`${APP}/public/browser-lean/${token}.html`, "utf8").match(/const cfg = (\{.*?\});/)[1]);
-  assert.equal(JSON.parse(fs.readFileSync(`${APP}/public/browser-lean/${token}.json`, "utf8")).need.kind, "login");
-  const pub = crypto.createPublicKey({ key: Buffer.from(cfg.pub, "base64"), format: "der", type: "spki" });
-  const sealed = crypto.publicEncrypt({ key: pub, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from("e2e-pass-123")).toString("base64");
-  const events = `${storage}/documents/custom-documents`;
-  fs.mkdirSync(events, { recursive: true });
-  const event = { browser_lean_event: 1, workspace: "e2e", tab: "7", secret: cfg.secret, ev: "need-answer", user: "ada", sealed, save: true };
-  fs.writeFileSync(path.join(events, `raw-${cfg.title}-${crypto.randomUUID()}.json`), JSON.stringify({ pageContent: JSON.stringify(event) }));
-  const signedIn = await call({ action: "read" });
+  const tabPage = (thread) => {
+    const { token } = JSON.parse(fs.readFileSync(`${storage}/browser-lean/e2e/tabs.json`, "utf8"))[String(thread)];
+    const cfg = JSON.parse(fs.readFileSync(`${APP}/public/browser-lean/${token}.html`, "utf8").match(/const cfg = (\{.*?\});/)[1]);
+    const state = () => JSON.parse(fs.readFileSync(`${APP}/public/browser-lean/${token}.json`, "utf8"));
+    const seal = (text) => crypto.publicEncrypt({ key: crypto.createPublicKey({ key: Buffer.from(cfg.pub, "base64"), format: "der", type: "spki" }), padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(text)).toString("base64");
+    const events = `${storage}/documents/custom-documents`;
+    const post = async (...steps) => {
+      fs.mkdirSync(events, { recursive: true });
+      for (const step of steps) {
+        const event = { browser_lean_event: 1, workspace: "e2e", tab: String(thread), secret: cfg.secret, ...step };
+        fs.writeFileSync(path.join(events, `raw-${cfg.title}-${crypto.randomUUID()}.json`), JSON.stringify({ pageContent: JSON.stringify(event) }));
+        await new Promise((r) => setTimeout(r, 20)); // in order, as the page posts them
+      }
+      return call({ action: "read" }, thread);
+    };
+    return { state, seal, post };
+  };
+  const seven = tabPage(7);
+  assert.equal(seven.state().need.kind, "login");
+  const signedIn = await seven.post({ ev: "need-answer", user: "ada", sealed: seven.seal("e2e-pass-123"), save: true });
   assert.match(signedIn, /Page: Home/, signedIn);
   assert.match(signedIn, /Welcome, ada\./, "a username isn't a secret: only the password is hidden");
   assert.match(signedIn, /the login the user entered was saved for 127\.0\.0\.1, for next time/, "saved once the page no longer asks for a password");
+
+  // ---- The user takes a tab over: taps the user field, types into it and the password, sealed,
+  // then Enter; the page offers the login, they save it and hand the tab back.
+  const eight = await call({ action: "open", url: `${SITE}/login` }, 8);
+  const tab8 = tabPage(8);
+  assert.match(await tab8.post({ ev: "take" }), /^The user has taken this tab over/);
+  assert.match(await call({ action: "act", do: "click", ref: eight.match(/\[(e\d+)\] button "Sign in"/)[1] }, 8), /^Browser: the user has taken the tab over/);
+  const fields = tab8.state().fields;
+  const [userField, passField] = [fields.find((f) => f.kind === "text"), fields.find((f) => f.kind === "password")];
+  assert.ok(userField && passField, `the fields in view: ${JSON.stringify(fields)}`);
+  await tab8.post({ ev: "tap", x: userField.x + 5, y: userField.y + 5 }, { ev: "type", ref: userField.ref, text: "bea", then: "Tab" }, { ev: "type", ref: passField.ref, sealed: tab8.seal("e2e-pass-456"), then: "Enter" });
+  const offered = tab8.state();
+  assert.equal(offered.title, "Home", "Enter sent the form");
+  assert.deepEqual(offered.offer, { kind: "password", site: "127.0.0.1", user: "bea" });
+  await tab8.post({ ev: "offer", save: true });
+  assert.ok(tab8.state().logins.some((l) => l.user === "bea"), "saved");
+  const handedBack = await tab8.post({ ev: "give" });
+  assert.match(handedBack, /handed it back to you/);
+  assert.match(handedBack, /Welcome, •••\./, "what the user typed is hidden from the agent");
+  assert.equal(tab8.state().who, "agent");
+
+  // ---- Passkeys: one the page makes while the agent has the tab is taken out again; one made
+  // while the user holds it is offered and saved, and signs in from another tab, the site checking
+  // its signature and count; deleted, it signs in no more.
+  const said = (reply) => reply.match(/Not signed in|Passkey added|Signed in with a passkey, count \d+|Passkey refused: \w+|Refused/)?.[0];
+  const nine = await call({ action: "open", url: PASSKEYS }, 9);
+  const add = nine.match(/\[(e\d+)\] button "Add a passkey"/)[1];
+  const byAgent = (await call({ action: "act", do: "click", ref: add }, 9)) + (await call({ action: "read" }, 9));
+  assert.match(byAgent, /made a passkey for localhost while you had the tab, and it was taken out again/, byAgent);
+  const tab9 = tabPage(9);
+  await tab9.post({ ev: "take" }, { ev: "tap", x: 20, y: 20 });
+  for (let i = 0; !tab9.state().offer && i < 20; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(tab9.state().offer, { kind: "passkey", site: "localhost", user: "" });
+  await tab9.post({ ev: "offer", save: true }, { ev: "give" });
+  assert.ok(tab9.state().logins.some((l) => l.kind === "passkey" && l.site === "localhost"));
+
+  const ten = await call({ action: "open", url: PASSKEYS }, 10);
+  const signIn = ten.match(/\[(e\d+)\] button "Sign in with a passkey"/)[1];
+  const read10 = async () => (await call({ action: "act", do: "click", ref: signIn }, 10)) + (await new Promise((r) => setTimeout(r, 300)), await call({ action: "read" }, 10));
+  const first = await read10();
+  assert.match(first, /Signed in with a passkey, count \d+/, first);
+  assert.match(first, /the page signed in with the passkey saved for localhost/);
+  assert.match(await read10(), /Signed in with a passkey, count \d+/, "the count went forward, so the site takes it again");
+  const tab10 = tabPage(10);
+  await tab10.post({ ev: "login-delete", id: tab10.state().logins.find((l) => l.kind === "passkey").id });
+  assert.match(await read10(), /Passkey refused: NotAllowedError/, "deleted, it signs in no more");
+  assert.deepEqual(passkeys.log, ["registered", "registered", "signed in", "signed in"]);
 
   const found = await call({ action: "search", query: "export" });
   assert.match(found, /1\. Docs for export\n {3}http:\/\/localhost:\d+\/docs/, found);

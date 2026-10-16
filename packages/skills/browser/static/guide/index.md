@@ -4,5 +4,5 @@ Topics (guide with topic):
 - `route`: picking the way to do a task.
 - `research`: finding out how a service works.
 - `browser`: clicking through a site well.
-- `logins`: signing in, and codes, which only the user gives.
+- `logins`: signing in, codes and passkeys, which only the user gives, and handing the tab over to them.
 - `safety`: what never to do.
