@@ -1,0 +1,17 @@
+<!--part
+{"name":"date-grid","line":"four weeks of days to tap","schema":{"type":"object","required":["days"],"properties":{"days":{"type":"object","maxProperties":4000,"additionalProperties":{"type":"boolean"}}}},"data":{"days":{}},"events":["mark","unmark"]}
+-->
+<div class="days" data-part="date-grid"></div>
+<script>
+App.mount("date-grid", ({ root, at }) => () => {
+  const days = App.get(at + "/days"), noon = new Date(); noon.setUTCHours(12, 0, 0, 0);
+  root.replaceChildren(...Array.from({ length: 28 }, (_, i) => {
+    const d = new Date(+noon - (27 - i) * 864e5), day = d.toISOString().slice(0, 10), on = !!days[day];
+    const b = el("button", { type: "button", textContent: d.getUTCDate(), ariaLabel: day });
+    b.setAttribute("aria-pressed", on);
+    b.onclick = () => App.patch([on ? { op: "remove", path: `${at}/days/${day}` } : { op: "add", path: `${at}/days/${day}`, value: true }],
+      { ev: on ? "unmark" : "mark", day });
+    return b;
+  }));
+});
+</script>

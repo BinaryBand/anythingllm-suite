@@ -1,0 +1,29 @@
+<!--part
+{"name":"item-list","line":"a list to add to, tick off","schema":{"type":"object","required":["items"],"properties":{"items":{"type":"array","maxItems":500,"items":{"type":"object","required":["text","done"],"properties":{"text":{"type":"string","maxLength":200},"done":{"type":"boolean"}}}}}},"events":["add","tick","untick"]}
+-->
+<div class="stack" data-part="item-list">
+<form class="row" data-ref="add"><input class="grow" data-ref="new" placeholder="Add an item"><button type="submit">Add</button></form>
+<ul class="items" data-ref="items"></ul>
+<p class="empty" data-ref="none">Nothing yet. Add the first item above.</p>
+</div>
+<script>
+App.mount("item-list", ({ at, q }) => {
+  q("add").onsubmit = (e) => {
+    e.preventDefault();
+    const text = q("new").value.trim();
+    q("new").value = "";
+    if (text) App.patch([{ op: "add", path: at + "/items/-", value: { text, done: false } }], { ev: "add", text });
+  };
+  return () => {
+    const items = App.get(at + "/items");
+    q("none").hidden = items.length > 0;
+    q("items").replaceChildren(...items.map((it, i) => {
+      const p = `${at}/items/${i}/`, box = el("input", { type: "checkbox", checked: it.done }), label = el("label");
+      box.onchange = () => App.patch([{ op: "test", path: p + "text", value: it.text },
+        { op: "replace", path: p + "done", value: !it.done }], { ev: it.done ? "untick" : "tick", text: it.text });
+      label.append(box, el("span", { textContent: it.text, className: it.done ? "done" : "" }));
+      return el("li").appendChild(label).parentNode;
+    }));
+  };
+});
+</script>

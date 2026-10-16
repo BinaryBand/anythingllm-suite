@@ -1,0 +1,14 @@
+<!--part
+{"name":"tabs","line":"switch views; nothing stored"}
+-->
+<div class="row" role="tablist" id="tabs"><button type="button" role="tab" aria-selected="true" data-show="one">One</button><button type="button" role="tab" aria-selected="false" data-show="two">Two</button></div>
+<section data-tab="one">The first view.</section>
+<section data-tab="two" hidden>The second view.</section>
+<script>
+$("tabs").onclick = (e) => {
+  const tab = e.target.closest("[data-show]");
+  if (!tab) return;
+  for (const t of $("tabs").children) t.setAttribute("aria-selected", t === tab);
+  for (const s of document.querySelectorAll("[data-tab]")) s.hidden = s.dataset.tab !== tab.dataset.show;
+};
+</script>

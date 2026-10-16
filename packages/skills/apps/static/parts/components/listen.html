@@ -1,0 +1,41 @@
+<!--part
+{"name":"listen","line":"reads the page aloud in the device's own voice: a briefing, a walkthrough","events":[]}
+-->
+<div class="row" data-part="listen">
+<button type="button" class="primary" data-ref="play">Listen</button>
+<button type="button" data-ref="speed" aria-label="Reading speed">1×</button>
+<small data-ref="note" hidden></small>
+</div>
+<script>
+// Reads [data-say] blocks, else main's headings, paragraphs and list items, a sentence at a time.
+App.mount("listen", ({ root, q }) => {
+  const speech = window.speechSynthesis, rates = [1, 1.25, 1.5, 0.75];
+  let rate = 0, queue = [];
+  const off = (text) => ((q("play").hidden = q("speed").hidden = true), Object.assign(q("note"), { hidden: false, textContent: text }));
+  if (!speech || !window.SpeechSynthesisUtterance) return off("Reading aloud needs Chrome or Safari.");
+  setTimeout(() => speech.getVoices().length || off("This device has no voice to read with."), 1500);
+  const mark = (b) => { document.querySelectorAll(".saying").forEach((x) => x.classList.remove("saying")); b?.classList.add("saying"); };
+  const stop = () => ((queue = []), speech.cancel(), mark(null), (q("play").textContent = "Listen"));
+  const next = () => {
+    const item = queue.shift();
+    if (!item) return stop();
+    const u = new SpeechSynthesisUtterance(item.text);
+    u.rate = rates[rate];
+    u.lang = document.documentElement.lang || "";
+    u.onstart = () => mark(item.block);
+    u.onend = u.onerror = next; // a stop empties the queue, so the next call stops too
+    speech.speak(u);
+  };
+  q("play").onclick = () => {
+    if (queue.length) return stop();
+    const named = [...document.querySelectorAll("[data-say]")];
+    const blocks = (named.length ? named : [...document.querySelectorAll("main h1, main h2, main h3, main p, main li")]).filter((b) => !root.contains(b) && b.offsetParent && b.textContent.trim());
+    queue = blocks.flatMap((block) => (block.textContent.match(/[^.!?]+[.!?]*/g) || []).map((s) => ({ block, text: s.trim() }))).filter((s) => s.text);
+    if (!queue.length) return;
+    q("play").textContent = "Stop";
+    next();
+  };
+  q("speed").onclick = () => (q("speed").textContent = rates[(rate = (rate + 1) % rates.length)] + "×");
+  document.addEventListener("visibilitychange", () => document.hidden && stop());
+});
+</script>

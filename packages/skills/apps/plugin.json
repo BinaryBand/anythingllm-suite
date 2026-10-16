@@ -1,0 +1,114 @@
+{
+  "active": true,
+  "hubId": "apps-lean",
+  "name": "Apps",
+  "schema": "skill-1.0.0",
+  "version": "0.20.0",
+  "description": "Use for anything the user wants to keep, track, tick off, time or review across chats, and for an explainer or walkthrough to page through: small apps in this workspace, each with its own page. Start with list: it names the apps and how to make a new one. read gives an app's data and newest changes. A data change is a do: a JSON patch with ev; test a list item before patching it by place. edit changes app.json or page.html. undo takes back the newest change. Follow app.json's rules; the user's words beat the design rules. page gives an app's page: the card's title is the link. Put any Card in your reply exactly as given.",
+  "author": "anythingllm-suite",
+  "license": "UNLICENSED",
+  "imported": true,
+  "examples": [
+    {
+      "prompt": "Start a packing list for the trip",
+      "call": "{\"action\": \"create\", \"name\": \"packing\", \"title\": \"Packing for Gothenburg\", \"starter\": \"checklist\"}"
+    },
+    {
+      "prompt": "(after guide) a water tracker with a day grid",
+      "call": "{\"action\": \"create\", \"name\": \"water\", \"title\": \"Water\", \"template\": \"column\", \"parts\": [\"counter\", \"date-grid\"]}"
+    },
+    {
+      "prompt": "Put oat milk on the groceries list",
+      "call": "{\"action\": \"do\", \"name\": \"groceries\", \"ev\": \"add\", \"fields\": {\"text\": \"Oat milk\"}, \"patch\": [{\"op\": \"add\", \"path\": \"/items/-\", \"value\": {\"text\": \"Oat milk\", \"done\": false}}]}"
+    },
+    {
+      "prompt": "Open the groceries list",
+      "call": "{\"action\": \"page\", \"name\": \"groceries\"}"
+    }
+  ],
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {
+        "description": "list, create, read, do, undo, page, edit, delete or guide.",
+        "type": "string"
+      },
+      "name": {
+        "description": "The app's name, e.g. groceries.",
+        "type": "string"
+      },
+      "workspace": {
+        "description": "Scheduled job only: the app's workspace.",
+        "type": "string"
+      },
+      "title": {
+        "description": "For create: the title.",
+        "type": "string"
+      },
+      "starter": {
+        "description": "For create: a starter, a whole app and page.",
+        "type": "string"
+      },
+      "template": {
+        "description": "For create without a starter: a template; column by default.",
+        "type": "string"
+      },
+      "parts": {
+        "description": "For create: components to compose in; {\"each\": \"habits\", \"parts\": [...]} repeats per item.",
+        "type": "array"
+      },
+      "plan": {
+        "description": "For create without a starter: what it keeps, needs from outside, time, what can't be tested.",
+        "type": "string"
+      },
+      "data": {
+        "description": "For create: the first data; with a starter, the keys it replaces.",
+        "type": "object"
+      },
+      "patch": {
+        "description": "For do: a JSON patch (RFC 6902) on the data.",
+        "type": "array"
+      },
+      "ev": {
+        "description": "For do: what happened.",
+        "type": "string"
+      },
+      "fields": {
+        "description": "For do: what it was, e.g. {\"text\": \"Eggs\"}.",
+        "type": "object"
+      },
+      "file": {
+        "description": "app.json or page.html: read gives it; undo takes back its newest change.",
+        "type": "string"
+      },
+      "text": {
+        "description": "edit: what replaces find, or the whole file when there is no find. create: app.json.",
+        "type": "string"
+      },
+      "find": {
+        "description": "For edit: text found exactly once; none replaces the whole file.",
+        "type": "string"
+      },
+      "ask": {
+        "description": "edit or do: the page's ask it does; cleared once done.",
+        "type": "string"
+      },
+      "query": {
+        "description": "guide: topics by name, several at once.",
+        "type": "string"
+      }
+    }
+  },
+  "setup_args": {
+    "ANYTHINGLLM_URL": {
+      "type": "string",
+      "required": false,
+      "input": {
+        "type": "text",
+        "default": "",
+        "placeholder": "https://my-server:3001",
+        "hint": "The address your browser and phone reach AnythingLLM at. App pages save taps there."
+      }
+    }
+  }
+}

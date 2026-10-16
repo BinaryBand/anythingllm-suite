@@ -1,0 +1,8 @@
+<!--part
+{"name":"stat","line":"a big number worked out from data","schema":{"type":"object","required":["items"],"properties":{"items":{"type":"array","maxItems":500,"items":{"type":"object","required":["text","done"],"properties":{"text":{"type":"string","maxLength":200},"done":{"type":"boolean"}}}}}},"data":{"items":[{"text":"Eggs","done":true}]}}
+-->
+<div class="card stack center" data-part="stat"><span class="big" data-ref="stat"></span><small>done</small></div>
+<script>
+// Work the number out here; it is never stored.
+App.mount("stat", ({ at, q }) => () => (q("stat").textContent = App.get(at + "/items").filter((i) => i.done).length));
+</script>

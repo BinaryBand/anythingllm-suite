@@ -1,0 +1,11 @@
+<!--part
+{"name":"pager","line":"a deck of screens, one at a time","schema":{"type":"object","required":["screens"],"properties":{"screens":{"type":"array","maxItems":30,"items":{"type":"object","required":["text"],"properties":{"kicker":{"type":"string","maxLength":40},"text":{"type":"string","maxLength":280},"sub":{"type":"string","maxLength":160},"figure":{"type":"object"},"code":{"type":"string","maxLength":600},"lines":{"type":"array","maxItems":8,"items":{"type":"object","required":["text"],"properties":{"text":{"type":"string","maxLength":80},"note":{"type":"string","maxLength":120},"tag":{"type":"string","maxLength":16},"tone":{"enum":["ok","no"]}}}},"numbered":{"type":"boolean"},"tree":{"type":"array","maxItems":16,"items":{"type":"object","required":["path"],"properties":{"path":{"type":"string","maxLength":120},"note":{"type":"string","maxLength":60},"text":{"type":"string","maxLength":600}}}}}}},"sources":{"type":"array","maxItems":12,"items":{"type":"object","required":["title"],"properties":{"title":{"type":"string","maxLength":120},"url":{"type":"string","maxLength":500},"note":{"type":"string","maxLength":120}}}}}},"data":{"screens":[{"kicker":"Today","text":"One idea per *screen*.","sub":"The first screen is the thesis; the last sums up."},{"kicker":"How","text":"Read, then tap Continue.","figure":{"kind":"flow","items":["read","tap","next"]}}],"sources":[]},"template":"story"}
+-->
+<script src="parts.js"></script>
+<div data-part="pager"></div>
+<script>
+App.mount("pager", ({ root, at }) => {
+  const draw = Parts.deck(root);
+  return () => draw({ title: App.title, screens: App.get(at + "/screens"), sources: App.get(at + "/sources") });
+});
+</script>
