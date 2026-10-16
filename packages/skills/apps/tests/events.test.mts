@@ -4,7 +4,17 @@ import path from "node:path";
 import { test } from "node:test";
 import { definitionFor, eventsDir, post, publicDir, root } from "./harness.mts";
 import { caughtUp, collect, keepWatching, MOST_AT_ONCE, news, NEWS_KEPT, TRIES, upgrade, versionOf } from "../src/page.ts";
+import { perProcess } from "#shared/anythingllm";
+import { compose, template } from "../src/parts.ts";
 import * as store from "../src/store.ts";
+
+const listPage = () => compose(template("column"), "item-list");
+const key = async () => "brx-k";
+/** upgrade, as a new process runs it. */
+const upgradeAgain = () => {
+  perProcess("apps.upgraded", () => ({ at: "" })).at = "";
+  return upgrade(key);
+};
 
 /** What a page posts for `app`: its event with the app's secret, as the page has it. */
 const from = (workspace: string, app: string, event: Record<string, unknown>) => post({ workspace, app, secret: store.read(workspace, app).secret, ...event });
@@ -145,12 +155,12 @@ test("an event that meets something passing is put back and tried again, at most
 
 test("once a process, pages from an older skill are written again, with a secret, and the old font goes", async () => {
   await store.create("home", "stale", { ...definitionFor("list", { title: "Stale" }) });
-  await store.mark("home", "stale", { pageToken: "tok-stale", version: "old", secret: undefined, page: (await import("../src/parts.ts")).compose((await import("../src/parts.ts")).template("column"), "item-list") });
+  await store.mark("home", "stale", { pageToken: "tok-stale", version: "old", secret: undefined, page: listPage() });
   fs.mkdirSync(path.join(publicDir, "_apps", "fonts"), { recursive: true });
   fs.writeFileSync(path.join(root, ".managers.json"), JSON.stringify({ cloud: { token: "tok-manager" } }));
   fs.mkdirSync(path.join(publicDir, "apps-lean"), { recursive: true });
   fs.writeFileSync(path.join(publicDir, "apps-lean", "tok-manager.html"), "<p>manager</p>");
-  await upgrade(async () => "brx-k");
+  await upgradeAgain();
   const app = store.read("home", "stale");
   assert.ok(app.secret);
   assert.equal(app.version, versionOf(app));
@@ -159,7 +169,18 @@ test("once a process, pages from an older skill are written again, with a secret
   assert.ok(!fs.existsSync(path.join(publicDir, "apps-lean", "tok-manager.html")));
 });
 
-const key = async () => "brx-k";
+test("once a process, a page gone from the public folder is written again", async () => {
+  await store.create("home", "wiped", { ...definitionFor("list", { title: "Wiped" }) });
+  const page = path.join(publicDir, "apps-lean", "tok-wiped.html");
+  await store.mark("home", "wiped", { pageToken: "tok-wiped", page: listPage() });
+  await upgradeAgain();
+  assert.ok(fs.existsSync(page));
+  const version = store.read("home", "wiped").version;
+  fs.rmSync(page);
+  await upgradeAgain();
+  assert.ok(fs.existsSync(page), "written again though its version is this one's");
+  assert.equal(store.read("home", "wiped").version, version);
+});
 
 test("what pages did is kept for each workspace's next chat call, said once, the newest NEWS_KEPT lines", async () => {
   await store.create("home", "noted", definitionFor("list", { title: "Noted" }));

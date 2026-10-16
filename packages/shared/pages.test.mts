@@ -49,11 +49,15 @@ test("an event another process claimed (renamed) first isn't taken again", () =>
   assert.deepEqual(take("c"), [{ n: 2 }]);
 });
 
-test("an event put back is taken again by the next pass", () => {
+test("an event put back is taken again by the next pass, ahead of those posted since, in its order", () => {
   posted("c", { n: 1 });
   const [event] = take("c");
   putBack("c", event);
   assert.deepEqual(take("c"), [{ n: 1 }]);
+  posted("c", { n: 3 });
+  putBack("c", { n: 1 });
+  putBack("c", { n: 2 });
+  assert.deepEqual(take("c"), [{ n: 1 }, { n: 2 }, { n: 3 }]);
 });
 
 test("a file still being written waits; one that stays unreadable is dropped as null", () => {

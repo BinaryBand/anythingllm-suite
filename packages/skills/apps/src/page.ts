@@ -224,6 +224,10 @@ export async function collect(): Promise<Result[]> {
   return rows.map((row) => row.answer!);
 }
 
+/** Whether `app`'s page is as this skill would write it, and still there: a public folder can be
+ *  emptied, as a container's own is when the container is made again. */
+const current = (app: Json): boolean => !!app.secret && app.version === versionOf(app) && fs.existsSync(path.join(publicDir(), pageFile(app.pageToken)));
+
 /** Once per process: writes again every page an older skill or older parts wrote (a page of an
  *  app with no secret yet gets one first), and removes what earlier editions left in the public
  *  folder: the font, and the 0.19 branch's manager pages. */
@@ -238,7 +242,7 @@ export async function upgrade(key: () => Promise<string> = keyForPages): Promise
   } catch {}
   for (const workspace of store.workspaces())
     for (const app of store.list(workspace)) {
-      if (app.broken || !app.pageToken || (app.secret && app.version === versionOf(app))) continue;
+      if (app.broken || !app.pageToken || current(app)) continue;
       try {
         await publish(app.secret ? app : await store.withSecret(workspace, app.name), workspace, key);
       } catch {}

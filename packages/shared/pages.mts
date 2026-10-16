@@ -109,6 +109,10 @@ export function take(title: string): unknown[] {
   // recent isn't trusted to mean nothing came.
   if (!names.length) return void (Date.now() - at > RECENT_MS && empty.set(title, at)), [];
   empty.delete(title);
+  // What putBack put back goes first, in the order it was put back (its name says when), so a
+  // page's events keep their order; the rest by when they landed.
+  const again = `raw-${title}-again-`;
+  const order = (f: { file: string; at: number }): number => (path.basename(f.file).startsWith(again) ? 0 : f.at);
   const files = names
     .map((n) => {
       const file = path.join(eventsDir(), n);
@@ -119,7 +123,7 @@ export function take(title: string): unknown[] {
       }
     })
     .filter((f): f is { file: string; at: number } => f !== null)
-    .sort((a, b) => a.at - b.at || a.file.localeCompare(b.file));
+    .sort((a, b) => order(a) - order(b) || a.file.localeCompare(b.file));
   const events: unknown[] = [];
   for (const { file, at } of files) {
     let posted: unknown = null;
@@ -141,9 +145,13 @@ export function take(title: string): unknown[] {
 }
 
 /** Puts `event` back among those waiting for `title`, as AnythingLLM's collector writes what a page
- *  posted, for a later pass to take: one that met something passing, such as a lock held too long. */
+ *  posted, for a later pass to take ahead of what pages posted since: one that met something
+ *  passing, such as a lock held too long. */
 export function putBack(title: string, event: unknown): void {
-  writeAtomic(path.join(eventsDir(), `raw-${title}-again-${crypto.randomUUID()}.json`), JSON.stringify({ pageContent: JSON.stringify(event) }), 0o600);
+  // A millisecond of its own in this process, so its name sorts after what was put back before it.
+  const stamp = perProcess("pages.putBack", () => ({ last: 0 }));
+  stamp.last = Math.max(stamp.last + 1, Date.now());
+  writeAtomic(path.join(eventsDir(), `raw-${title}-again-${stamp.last}-${process.pid}.json`), JSON.stringify({ pageContent: JSON.stringify(event) }), 0o600);
 }
 
 type Watch = { pass: () => Promise<void>; until: () => number; queued: boolean; seen: number; dir: number; watcher?: fs.FSWatcher; timer?: NodeJS.Timeout; stop: () => void };
