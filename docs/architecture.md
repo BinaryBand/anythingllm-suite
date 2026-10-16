@@ -9,7 +9,7 @@ flowchart LR
         subgraph allm["AnythingLLM :3001 (a container, or Desktop)"]
             storage["storage: anythingllm-suite/control.cjs, plugins/anythingllm_mcp_servers.json, plugins/agent-skills/"]
             control["packages/control (an MCP server over stdio)"]
-            skills["packages/skills (library, browser, notebook)"]
+            skills["packages/skills (library, browser, notebook, apps)"]
         end
     end
     allm -- "starts it with node, its env holding AUTH_TOKEN" --> control
