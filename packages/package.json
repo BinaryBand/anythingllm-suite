@@ -7,10 +7,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "shared:test": "node --test \"shared/*.test.mts\" \"*.test.mts\"",
-    "bridge:test": "node build.mjs bridge && node --test \"bridge/tests/*.test.mts\"",
-    "control:test": "node build.mjs control && node --test \"control/tests/*.test.mts\"",
-    "skills:test": "node build.mjs skills && node --test \"skills/*/tests/*.test.mts\""
+    "shared:test": "node --test --test-timeout=120000 \"shared/*.test.mts\" \"*.test.mts\"",
+    "bridge:test": "node build.mjs bridge && node --test --test-timeout=120000 \"bridge/tests/*.test.mts\"",
+    "control:test": "node build.mjs control && node --test --test-timeout=120000 \"control/tests/*.test.mts\"",
+    "skills:test": "node build.mjs skills && node --test --test-timeout=120000 \"skills/*/tests/*.test.mts\""
   },
   "devDependencies": {
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",

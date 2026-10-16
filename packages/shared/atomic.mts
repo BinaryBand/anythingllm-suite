@@ -30,6 +30,8 @@ const LOCK_WAIT_MS = 5 * 1000;
 const LOCK_STALE_MS = 10 * 1000;
 const LOCK_RETRY_MS = 20;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** mkdir's answer for a lock folder that's there, or (Windows) still being removed. */
+const busy = (code?: string) => code === "EEXIST" || (process.platform === "win32" && (code === "EPERM" || code === "EACCES"));
 
 /** Runs `fn` holding the lock folder `lock`: one process at a time (the folder is made, or waited
  *  for), and in this process one call at a time. `fn` should be quick and do no network, so the
@@ -39,21 +41,18 @@ export function locked<T>(lock: string, what: string, fn: () => T | Promise<T>):
   return serial(`lock:${lock}`, async () => {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     const until = Date.now() + LOCK_WAIT_MS;
+    // Every try but the one that takes it waits a little: on Windows a folder being removed can
+    // refuse both mkdir and stat for a while, which mustn't spin.
     for (;;) {
       try {
         fs.mkdirSync(lock);
         break;
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        if (!busy((e as NodeJS.ErrnoException).code)) throw e;
       }
       try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          fs.rmSync(lock, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        continue; // released meanwhile
-      }
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.rmSync(lock, { recursive: true, force: true });
+      } catch {} // released meanwhile, or still being removed
       if (Date.now() > until) throw new Told(`${what} is busy; try again in a moment`);
       await sleep(LOCK_RETRY_MS);
     }
