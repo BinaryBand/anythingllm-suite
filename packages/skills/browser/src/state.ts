@@ -82,6 +82,8 @@ export interface Entry {
   notes: Map<string, string[]>;
   needs: Map<string, Need>;
   offers: Map<string, Offer>;
+  /** A line for a tab's page that outlasts one write of its state (page.ts notice). */
+  notices: Map<string, { text: string; until: number }>;
   /** The tabs the user holds. */
   holds: Map<string, Hold>;
   /** The screen each tab's page asked for, given to every page the tab has. */

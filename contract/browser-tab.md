@@ -42,7 +42,7 @@ Read `<token>.json` with a query that changes (`?t=<now>`) or no cache: it's rew
 | `fields` | array | the fields in view, only while the user holds the tab |
 | `need` | object or null | what the agent asked the user to enter (below) |
 | `offer` | object or null | a login or passkey the page offers to save: `{kind, site, user}` |
-| `msg` | string or null | a line for the page to show once ("Login deleted") |
+| `msg` | string or null | a line for the page to show once, though it may stay in the state for up to a minute ("Login deleted"; a login the site seems to have refused) |
 | `logins` | array | the saved logins and passkeys: `{id, site, user, kind, here}`, no secret |
 
 A closed tab's state is `{"closed": true}`, and its other files are gone.
@@ -58,7 +58,7 @@ A closed tab's state is `{"closed": true}`, and its other files are gone.
 | `hasUser` | boolean | for a login: whether a username is asked for too |
 | `until` | number | when the request lapses, ms since 1970 (10 minutes after it was made) |
 
-`need` goes back to null once the answer is typed, the user cancels, or it lapses.
+`need` goes back to null once the answer is typed, the user cancels, or it lapses. When the site still shows the same field after an answer was submitted (a login or code it likely refused), the request is made again with a `text` that says so.
 
 ## Answering, as the page does
 

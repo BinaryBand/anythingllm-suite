@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { call as called, post, publicDir, seal, site, skillDir, storage, tabState, world } from "./harness.mts";
+import { call as called, post, publicDir, seal, site, skillDir, storage, tabConfig, tabState, world } from "./harness.mts";
 
 const LOGIN = "https://login.example/";
 site(LOGIN, {
@@ -197,4 +197,32 @@ test("a workspace's cookies are kept in the vault and given back, and Chrome's p
     [["cart", "c-1", false, false], ["sid", "s-123", true, false]],
     "unexpired, unpartitioned, as setCookies takes them",
   );
+});
+
+test("a login the site seems to refuse is said on the tab's page and asked again, and not saved", async () => {
+  site("https://strict.example/", { title: "Sign in", fields: { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } } });
+  const call = (args: Record<string, unknown>) => called(args, { workspace: "strict" });
+  await call({ action: "open", url: "https://strict.example/" });
+  await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
+  const first = tabState("strict").need.until;
+  post({ ev: "need-answer", user: "ada@example.com", sealed: seal("wrong-pw-1", tabConfig("strict").pub), save: true }, { workspace: "strict" });
+  const after = await call({ action: "read" });
+  assert.match(after, /e3 clicked, but the page still asks for a password: the site may have refused it\. The user is asked again on the tab's page/);
+  assert.equal(tabState("strict").need.kind, "login", "asked again");
+  assert.equal(tabState("strict").need.text, "strict.example still asks for a password: it may not have been accepted. Check it and enter it again", "and told why, on the request itself");
+  assert.ok(tabState("strict").need.until >= first);
+  site("https://strict.example/about", { title: "About", text: "About us" });
+  await call({ action: "open", url: "https://strict.example/about" }); // on its site, no password asked: where an agreed login is kept
+  assert.ok(!tabState("strict").logins.some((l: { site: string }) => l.site === "strict.example"), "the refused login isn't saved");
+
+  // A sign-in page that comes back as a new page, its fields new: said, but not asked again by itself.
+  site("https://retry.example/", { title: "Sign in", fields: { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } }, onclick: { e3: "https://retry.example/again" } });
+  site("https://retry.example/again", { title: "Try again", text: "Wrong password.", fields: { e7: { type: "password", name: "Password" } } });
+  const other = (args: Record<string, unknown>) => called(args, { workspace: "retry" });
+  await other({ action: "open", url: "https://retry.example/" });
+  await other({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
+  post({ ev: "need-answer", user: "ada@example.com", sealed: seal("wrong-pw-2", tabConfig("retry").pub) }, { workspace: "retry" });
+  assert.match(await other({ action: "read" }), /the page still asks for a password: the site may have refused it\. Read the page, tell the user, and use login again/);
+  assert.match(tabState("retry").msg, /Take the tab over to try again, or ask the agent to\./, "kept past the agent's own read");
+  assert.equal(tabState("retry").need, null);
 });

@@ -30,6 +30,16 @@ const TITLE = "browser-lean-event";
 const WATCH_MS = 30 * 60 * 1000;
 /** How long the agent's request for a login or a code waits on the page. */
 export const NEED_MS = 10 * 60 * 1000;
+/** How long a notice stays in a tab's state: past the next few writes, so the page doesn't miss it. */
+const NOTICE_MS = 60 * 1000;
+
+/** The tab's notice, while it lasts. */
+function notice(entry: Entry, key: string): string | null {
+  const kept = entry.notices.get(key);
+  if (kept && kept.until > Date.now()) return kept.text;
+  entry.notices.delete(key);
+  return null;
+}
 const QUALITY = 70;
 /** A tab's files: its picture, the card's crop, its state and its page. */
 const ENDINGS = [".jpg", "-card.jpg", ".json", ".html"];
@@ -108,7 +118,7 @@ function tabState(at: Tab, title: string, url: string, snap: Snap) {
     fields: held ? snap.fields : [],
     need: need ? { kind: need.kind, host: need.host, text: need.text, label: need.label ?? null, hasUser: !!need.userRef, until: need.until } : null,
     offer: takeover.shownOffer(at.entry, at.key),
-    msg: at.msg ?? null,
+    msg: at.msg ?? notice(at.entry, at.key),
     logins: logins.list().map((l) => ({ ...l, here: onSite(host, l.site) })),
   };
 }
@@ -197,8 +207,42 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   at.entry.needs.delete(at.key);
   await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, secret }, need.submitRef);
   if (login && need.userRef && e.save === true) at.entry.offers.set(at.key, { kind: "password", site: need.host, user, pass: secret, agreed: true, until: Date.now() + OFFER_MS });
-  note(at.entry, at.key, `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page${need.submitRef ? ` and ${need.submitRef} clicked` : ", but nothing was submitted: submit it with act (press Enter in the field, or click the button)"}; it stays hidden from you. Read the page to see whether it worked`);
+  const what = login ? "the login" : "the code";
+  const typed = `the user entered ${what} you asked for on the tab's page and it was typed into the page`;
+  if (!need.submitRef) {
+    note(at.entry, at.key, `${typed}, but nothing was submitted: submit it with act (press Enter in the field, or click the button); it stays hidden from you. Read the page to see whether it worked`);
+    return true;
+  }
+  const asking = await stillAsks(at, need);
+  if (!asking) {
+    note(at.entry, at.key, `${typed} and ${need.submitRef} clicked; it stays hidden from you. Read the page to see whether it worked`);
+    return true;
+  }
+  // The site still asks for it: likely refused. The user hears it on the page they're looking at, a
+  // login they asked to save isn't (it would be kept at the next read without a password field), and
+  // where the same field is still there they're asked again.
+  at.entry.offers.delete(at.key);
+  const it = login ? "a password" : "the code";
+  if (asking === "same") {
+    at.entry.needs.set(at.key, { ...need, text: `${need.host} still asks for ${it}: it may not have been accepted. Check it and enter it again`, until: Date.now() + NEED_MS });
+    note(at.entry, at.key, `${typed} and ${need.submitRef} clicked, but the page still asks for ${it}: the site may have refused it. The user is asked again on the tab's page; wait for them, then read the page`);
+  } else {
+    at.entry.notices.set(at.key, { text: `${need.host} still asks for ${it}: it may not have been accepted. Take the tab over to try again, or ask the agent to.`, until: Date.now() + NOTICE_MS });
+    note(at.entry, at.key, `${typed} and ${need.submitRef} clicked, but the page still asks for ${it}: the site may have refused it. Read the page, tell the user, and use login again if they want to retry`);
+  }
   return true;
+}
+
+/** After a login or a code was typed and submitted: whether its site still asks for it, "same" when
+ *  the field it went into is still there (a login: still a password field), "other" when a login's
+ *  page shows another password field, else null. A guess, not proof: a site that refuses a login
+ *  usually keeps asking, and one that takes it moves on. */
+async function stillAsks(at: Tab, need: Need): Promise<"same" | "other" | null> {
+  if (hostOf(at.page.url()) !== need.host) return null;
+  const { snap } = await readPage(at.page);
+  const line = snap.elements.find((l) => l.startsWith(`[${need.secretRef}] `));
+  if (line && (need.kind === "code" || line.includes("input[password]"))) return "same";
+  return need.kind === "login" && snap.elements.some((l) => l.includes("input[password]")) ? "other" : null;
 }
 
 /** Applies what the tabs' pages posted, for a call, in its turn with the watch's (#shared/pages inTurn). */

@@ -69,6 +69,7 @@ function dropTab(workspace: string, entry: Entry, key: string): void {
   entry.notes.delete(key);
   entry.needs.delete(key);
   entry.offers.delete(key);
+  entry.notices.delete(key);
   entry.holds.delete(key);
   entry.screens.delete(key);
   forgetTab(workspace, key);
@@ -132,7 +133,7 @@ async function entryFor(workspace: string): Promise<Entry> {
   if (!entry) {
     const others = [...browsers.entries()].sort((a, b) => a[1].last - b[1].last);
     while (others.length >= MAX_BROWSERS) await closeEntry(others.shift()![0]);
-    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, saving: null, saved: null, ready: null!, touch: () => touch(workspace, made), busy: new Set() };
+    const made: Entry = { tabs: new Map(), notes: new Map(), needs: new Map(), offers: new Map(), notices: new Map(), holds: new Map(), screens: new Map(), authenticators: new Map(), secrets: new Set(), fence: makeFence(), last: Date.now(), timer: null, saving: null, saved: null, ready: null!, touch: () => touch(workspace, made), busy: new Set() };
     made.ready = launch(workspace).then(async (browser) => {
       made.saved = await sessions.restore(workspace, await firstPage(browser)).catch(() => null);
       return (made.browser = browser);
