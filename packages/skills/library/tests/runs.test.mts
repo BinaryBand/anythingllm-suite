@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { call as called, library, reset } from "./harness.mts";
+import { call as called, library, reset, skillDir, storage } from "./harness.mts";
 
 process.env.LIBRARY_WAIT_MS = "300";
 
@@ -50,6 +50,21 @@ test("a run the chat stops waiting for goes on, is pushed, and is shown once at 
   assert.match(next, new RegExp(`^Finished since last shown [^\\n]*\\n- clock\\.slow: ok, [^\\n]*\\[${id}\\]: \\{"slept":2\\}\\n`));
   assert.doesNotMatch(await call({ action: "library" }), /Finished since/, "shown once");
   assert.equal(recordOf(id).pid, undefined, "an ended run keeps no process");
+});
+
+test("a background run's end is in the installed skill's description, which the model reads every turn, until an answer shows it", async (t) => {
+  const installed = path.join(storage, "plugins", "agent-skills", "library-lean");
+  fs.mkdirSync(installed, { recursive: true });
+  t.after(() => fs.rmSync(path.join(storage, "plugins"), { recursive: true, force: true }));
+  const file = path.join(installed, "plugin.json");
+  fs.copyFileSync(path.join(skillDir, "plugin.json"), file);
+  const description = () => JSON.parse(fs.readFileSync(file, "utf8")).description as string;
+  const id = idOf(await call({ action: "run", name: "clock.slow", inputs: { n: 2 } }));
+  assert.doesNotMatch(description(), /Ended, not shown/, "not while it runs");
+  await until(() => description().includes("Ended, not shown"));
+  assert.match(description(), new RegExp(`\\. Ended, not shown to the user yet: clock\\.slow \\(ok, ${id}\\): call library, which shows them\\.$`));
+  assert.match(await call({ action: "library" }), /^Finished since last shown/);
+  assert.doesNotMatch(description(), /Ended, not shown/, "shown now");
 });
 
 test("run with run_id waits for a background run again and shows it; stop: true stops one", async () => {

@@ -244,7 +244,7 @@ async function runNow(name: string, inputs: unknown, self: HandlerContext): Prom
   // Only what the end needs, so a background run doesn't hold on to the agent that started it.
   const base = baseOf(self);
   const to = pushTo(self);
-  void done.then(() => refreshPage(base));
+  void done.then(() => (refreshPage(base), listing.refresh(console.error)));
   const record = s.trigger === "job" ? await done : await within(done, waitMs());
   if (record) {
     if (s.trigger === "chat" || record.status === "ok") store.markSeen(record.id);
@@ -324,7 +324,7 @@ export const runtime = {
     try {
       await fromPage(this);
       const answer = await act(args, this);
-      if (action === "save") listing.refresh(this.logger);
+      if (action === "save" || action === "run" || action === "library") listing.refresh(this.logger);
       return answer;
     } catch (e) {
       if (e instanceof Told) return `Library: ${e.message}.`;
