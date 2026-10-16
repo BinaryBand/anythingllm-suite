@@ -75,7 +75,7 @@ export interface Call {
  *  ANYTHINGLLM_URL set to `base`. The agent can't show a question card: the skill never asks one. */
 export function call(args: Record<string, unknown>, { workspace = "home", thread = 1, base, settings = {} }: Call = {}): Promise<string> {
   const invocation = workspace ? { workspace: { slug: workspace }, thread_id: thread } : {};
-  const self = { super: { handlerProps: { invocation }, introspect: () => {} }, runtimeArgs: { ...(base ? { ANYTHINGLLM_URL: base } : {}), ...settings }, logger: () => {} };
+  const self = { super: { handlerProps: { invocation } }, introspect: () => {}, runtimeArgs: { ...(base ? { ANYTHINGLLM_URL: base } : {}), ...settings }, logger: () => {} };
   return handler().call(self, args);
 }
 

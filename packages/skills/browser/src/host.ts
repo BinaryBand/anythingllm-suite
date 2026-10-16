@@ -6,8 +6,9 @@
 export interface HandlerContext {
   super?: {
     handlerProps?: { invocation?: { workspace?: { slug?: string } | null; thread_id?: number | null } };
-    introspect?: (message: string) => void;
   };
+  /** A line shown in the chat while the skill works. */
+  introspect?: (message: string) => void;
   /** The skill's settings (plugin.json's setup_args), as the user set them in AnythingLLM. */
   runtimeArgs?: Record<string, string | undefined>;
   logger?: (message: string) => void;

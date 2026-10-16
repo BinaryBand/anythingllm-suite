@@ -141,7 +141,7 @@ async function signIn(self: HandlerContext, at: Tab, args: Args): Promise<string
   const host = hostChecked(at, args.site);
   const saved = logins.forHost(host);
   if (!saved) return askOnPage(self, at, { kind: "login", host, userRef, secretRef: passRef, submitRef, text: `${host} needs the user to sign in, and no login is saved for it` });
-  self.super?.introspect?.(`Signing in to ${host} with the saved login`);
+  self.introspect?.(`Signing in to ${host} with the saved login`);
   await typeIn(at, host, { userRef, user: saved.user, secretRef: passRef, secret: saved.pass }, submitRef);
   const submitted = submitRef ? `and clicked ${submitRef}` : "; submit it with act (press Enter in the field, or click the sign-in button)";
   return answer(self, at, `Typed the login the user saved for ${saved.site} into the page ${submitted}. It's hidden from you; read the page below to see whether it worked.`);
@@ -195,7 +195,7 @@ async function onTab(scope: Scope, run: () => Promise<string> | string): Promise
 const ACTIONS: Record<string, (self: HandlerContext, scope: Scope, args: Args) => Promise<string> | string> = {
   guide: (self, scope, args) => entryOf(statics(), "guide", ".md", "topic", args.topic, "index").text,
   search: (self, scope, args) => {
-    self.super?.introspect?.(`Searching for ${clean(args.query).slice(0, 100)}`);
+    self.introspect?.(`Searching for ${clean(args.query).slice(0, 100)}`);
     return research.search(scope.workspace, args.query, self.runtimeArgs?.SEARCH_URL);
   },
   look: (self, scope, args) => {
@@ -204,7 +204,7 @@ const ACTIONS: Record<string, (self: HandlerContext, scope: Scope, args: Args) =
   },
   open: async (self, scope, args) => {
     const url = checkUrl(args.url);
-    self.super?.introspect?.(`Opening ${url}`);
+    self.introspect?.(`Opening ${url}`);
     const at = await tab(scope.workspace, scope.thread);
     const failed = await load(at.entry, at.page, url);
     if (failed) note(at.entry, at.key, `loading ${url} didn't finish: ${failed}`);
