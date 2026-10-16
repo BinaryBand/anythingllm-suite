@@ -335,7 +335,10 @@ input{font:inherit;color:var(--ink)}
   function needForm() {
     const need = st.need;
     const login = need.kind === "login";
-    const fresh = login && need.confirm; // a new account: the user chooses the password
+    // The words for what's asked: a new account's password (the user chooses it), a login, a code.
+    const says = login && need.confirm ? { title: "Choose a password for " + need.host, secret: "New password", go: "Create" }
+      : login ? { title: "Sign in to " + need.host, secret: "Password", go: "Sign in" }
+      : { title: need.label || "Enter the code", secret: need.label || "Code", go: "Send" };
     let keep = true;
     const user = login && need.hasUser ? el("input", { className: "fld", autocapitalize: "off", autocomplete: "off", spellcheck: false }) : null;
     const secret = el("input", { className: "fld", type: login ? "password" : "text", autocomplete: login ? "new-password" : "one-time-code", autocapitalize: "off" });
@@ -344,7 +347,7 @@ input{font:inherit;color:var(--ink)}
     sw.setAttribute("aria-label", "Save this login for next time");
     sw.onclick = () => sw.setAttribute("aria-checked", String((keep = !keep)));
     const no = el("button", { className: "btn", textContent: "Cancel", onclick: () => ((needOpen = false), paint()) });
-    const go = el("button", { className: "btn pri", textContent: fresh ? "Create" : login ? "Sign in" : "Send" });
+    const go = el("button", { className: "btn pri", textContent: says.go });
     go.onclick = async () => {
       if (user && !user.value.trim()) return toast("Give the username");
       if (!secret.value.trim()) return toast(login ? "Give the password" : "Give the code");
@@ -359,10 +362,10 @@ input{font:inherit;color:var(--ink)}
       post("need-answer", fields);
       paint();
     };
-    $("needform").replaceChildren(el("div", { className: "card form" }, el("b", { textContent: fresh ? "Choose a password for " + need.host : login ? "Sign in to " + need.host : need.label || "Enter the code" }),
+    $("needform").replaceChildren(el("div", { className: "card form" }, el("b", { textContent: says.title }),
       field("Site", el("input", { className: "fld ro", value: need.host, readOnly: true })),
       ...(user ? [field("Username or email", user)] : []),
-      field(fresh ? "New password" : login ? "Password" : need.label || "Code", secret),
+      field(says.secret, secret),
       ...(user ? [el("div", { className: "tgl" }, el("span", { textContent: "Save this login for next time" }), sw)] : []),
       el("p", { className: "cap", style: "padding:0", textContent: login ? "Sealed on this device before it's sent, and typed into the page for the agent, which never sees it." : "Typed into the page for the agent, which never sees it." }),
       el("div", { className: "row" }, no, go)));

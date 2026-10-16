@@ -21,6 +21,8 @@ site("https://shop.example/", { title: "Shop", text: "Pasta 2.50\nRice 1.20", fi
 site("https://shop.example/results", { title: "Results", text: "1 result for pasta" });
 
 const lastPage = () => world.pages[world.pages.length - 1];
+const inWorkspace = (workspace: string) => (args: Record<string, unknown>) => called(args, { workspace });
+const SIGN_IN = { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } };
 
 test("open reads the page with refs and ends with the tab's card, whose page and picture are written", async () => {
   const call = (args: Record<string, unknown>) => called(args, { workspace: "open", base: "https://ai.example" });
@@ -83,7 +85,7 @@ test("a login with none saved is asked for on the tab's page, sealed, typed in, 
 
   const again = (args: Record<string, unknown>) => called(args, { workspace: "home", thread: 2 });
   await again({ action: "open", url: LOGIN });
-  assert.match(await again({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" }), /^Typed the login the user saved for login\.example into the page and clicked e3\. It's hidden from you/);
+  assert.match(await again({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" }), /^Typed the login the user saved for login\.example into the page and e3 clicked\. It's hidden from you/);
   assert.equal(lastPage().url(), "https://login.example/home");
 });
 
@@ -201,8 +203,6 @@ test("a workspace's cookies are kept in the vault and given back, and Chrome's p
 });
 
 test("a login the site seems to refuse is said on the tab's page and asked again, and not saved", async () => {
-  const SIGN_IN = { e1: { type: "text", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in" } };
-  const inWorkspace = (workspace: string) => (args: Record<string, unknown>) => called(args, { workspace });
   site("https://strict.example/", { title: "Sign in", fields: SIGN_IN });
   const call = inWorkspace("strict");
   await call({ action: "open", url: "https://strict.example/" });
@@ -235,12 +235,11 @@ test("a login the site seems to refuse is said on the tab's page and asked again
 test("a field read as a password stays one after Show password, and login takes only a field for the username", async () => {
   site("https://shown.example/", {
     title: "Enter your password",
-    fields: { e1: { kind: "link", name: "Not you?" }, e2: { type: "text", name: "Password", attrs: { "data-bw-secret": "1" } }, e3: { type: "text", name: "Password", attrs: { autocomplete: "current-password" } }, e4: { kind: "button", name: "Sign in" } },
+    fields: { e1: { kind: "link", name: "Not you?" }, e2: { type: "text", name: "Password", attrs: { "data-bw-secret": "1" } }, e4: { kind: "button", name: "Sign in" } },
   });
-  const call = (args: Record<string, unknown>) => called(args, { workspace: "shown" });
+  const call = inWorkspace("shown");
   await call({ action: "open", url: "https://shown.example/" });
   assert.match(await call({ action: "act", steps: [{ do: "fill", ref: "e2", text: "pw-shown-1" }] }), /e2 is a password field, which act never types into/);
-  assert.match(await call({ action: "act", do: "fill", ref: "e3", text: "pw-shown-1" }), /e3 is a password field/);
   assert.equal(lastPage().fields.e2.value, undefined);
   assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e4" }), /e1 is a link, not a field for the username: .* leave it out on a page that asks only for the password/);
   assert.match(await call({ action: "login", pass_ref: "e2", submit_ref: "e4" }), /asked on the tab's page/);
@@ -252,7 +251,7 @@ test("a new account's password is asked for with confirm_ref and typed into both
     title: "Create account",
     fields: { e1: { type: "email", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { type: "password", name: "Confirm password" }, e4: { kind: "button", name: "Next" }, e5: { kind: "button", name: "Back" } },
   });
-  const call = (args: Record<string, unknown>) => called(args, { workspace: "signup" });
+  const call = inWorkspace("signup");
   await call({ action: "open", url: "https://signup.example/" });
   assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", confirm_ref: "e5", submit_ref: "e4" }), /e5 isn't a password field; confirm_ref is a new account's "Confirm password"/);
   assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", confirm_ref: "e3", submit_ref: "e4" }), /^The user is asked on the tab's page: signup\.example needs a password for the new account, which the user chooses\./);
@@ -267,10 +266,10 @@ test("a new account's password is asked for with confirm_ref and typed into both
 test("a login typed into a form that still needs something else (a CAPTCHA) isn't sent, and the page says what's missing", async () => {
   site("https://captcha.example/", {
     title: "Sign in",
-    fields: { e1: { type: "email", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in", blockedBy: [{ ref: "e4", label: "Type the digits shown" }] }, e4: { type: "text", name: "Type the digits shown" } },
+    fields: { ...SIGN_IN, e3: { ...SIGN_IN.e3, blockedBy: ["e4"] }, e4: { type: "text", name: "Type the digits shown" } },
     onclick: { e3: "https://captcha.example/home" },
   });
-  const call = (args: Record<string, unknown>) => called(args, { workspace: "captcha" });
+  const call = inWorkspace("captcha");
   await call({ action: "open", url: "https://captcha.example/" });
   await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
   post({ ev: "need-answer", user: "ada@example.com", sealed: seal("pw-cap-1", tabConfig("captcha").pub) }, { workspace: "captcha" });

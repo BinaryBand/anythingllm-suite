@@ -41,8 +41,6 @@ class Session {
  *  box: { x, y, w, h } where it shows }), where a click or Enter goes, and the links a search reads
  *  from it ([{ title, href, near }]). */
 function site(url, { title = "", text = "", fields = {}, onclick = {}, onenter = null, links = [] } = {}) {
-  // Each field's tag, as the skill's evaluate functions read it: an input when it has a type.
-  for (const f of Object.values(fields)) f.tagName ||= f.type ? "INPUT" : f.kind === "link" ? "A" : "BUTTON";
   world.sites[url] = { title, text, fields, onclick, onenter, links };
 }
 
@@ -99,13 +97,16 @@ class Page {
     this.titleText = s.title;
     this.text = s.text;
     this.fields = JSON.parse(JSON.stringify(s.fields));
-    // A field's attributes (`attrs`), and a button's form that may not be sent while `blockedBy`
-    // ([{ ref, label }]) are unmet, as the skill's evaluate functions read them.
+    // Each field as the skill's evaluate functions read it: its tag (an input when it has a type),
+    // its attributes (`attrs`), and for a button whose form may not be sent while the fields
+    // `blockedBy` (refs) are unmet, that form.
     for (const f of Object.values(this.fields)) {
+      f.tagName = f.type ? "INPUT" : f.kind === "link" ? "A" : "BUTTON";
       f.getAttribute = (name) => f.attrs?.[name] ?? null;
+      f.closest = () => null;
       if (f.blockedBy) {
-        const elements = f.blockedBy.map(({ ref, label }) => ({ willValidate: true, checkValidity: () => false, labels: [{ innerText: label }], getAttribute: (n) => (n === "data-bw-ref" ? ref : null) }));
-        f.form = { checkValidity: () => false, elements };
+        const blocking = f.blockedBy.map((ref) => ({ willValidate: true, checkValidity: () => false, labels: [{ innerText: this.fields[ref].name }], getAttribute: (n) => (n === "data-bw-ref" ? ref : null) }));
+        f.form = { checkValidity: () => false, elements: blocking };
       }
     }
     this.onclick = s.onclick;
@@ -159,7 +160,7 @@ class Page {
   async waitForFunction() {}
   async evaluateHandle() {
     // The skill asks a page only for the focused element; nothing here has focus.
-    return { evaluate: async (fn, ...args) => fn({}, ...args) };
+    return { evaluate: async (fn, ...args) => fn({ tagName: "BODY", getAttribute: () => null }, ...args) };
   }
   async $(selector) {
     const ref = selector.match(/data-bw-ref="(e\d+)"/)?.[1];

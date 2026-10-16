@@ -27,7 +27,10 @@ export interface Snap {
   fields: Field[];
 }
 
-function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
+/** The input types one doesn't type into; act.ts's notTyped is given the same list. */
+export const NOT_TYPED = ["checkbox", "radio", "hidden", "button", "submit", "reset", "image", "file", "range", "color"];
+
+function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTyped: string[] }): Snap {
   const { document, window, getComputedStyle, innerWidth, innerHeight } = globalThis as any;
   const INTERACTIVE = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "SUMMARY"]);
   const ROLES = new Set(["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "combobox", "textbox", "searchbox", "slider", "spinbutton"]);
@@ -62,20 +65,23 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
         "",
       80,
     );
+  // A password field (or one that says it takes a password) is marked, and stays one once read,
+  // even after "Show password" makes it a text field: act.ts's isPassword reads the mark.
+  const secret = (el: any) => el.getAttribute("data-bw-secret") === "1";
+  const mark = (el: any) => {
+    if (el.tagName === "INPUT" && !secret(el) && (el.type === "password" || /^(current|new)-password$/.test(el.getAttribute("autocomplete") || ""))) el.setAttribute("data-bw-secret", "1");
+  };
   const describe = (el: any) => {
     const tag = el.tagName.toLowerCase();
     let kind = el.getAttribute("role") || (tag === "a" ? "link" : tag === "summary" ? "button" : tag);
-    // A password field stays one once read, even after "Show password" makes it a text field.
-    if (tag === "input" && el.type === "password") el.setAttribute("data-bw-secret", "1");
-    const secret = tag === "input" && el.getAttribute("data-bw-secret") === "1";
-    if (tag === "input") kind = secret ? "input[password]" : `input[${el.type}]`;
+    if (tag === "input") kind = secret(el) ? "input[password]" : `input[${el.type}]`;
     let line = `${kind} "${name(el)}"`;
     if (tag === "a") {
       const href = el.getAttribute("href") || "";
       if (href && !href.startsWith("javascript:")) line += ` -> ${clip(href, 100)}`;
     }
     if (tag === "input" && (el.type === "checkbox" || el.type === "radio")) line += el.checked ? " (checked)" : " (unchecked)";
-    else if (secret) {
+    else if (secret(el)) {
       if (el.value) line += " (filled)";
     } else if (tag === "input" || tag === "textarea") {
       if (el.value) line += ` value="${clip(el.value, 80)}"`;
@@ -88,13 +94,12 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
     return line;
   };
   const MAX_FIELDS = 60;
-  const NOT_TYPED = new Set(["checkbox","radio", "hidden", "button", "submit", "reset", "image", "file", "range", "color"]);
   const field = (el: any, ref: string): Field | null => {
-    const typed = (el.tagName === "INPUT" && !NOT_TYPED.has(el.type)) || el.tagName === "TEXTAREA" || (el.isContentEditable && el.parentElement?.isContentEditable !== true);
+    const typed = (el.tagName === "INPUT" && !notTyped.includes(el.type)) || el.tagName === "TEXTAREA" || (el.isContentEditable && el.parentElement?.isContentEditable !== true);
     if (!typed || el.disabled || el.readOnly) return null;
     const r = el.getBoundingClientRect();
     if (r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) return null;
-    const kind = el.getAttribute("data-bw-secret") === "1" ? "password" : el.tagName === "INPUT" ? el.type || "text" : el.tagName === "TEXTAREA" ? "textarea" : "text";
+    const kind = secret(el) ? "password" : el.tagName === "INPUT" ? el.type || "text" : el.tagName === "TEXTAREA" ? "textarea" : "text";
     return { ref, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), kind, filled: !!("value" in el ? el.value : el.textContent) };
   };
   let next: number = window.__bwNext || 1;
@@ -110,6 +115,7 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
         ref = `e${next++}`;
         el.setAttribute("data-bw-ref", ref);
       }
+      mark(el);
       lines.push(`[${ref}] ${describe(el)}`);
       const f = field(el, ref);
       if (f && fields.length < MAX_FIELDS) fields.push(f);
@@ -129,16 +135,16 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
 /** What snapshot lists at most; view.ts shows fewer and says there are more. */
 const SNAPSHOT_ELEMENTS = 400;
 
-/** The page now: { snap, title, url }, with a snap saying why when it can't be read. */
 /** Whether a line of a read is a password field. */
 export const isPasswordLine = (line: string): boolean => line.includes("input[password]");
 
 /** Whether the page as read asks for a password. */
 export const asksPassword = (snap: Snap): boolean => snap.elements.some(isPasswordLine);
 
+/** The page now: { snap, title, url }, with a snap saying why when it can't be read. */
 export async function readPage(page: Page): Promise<{ snap: Snap; title: string; url: string }> {
   const [snap, title] = await Promise.all([
-    page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false, fields: [] })),
+    page.evaluate(snapshot, { snapshot: SNAPSHOT_ELEMENTS, notTyped: NOT_TYPED }).catch((e): Snap => ({ elements: [], text: `(couldn't read the page: ${firstLine(e)})`, more: false, fields: [] })),
     page.title().catch(() => ""),
   ]);
   return { snap, title, url: page.url() };

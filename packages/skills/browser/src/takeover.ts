@@ -12,7 +12,7 @@ import { Told } from "#shared/errors";
 import { hostOf, onSite } from "#shared/fence";
 import * as vault from "#shared/vault";
 import { act, element, fill, isPassword, settle, settled } from "./act";
-import { BrowserError } from "./errors";
+import { BrowserError, StaleRef } from "./errors";
 import * as logins from "./logins";
 import * as passkey from "./passkey";
 import { type Entry, type Hold, OFFER_MS, type Tab, clamp, clip, holder, note, say, screenFor } from "./state";
@@ -36,7 +36,7 @@ export async function apply(e: Record<string, unknown>, at: Tab): Promise<boolea
     return await step(e, at);
   } catch (err) {
     if (!(err instanceof Told)) throw err;
-    say(at.entry, at.key, err.message);
+    say(at.entry, at.key, err instanceof StaleRef ? "That field changed on the page: tap it again" : err.message);
     return true;
   }
 }
@@ -95,9 +95,7 @@ async function step(e: Record<string, unknown>, at: Tab): Promise<boolean> {
 /** Types what the user typed into a field: a password only sealed. It's hidden from the agent's
  *  reads from then on, and kept (with the username typed before it) for the offer to save. */
 async function typed(at: Tab, hold: Hold, e: Record<string, unknown>): Promise<void> {
-  const target = await element(at.page, clip(e.ref, 20)).catch(() => {
-    throw new BrowserError("That field changed on the page: tap it again");
-  });
+  const target = await element(at.page, clip(e.ref, 20));
   const password = await isPassword(target);
   if (password && !e.sealed) throw new BrowserError("A password has to come sealed: reload the page");
   const value = e.sealed ? vault.openSealed(clip(e.sealed, 20000)) : clip(e.text, MAX_TEXT);

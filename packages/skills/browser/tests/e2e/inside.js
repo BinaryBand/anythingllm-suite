@@ -75,7 +75,8 @@ function passkeyRoute(url, body, res) {
   passkeys.log.push(ok ? "signed in" : "refused");
   res.end(ok ? `Signed in with a passkey, count ${count}` : "Refused");
 }
-const LOGIN_FORM = '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><button>Sign in</button></form>';
+/** The sign-in form, with `extra` fields before its button. */
+const loginForm = (extra = "") => `<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input id="p" name="pass" type="password"></label>${extra}<button>Sign in</button></form>`;
 const server = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
@@ -95,10 +96,10 @@ const server = http.createServer((req, res) => {
       const sid = /(?:^|; )sid=(\w+)/.exec(req.headers.cookie || "");
       return res.end(page("Me", sid ? "<p>Signed in.</p>" : "<p>Not signed in.</p>"));
     }
-    if (url.pathname === "/login") return res.end(page("Sign in", LOGIN_FORM));
-    if (url.pathname === "/shadow") return res.end(page("Sign in", `<sign-in></sign-in><script>customElements.define("sign-in", class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(LOGIN_FORM)}; } });</script>`));
-    if (url.pathname === "/show") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input id="p" name="pass" type="password"></label><label><input type="checkbox" onchange="p.type = this.checked ? \'text\' : \'password\'"> Show password</label><button>Sign in</button></form>'));
-    if (url.pathname === "/captcha") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><label>Digits in the image <input name="digits" required></label><button>Sign in</button></form>'));
+    if (url.pathname === "/login") return res.end(page("Sign in", loginForm()));
+    if (url.pathname === "/shadow") return res.end(page("Sign in", `<sign-in></sign-in><script>customElements.define("sign-in", class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(loginForm())}; } });</script>`));
+    if (url.pathname === "/show") return res.end(page("Sign in", loginForm(`<label><input type="checkbox" onchange="p.type = this.checked ? 'text' : 'password'"> Show password</label>`)));
+    if (url.pathname === "/captcha") return res.end(page("Sign in", loginForm('<label>Digits in the image <input name="digits" required></label>')));
     if (url.pathname === "/signup" && req.method === "POST") {
       const form = new URLSearchParams(body);
       const ok = form.get("pass") && form.get("pass") === form.get("confirm");
@@ -224,7 +225,7 @@ const server = http.createServer((req, res) => {
 
   const captcha = await call({ action: "open", url: `${SITE}/captcha` }, 13);
   const unsent = await call({ action: "login", user_ref: refIn(captcha, 'input\\[text\\] "User'), pass_ref: refIn(captcha, 'input\\[password\\]'), submit_ref: refIn(captcha, 'button "Sign in"') }, 13);
-  assert.match(unsent, /but didn't click e\d+: the page still needs e\d+ "Digits in the image" first/, unsent);
+  assert.match(unsent, /, but e\d+ wasn't clicked: the page still needs e\d+ "Digits in the image" first/, unsent);
   assert.match(unsent, /Page: Sign in/, "not sent");
 
   const signup = await call({ action: "open", url: `${SITE}/signup` }, 14);

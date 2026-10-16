@@ -29,7 +29,7 @@ process.env.SIG_SALT = "test-sig-salt";
 export interface Site {
   title?: string;
   text?: string;
-  fields?: Record<string, { kind?: string; type?: string; name?: string; value?: string; box?: { x: number; y: number; w: number; h: number }; attrs?: Record<string, string>; blockedBy?: { ref: string; label: string }[] }>;
+  fields?: Record<string, { kind?: string; type?: string; name?: string; value?: string; box?: { x: number; y: number; w: number; h: number }; attrs?: Record<string, string>; blockedBy?: string[] }>;
   onclick?: Record<string, string>;
   onenter?: string;
   links?: { title: string; href: string; near: string }[];

@@ -15,7 +15,7 @@ import { workspaceOf } from "#shared/anythingllm";
 import { Told } from "#shared/errors";
 import { FENCED, checkUrl, hostOf, onSite } from "#shared/fence";
 import { entryOf } from "#shared/static";
-import { act, checkAct, element, isPassword, notTyped, settle, settled, typeIn } from "./act";
+import { act, checkAct, element, isPassword, notTyped, settle, settled, submitted, typeIn } from "./act";
 import { existing, load, tab } from "./browser";
 import { BrowserError } from "./errors";
 import type { HandlerContext } from "./host";
@@ -141,15 +141,13 @@ async function signIn(self: HandlerContext, at: Tab, args: Args): Promise<string
   if (what) throw new BrowserError(`${userRef} is a ${what}, not a field for the username: give user_ref only where the page asks for the username, and leave it out on a page that asks only for the password`);
   if (confirmRef && !(await isPassword(await element(at.page, confirmRef)))) throw new BrowserError(`${confirmRef} isn't a password field; confirm_ref is a new account's "Confirm password"`);
   const host = hostChecked(at, args.site);
-  if (confirmRef) return askOnPage(self, at, { kind: "login", host, userRef, secretRef: passRef, confirmRef, submitRef, text: `${host} needs a password for the new account, which the user chooses` });
-  const saved = logins.forHost(host);
-  if (!saved) return askOnPage(self, at, { kind: "login", host, userRef, secretRef: passRef, submitRef, text: `${host} needs the user to sign in, and no login is saved for it` });
+  // A new account's password is the user's to choose, whatever is saved for the site.
+  const saved = confirmRef ? null : logins.forHost(host);
+  const text = confirmRef ? `${host} needs a password for the new account, which the user chooses` : `${host} needs the user to sign in, and no login is saved for it`;
+  if (!saved) return askOnPage(self, at, { kind: "login", host, userRef, secretRef: passRef, confirmRef, submitRef, text });
   self.introspect?.(`Signing in to ${host} with the saved login`);
-  const unsent = await typeIn(at, host, { userRef, user: saved.user, secretRef: passRef, secret: saved.pass }, submitRef);
-  const submitted = unsent.length
-    ? `, but didn't click ${submitRef}: the page still needs ${unsent.join(", ")} first. Fill it with act, or for a check only a person passes (a CAPTCHA), have the user take the tab over and send it`
-    : submitRef ? ` and clicked ${submitRef}` : "; submit it with act (press Enter in the field, or click the sign-in button)";
-  return answer(self, at, `Typed the login the user saved for ${saved.site} into the page${submitted}. It's hidden from you; read the page below to see whether it worked.`);
+  const missing = await typeIn(at, host, { userRef, user: saved.user, secretRef: passRef, secret: saved.pass }, submitRef);
+  return answer(self, at, `Typed the login the user saved for ${saved.site} into the page${submitted(submitRef, missing)}. It's hidden from you; read the page below to see whether it worked.`);
 }
 
 /** A request from inside the tab, on its site's own origin, so the browser's signed-in session goes

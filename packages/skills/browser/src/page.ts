@@ -18,7 +18,7 @@ import { Told } from "#shared/errors";
 import { hostOf, onSite } from "#shared/fence";
 import { inTurn, newSecret, pageHtml, publicDir, removePublic, sameSecret, takeEvents, watch, writePublic } from "#shared/pages";
 import * as vault from "#shared/vault";
-import { typeIn } from "./act";
+import { submitted, typeIn } from "./act";
 import * as logins from "./logins";
 import * as passkey from "./passkey";
 import { type Snap, asksPassword, isPasswordLine, readPage } from "./snapshot";
@@ -190,18 +190,16 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   const user = login ? text(e.user).trim() : "";
   if (!secret || (need.userRef && !user)) return false;
   at.entry.needs.delete(at.key);
-  const unsent = await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, confirmRef: need.confirmRef, secret }, need.submitRef);
+  const missing = await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, confirmRef: need.confirmRef, secret }, need.submitRef);
   if (login && need.userRef && e.save === true) at.entry.offers.set(at.key, { kind: "password", site: need.host, user, pass: secret, agreed: true, until: Date.now() + OFFER_MS });
-  const typed = `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page`;
+  const sent = `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page${submitted(need.submitRef, missing)}`;
   const hidden = "it stays hidden from you. Read the page to see whether it worked";
-  if (!need.submitRef) return note(at.entry, at.key, `${typed}, but nothing was submitted: submit it with act (press Enter in the field, or click the button); ${hidden}`), true;
-  if (unsent.length) {
+  if (missing.length) {
     // Not sent, so nothing was refused: the form needs something else first (a CAPTCHA, say).
-    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${unsent.map((f) => (f.includes('"') ? f.slice(f.indexOf('"')) : "another field")).join(", ")} before it can be sent: take the tab over to fill it`);
-    return note(at.entry, at.key, `${typed}, but ${need.submitRef} wasn't clicked: the page still needs ${unsent.join(", ")} first. Fill it with act, or for a check only a person passes, the user takes the tab over; ${hidden}`), true;
+    const needs = missing.map((m) => (m.label ? `"${m.label}"` : "another field")).join(", ");
+    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${needs} before it can be sent: take the tab over to fill it`);
   }
-  const sent = `${typed} and ${need.submitRef} clicked`;
-  const asking = await stillAsks(at, need);
+  const asking = need.submitRef && !missing.length ? await stillAsks(at, need) : null;
   if (!asking) return note(at.entry, at.key, `${sent}; ${hidden}`), true;
   // Likely refused: a login the user asked to save isn't kept; they're asked again where the same
   // field is still there, else told on the page.

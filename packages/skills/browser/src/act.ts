@@ -3,8 +3,9 @@
 // into a password field but what login types, which only the user gave.
 
 import { hostOf } from "#shared/fence";
-import { BrowserError } from "./errors";
+import { BrowserError, StaleRef } from "./errors";
 import type { ElementHandle, Page } from "./host";
+import { NOT_TYPED } from "./snapshot";
 import type { Tab } from "./state";
 
 const ACTIONS = ["click", "fill", "type", "press", "select", "check", "uncheck", "hover", "scroll_down", "scroll_up", "back", "forward", "reload", "wait"];
@@ -41,27 +42,27 @@ export function checkAct(action: string, ref: string, text: string): void {
  *  BrowserError saying to read again. */
 export async function element(page: Page, ref: string): Promise<ElementHandle> {
   const found = await page.$(`pierce/[data-bw-ref="${ref}"]`);
-  if (!found) throw new BrowserError(`${ref} isn't on the page any more; read it again for current refs`);
+  if (!found) throw new StaleRef(`${ref} isn't on the page any more; read it again for current refs`);
   return found;
 }
 
-/** Whether `target` is a password field: one now, one a read saw as one (snapshot marks it, so
- *  "Show password" turning it into a text field doesn't change that), or one that says it takes a
- *  password. */
-export const isPassword = (target: ElementHandle): Promise<boolean> =>
-  target.evaluate((el) => el.type === "password" || el.getAttribute?.("data-bw-secret") === "1" || /^(current|new)-password$/.test(String(el.getAttribute?.("autocomplete") ?? "")));
+/** Whether `target` is a password field: one now, or one a read marked as one (snapshot.ts), so
+ *  "Show password" turning it into a text field doesn't change that. */
+export const isPassword = (target: ElementHandle): Promise<boolean> => target.evaluate((el) => el.type === "password" || el.getAttribute("data-bw-secret") === "1");
 
 /** What `target` is when it isn't a field one types into (a link, a button…), else null. */
 export const notTyped = (target: ElementHandle): Promise<string | null> =>
-  target.evaluate((el) => {
-    const tag = String(el.tagName ?? "").toLowerCase();
-    const NOT_TYPED = ["checkbox", "radio", "hidden", "button", "submit", "reset", "image", "file", "range", "color"];
-    if ((tag === "input" && !NOT_TYPED.includes(el.type)) || tag === "textarea" || el.isContentEditable) return null;
-    return tag === "input" ? `input[${el.type}]` : tag === "a" ? "link" : tag || "element";
-  });
+  target.evaluate((el, skip: string[]) => {
+    const tag = el.tagName.toLowerCase();
+    if ((tag === "input" && !skip.includes(el.type)) || tag === "textarea" || el.isContentEditable) return null;
+    return tag === "input" ? `input[${el.type}]` : tag === "a" ? "link" : tag;
+  }, NOT_TYPED);
 
-/** Replaces what's in a field with `text`, typed as a person would, so the page sees it. */
+/** Replaces what's in a field with `text`, typed as a person would, so the page sees it; never
+ *  anything else (filling a link would click it). */
 export async function fill(target: ElementHandle, text: string): Promise<void> {
+  const what = await notTyped(target);
+  if (what) throw new BrowserError(`a ${what} isn't a field one types into`);
   await target.click({ clickCount: 3 });
   await target.evaluate((el) => {
     if ("value" in el) el.value = "";
@@ -80,34 +81,52 @@ export async function settle(page: Page, pause = 400): Promise<void> {
 /** settle after the step `action`: a pause only after a step that may load another page. */
 export const settled = (page: Page, action: string): Promise<void> => settle(page, NAVIGATES.has(action) ? 400 : 0);
 
-/** The fields of `submit`'s form that keep it from being sent (empty but required, say), each as
- *  `e7 "Type the digits shown"`; none when it has no form or the form may be sent. */
-const unsent = (submit: ElementHandle): Promise<string[]> =>
+/** A field that keeps a form from being sent (empty but required, say): its ref, if a read gave it
+ *  one, and its label. */
+export interface Missing {
+  ref: string | null;
+  label: string;
+}
+
+/** The fields of `submit`'s form that keep it from being sent; none when it has no form or the
+ *  form may be sent. */
+const unsent = (submit: ElementHandle): Promise<Missing[]> =>
   submit.evaluate((el) => {
-    const form = el.form ?? el.closest?.("form");
+    const form = el.form ?? el.closest("form");
     if (!form || form.checkValidity()) return [];
     return [...form.elements]
       .filter((f: any) => f.willValidate && !f.checkValidity())
-      .map((f: any) => {
-        const label = String(f.labels?.[0]?.innerText || f.getAttribute("aria-label") || f.getAttribute("placeholder") || f.name || "").replace(/\s+/g, " ").trim().slice(0, 60);
-        return `${f.getAttribute("data-bw-ref") ?? "a field"}${label ? ` "${label}"` : ""}`;
-      });
+      .map((f: any) => ({
+        ref: f.getAttribute("data-bw-ref"),
+        label: String(f.labels?.[0]?.innerText || f.getAttribute("aria-label") || f.getAttribute("placeholder") || f.name || "").replace(/\s+/g, " ").trim().slice(0, 60),
+      }));
   });
+
+/** For the agent, after typeIn: how the submit went, as a clause that follows "typed into the page". */
+export function submitted(submitRef: string | undefined, missing: Missing[]): string {
+  if (!submitRef) return ", but nothing was submitted: submit it with act (press Enter in the field, or click the button)";
+  if (!missing.length) return ` and ${submitRef} clicked`;
+  const needs = missing.map((m) => [m.ref, m.label && `"${m.label}"`].filter(Boolean).join(" ") || "a field").join(", ");
+  return `, but ${submitRef} wasn't clicked: the page still needs ${needs} first. Fill it with act, or for a check only a person passes (a CAPTCHA), have the user take the tab over and send it`;
+}
 
 /** Types a login or a code into the tab `at`: `secret` (the password or the code, hidden from every
  *  read after) into `secretRef`, and into `confirmRef` too (a new account's "Confirm password"), and a
  *  username first, if given; only while its page is still on `host`. Then clicks `submitRef`, unless
  *  the form still has fields keeping it from being sent (a CAPTCHA, say): answers those, unsent. */
-export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, confirmRef, secret }: { userRef?: string; user?: string; secretRef: string; confirmRef?: string; secret: string }, submitRef?: string): Promise<string[]> {
+export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, confirmRef, secret }: { userRef?: string; user?: string; secretRef: string; confirmRef?: string; secret: string }, submitRef?: string): Promise<Missing[]> {
   const now = hostOf(at.page.url());
   if (now !== host) throw new BrowserError(`the page moved to ${now || "another page"} meanwhile; nothing was typed`);
   if (userRef && user) await fill(await element(at.page, userRef), user);
   at.entry.secrets.add(secret);
   await fill(await element(at.page, secretRef), secret);
   if (confirmRef) await fill(await element(at.page, confirmRef), secret);
-  const submit = submitRef ? await element(at.page, submitRef) : null;
-  const missing = submit ? await unsent(submit) : [];
-  if (submit && !missing.length) await submit.click();
+  let missing: Missing[] = [];
+  if (submitRef) {
+    const submit = await element(at.page, submitRef);
+    missing = await unsent(submit);
+    if (!missing.length) await submit.click();
+  }
   await settle(at.page);
   return missing;
 }
