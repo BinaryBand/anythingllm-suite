@@ -13,14 +13,10 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-engine=$(command -v podman || command -v docker) || { echo "tools/e2e: needs podman or docker" >&2; exit 2; }
-podman=$([ "$(basename "$engine")" = podman ] && echo 1 || true)
+need_engine
 work=$(mktemp -d)
 name="allm-e2e-$$"
 bridge_pid=
-
-# open_storage: lets the host user change what the container's user made (docker only).
-open_storage() { [ -n "$podman" ] || "$engine" exec -u root "$name" chmod -R a+rwX "$INNER_STORAGE" 2>/dev/null || true; }
 
 cleanup() {
   status=$?
@@ -36,21 +32,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# free_port: a port nothing listens on now.
-free_port() { node -e 'const s = require("net").createServer().listen(0, "127.0.0.1", () => { console.log(s.address().port); s.close(); });'; }
-
 # json <expression>: reads JSON on stdin as `j` and prints the expression.
 json() { node -e "let s = ''; process.stdin.on('data', (d) => (s += d)).on('end', () => { const j = JSON.parse(s); console.log($1); });"; }
-
-# wait_for <url> <what>: up to two minutes for a 200.
-wait_for() {
-  for _ in $(seq 1 60); do
-    curl -fs "$1" >/dev/null 2>&1 && return 0
-    sleep 2
-  done
-  echo "tools/e2e: $2 did not answer at $1" >&2
-  return 1
-}
 
 allm_port=$(free_port)
 bridge_port=$(free_port)
@@ -68,7 +51,7 @@ echo "[e2e] AnythingLLM ($IMAGE) on :$allm_port, its storage in $storage"
 "$engine" run -d --rm --name "$name" -p "127.0.0.1:$allm_port:$INNER_PORT" ${user[@]+"${user[@]}"} \
   -v "$storage:$INNER_STORAGE" -e STORAGE_DIR="$INNER_STORAGE" -e AUTH_TOKEN="$password" \
   -e JWT_SECRET="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" "$IMAGE" >/dev/null
-wait_for "$allm/api/ping" "AnythingLLM"
+wait_until "AnythingLLM" curl -fs "$allm/api/ping"
 open_storage
 
 echo "[e2e] anythingllm-suite install --bridge, built from packages/"
@@ -80,7 +63,7 @@ node "$cli" install --storage "$storage" --roles chat,schedule --bridge --no-sta
 echo "[e2e] the bridge on :$bridge_port"
 node "$cli" serve >"$work/bridge.log" 2>&1 &
 bridge_pid=$!
-wait_for "$bridge/health" "the bridge"
+wait_until "the bridge" curl -fs "$bridge/health"
 
 # A developer key, as the settings page makes one, and a workspace for the tests to find.
 token=$(curl -fs -X POST "$allm/api/request-token" -H 'Content-Type: application/json' \

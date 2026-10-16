@@ -1,96 +1,55 @@
 #!/usr/bin/env bash
 # tools/e2e-skill [skill ...]: a skill's own check inside a real AnythingLLM. For each skill (no
 # argument: every skill with a tests/e2e/inside.js) it starts a throwaway AnythingLLM (the image in
-# contract/versions.env) on fresh storage in a temporary folder, waits until its server is up, puts the
-# built skill in with `anythingllm-suite install --skills <name>`, and runs the skill's
-# tests/e2e/inside.js in the container, which loads the skill through AnythingLLM's own loader. Prints
-# "ok" or the failure, with the end of the container's log. The container and the folder are removed on
-# the way out, pass or fail; nothing running on this machine is touched.
+# contract/versions.env) on fresh storage, installs the built skill with `anythingllm-suite install
+# --skills`, and runs the skill's tests/e2e/inside.js in the container. The container and the
+# temporary folder are removed afterwards, pass or fail; nothing running on this machine is touched.
 #
-# Fresh storage matters: a folder left from an earlier run has tabs whose pages are gone. This is not
-# `tools/e2e`, which drives the control server and the bridge and needs no skill's script.
-# Needs podman or docker and Node 22.18 or later; the first run pulls the image.
+# Fresh storage matters: a folder left from an earlier run has tabs whose pages are gone. (Not
+# tools/e2e, which drives the control server and the bridge.) Needs podman or docker and Node 22.18
+# or later; the first run pulls the image.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+need_engine
 
-engine=$(command -v podman || command -v docker) || { echo "tools/e2e-skill: needs podman or docker" >&2; exit 2; }
-podman=$([ "$(basename "$engine")" = podman ] && echo 1 || true)
-work=
-name=
-
-# open_storage: lets the host user change what the container's user made (docker only).
-open_storage() { [ -n "$podman" ] || "$engine" exec -u root "$name" chmod -R a+rwX "$INNER_STORAGE" 2>/dev/null || true; }
-
-cleanup() {
-  status=$?
-  if [ -n "$name" ]; then
-    if [ "$status" -ne 0 ]; then
-      echo "--- the container's log" >&2
-      "$engine" logs --tail 20 "$name" >&2 2>&1 || true
-    fi
-    open_storage
-    "$engine" stop -t 5 "$name" >/dev/null 2>&1 || true
-  fi
-  [ -z "$work" ] || rm -rf "$work"
-  exit "$status"
-}
-trap cleanup EXIT
-
-# free_port: a port nothing listens on now.
-free_port() { node -e 'const s = require("net").createServer().listen(0, "127.0.0.1", () => { console.log(s.address().port); s.close(); });'; }
-
-# wait_until <what> <command...>: up to two minutes for the command to succeed.
-wait_until() {
-  local what=$1
-  shift
-  for _ in $(seq 1 60); do
-    "$@" >/dev/null 2>&1 && return 0
-    sleep 2
-  done
-  echo "tools/e2e-skill: $what did not come up" >&2
-  return 1
-}
-
-# up: AnythingLLM has set its database up and answers, which "Primary server" in its log says; before
-# that a skill's first run fails on missing tables.
+# up: AnythingLLM has set its database up and answers. "Primary server" in its log says so; before
+# that a skill's first run fails on missing tables, which /api/ping alone doesn't tell.
 up() {
   local log
   log=$("$engine" logs "$name" 2>&1) && [[ $log == *"Primary server"* ]] && curl -fs "http://127.0.0.1:$port/api/ping"
 }
 
-# e2e <skill>: one skill, on a container of its own.
+# e2e <skill>: one skill. Run in a subshell, so its variables and its exit trap are its own.
 e2e() {
   load_skill "$1"
-  [ -f "$SKILL_DIR/tests/e2e/inside.js" ] || { echo "tools/e2e-skill: $1 has no tests/e2e/inside.js" >&2; return 1; }
-  work=$(mktemp -d)
+  [ -f "$SKILL_DIR/tests/e2e/inside.js" ] || { echo "tools/e2e-skill: $1 has no tests/e2e/inside.js" >&2; exit 1; }
   name="allm-e2e-skill-$1-$$"
+  work=$(mktemp -d)
   port=$(free_port)
-  local storage="$work/storage" user=()
-  mkdir "$storage"
-  [ -z "$podman" ] || user=(--userns=keep-id:uid=1000,gid=1000)
+  trap 'status=$?
+    [ "$status" -eq 0 ] || { echo "--- the container log" >&2; "$engine" logs --tail 20 "$name" >&2 2>&1 || true; }
+    open_storage
+    "$engine" stop -t 1 "$name" >/dev/null 2>&1 || true
+    rm -rf "$work"
+    exit "$status"' EXIT
 
-  echo "[e2e-skill] $1: AnythingLLM ($IMAGE) on :$port, its storage in $storage"
-  "$engine" run -d --rm --name "$name" -p "127.0.0.1:$port:$INNER_PORT" ${user[@]+"${user[@]}"} \
-    -v "$storage:$INNER_STORAGE" -v "$SKILL_DIR/tests/e2e:/e2e:ro,Z" -e STORAGE_DIR="$INNER_STORAGE" \
+  mkdir "$work/storage"
+  echo "[e2e-skill] $1: AnythingLLM ($IMAGE) on :$port, its storage in $work/storage"
+  # shellcheck disable=SC2086 # the podman flag is one word, or nothing
+  "$engine" run -d --rm --name "$name" -p "127.0.0.1:$port:$INNER_PORT" ${podman:+--userns=keep-id:uid=1000,gid=1000} \
+    -v "$work/storage:$INNER_STORAGE" -v "$SKILL_DIR/tests/e2e:/e2e:ro,Z" -e STORAGE_DIR="$INNER_STORAGE" \
     -e JWT_SECRET="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" "$IMAGE" >/dev/null
   wait_until "AnythingLLM" up
   open_storage
 
-  echo "[e2e-skill] anythingllm-suite install --skills $1, built from packages/"
-  (cd "$ROOT/packages" && node build.mjs bridge >/dev/null)
-  BRIDGE_ENV_FILE="$work/bridge.env" node "$ROOT/packages/bridge/dist/anythingllm-suite.cjs" install --storage "$storage" --skills "$1" >"$work/install.log"
-  [ -d "$storage/plugins/agent-skills/$HUB_ID" ] || { echo "tools/e2e-skill: install left no plugins/agent-skills/$HUB_ID" >&2; return 1; }
-
-  echo "[e2e-skill] $SKILL_DIR/tests/e2e/inside.js"
+  BRIDGE_ENV_FILE="$work/bridge.env" node "$cli" install --storage "$work/storage" --skills "$1"
   "$engine" exec -w /app/server -e HUB_ID="$HUB_ID" -e STORAGE_DIR="$INNER_STORAGE" -e INNER_PORT="$INNER_PORT" \
     -e FENCE_ALLOW=127.0.0.1,localhost "$name" node /e2e/inside.js
   echo "tools/e2e-skill: $1 ok"
-
-  open_storage
-  "$engine" stop -t 5 "$name" >/dev/null 2>&1 || true
-  rm -rf "$work"
-  work= name=
 }
 
 [ $# -gt 0 ] || set -- $(for s in $(skills); do [ -f "$ROOT/packages/skills/$s/tests/e2e/inside.js" ] && echo "$s"; done)
-for skill in "$@"; do e2e "$skill"; done
+echo "[e2e-skill] anythingllm-suite, built from packages/"
+(cd "$ROOT/packages" && node build.mjs bridge >/dev/null)
+cli="$ROOT/packages/bridge/dist/anythingllm-suite.cjs"
+for skill in "$@"; do (e2e "$skill"); done

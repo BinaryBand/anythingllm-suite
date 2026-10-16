@@ -115,14 +115,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   } finally {
     await chrome.close();
   }
+  // The press on "more" posted an event; wait for it to land and for a call to hand over its note, so no later reply leads with it.
+  const readingFile = path.join(STORAGE_DIR, HUB_ID, "home", "reading.json");
+  const landed = Date.now() + 40_000;
+  while (Date.now() < landed && !JSON.parse(fs.readFileSync(readingFile, "utf8")).history.some((h) => h.by === "page")) await sleep(200);
+  let news = "";
+  while (Date.now() < landed && !news.includes("on reading")) news = await call("home", { action: "list" });
+  assert.match(news, /Changes made on app pages since the last call[^\n]*\n- [^\n]* on reading/, news);
   assert.match(await call("home", { action: "read", name: "reading" }), /1\. counter more button[^\n]*"Make the plus bigger"; find "<button type=\\"button\\" class=\\"primary\\" data-ref=\\"more\\"/);
 
   // The page check, in its worker on this Node.
   const refused = await call("home", { action: "edit", name: "groceries", file: "page.html", find: "<!--scripts-->", text: "<script>App.onchange(draw);</script>\n<!--scripts-->" });
   assert.match(refused, /page\.html uses draw, which no script declares/);
 
-  // The last tap's event may land after the calls above, and then the reply leads with the page-changes note.
-  assert.match(await call("home", { action: "delete", name: "groceries" }, false), /(^|\n)The user kept groceries\.$/);
+  assert.equal(await call("home", { action: "delete", name: "groceries" }, false), "The user kept groceries.");
   assert.match(asked[0].description, /Delete the app Groceries/);
   assert.match(await call("home", { action: "delete", name: "groceries" }), /^Deleted the app groceries, its changes and its page\./);
   assert.deepEqual(await state(), { gone: true }, "a page still open is told");
