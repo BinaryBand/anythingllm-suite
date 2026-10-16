@@ -25,11 +25,12 @@ export const TITLE = "apps-lean-event";
 /** The key every page posts with. */
 export const keyForPages = (): Promise<string> => pageKey(root());
 
-/** The app's newest changes as log lines, as App.log gives them: numbered up to its line. */
+/** The app's newest changes as log lines, as App.log gives them, each with the line it made (a
+ *  change from before changes kept theirs is numbered back from the app's line). */
 function logOf(app: Json): Json[] {
   const history: Json[] = app.history || [];
   const last = app.line || history.length;
-  return history.map((h, i) => ({ n: last - (history.length - 1 - i), t: h.t, by: h.by, ev: h.ev, ...(h.fields || {}), patch: h.patch }));
+  return history.map((h, i) => ({ n: h.n ?? last - (history.length - 1 - i), t: h.t, by: h.by, ev: h.ev, ...(h.fields || {}), patch: h.patch }));
 }
 
 const inlineScript = (source: string): string => "<script>" + source.replace(/<\//g, "<\\/") + "</script>";
@@ -142,6 +143,8 @@ interface Row {
   secret: unknown;
   change?: store.Change;
   picks?: Json[];
+  /** An ask's own id, as its page sent it, so one sent twice is kept once. */
+  event?: string;
   answer?: Result;
 }
 
@@ -160,7 +163,7 @@ export async function collect(): Promise<Result[]> {
     const fields = e.fields && typeof e.fields === "object" ? e.fields : undefined;
     const said = { kind, ev: String(e.ev || kind), fields } as const;
     const row: Row = { workspace: e.workspace, app: e.app, said, secret: e.secret };
-    if (kind === "ask") row.picks = e.picks;
+    if (kind === "ask") Object.assign(row, { picks: e.picks, event: typeof e.id === "string" ? e.id : undefined });
     else row.change = { patch: e.patch, ev: said.ev, fields, by: "page", id: typeof e.id === "string" ? e.id : undefined };
     const key = `${e.workspace}/${e.app}`;
     (byApp.get(key) ?? byApp.set(key, []).get(key)!).push(row);
@@ -182,8 +185,8 @@ export async function collect(): Promise<Result[]> {
       else (row.picks ? asks : changes).push(row);
     for (const row of asks)
       try {
-        const { id, kept } = await store.addAsk(workspace, app, { picks: row.picks });
-        mine(row, { ok: true, ask: id, fields: { text: `${kept} picked` } });
+        const kept = await store.addAsk(workspace, app, { event: row.event, picks: row.picks });
+        mine(row, kept ? { ok: true, ask: kept.id, fields: { text: `${kept.kept} picked` } } : { ok: false, duplicate: true });
       } catch (error) {
         mine(row, { ok: false, why: firstLine(error) });
       }

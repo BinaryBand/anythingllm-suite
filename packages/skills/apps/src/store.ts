@@ -190,8 +190,11 @@ function applyChange(app: Json, { patch, ev, fields, thread, by, id }: Change): 
   }
   const found = problems(data, app.schema);
   if (found.length) throw new AppError(`the change breaks the app's schema:\n- ${found.join("\n- ")}`);
-  const entry = { t: now(), by: by || "agent", ev: ev || "change", ...(fields ? { fields } : {}), ...(thread !== undefined ? { thread } : {}), patch, before: app.data };
-  const next = { ...app, data, line: (app.line || 0) + 1, changed: entry.t, history: [...app.history, entry].slice(-KEEP) };
+  const line = (app.line || 0) + 1;
+  // Each change keeps the line it made: an undo also takes a line, so the newest changes' lines
+  // can't be worked out from where they stand in the history.
+  const entry = { n: line, t: now(), by: by || "agent", ev: ev || "change", ...(fields ? { fields } : {}), ...(thread !== undefined ? { thread } : {}), patch, before: app.data };
+  const next = { ...app, data, line, changed: entry.t, history: [...app.history, entry].slice(-KEEP) };
   return id ? seenWith(next, id) : next;
 }
 
@@ -358,7 +361,7 @@ export const ASK_TEXT = 500;
 /** An ask from the app's page: what the user picked on it ("Change this") and what they want of
  *  each, kept apart from the data and its history until the agent clears it. Refused when it's
  *  malformed, or when ASKS_WAITING already wait. */
-export async function addAsk(workspace: string, name: unknown, ask: { picks: Json }): Promise<{ id: string; kept: number }> {
+export async function addAsk(workspace: string, name: unknown, ask: { event?: string; picks: Json }): Promise<{ id: string; kept: number } | null> {
   const picks = Array.isArray(ask.picks) ? ask.picks.slice(0, PICKS) : [];
   const clip = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : undefined);
   const clean = picks
@@ -366,12 +369,15 @@ export async function addAsk(workspace: string, name: unknown, ask: { picks: Jso
     .filter((p: Json) => p.text);
   if (!clean.length) throw new AppError("an ask says what should change of something picked on the page");
   const app = await update(workspace, name, (app) => {
+    // A page may send an ask twice: it's kept once, as a change is.
+    if (isSeen(app, ask.event)) return { ...app, duplicate: true };
     const asks: Json[] = app.asks || [];
     if (asks.length >= ASKS_WAITING) throw new AppError(`${ASKS_WAITING} asks are waiting already: the chat has to catch up first`);
     const seq = (app.askSeq || 0) + 1;
-    return { ...app, askSeq: seq, asks: [...asks, { id: `a${seq}`, t: now(), picks: clean }] };
+    const next = { ...app, askSeq: seq, asks: [...asks, { id: `a${seq}`, t: now(), picks: clean }] };
+    return ask.event ? seenWith(next, ask.event) : next;
   });
-  return { id: app.asks.at(-1).id, kept: clean.length };
+  return app.duplicate ? null : { id: app.asks.at(-1).id, kept: clean.length };
 }
 
 /** The app with a secret for its page's events, made now for an app from before apps had one. */

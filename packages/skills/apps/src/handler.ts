@@ -98,7 +98,7 @@ const askLines = (ask: Json, page: string): string[] => [
 
 const changeLine = (h: Json): string => `- ${h.t} ${h.ev}${h.fields ? ` ${JSON.stringify(h.fields)}` : ""}`;
 
-const ACTIONS: Record<string, Action> = {
+const ACTIONS = {
   list: ({ workspace }, _p, self) => {
     const apps = store.list(workspace);
     const listed = apps.length
@@ -257,37 +257,57 @@ const ACTIONS: Record<string, Action> = {
       throw new AppError((e as Error).message);
     }
   },
+} satisfies Record<string, Action>;
+
+/** What each action is, for the rules around it:
+ *  - job: what a scheduled job may do with it. A job's prompt is the user's, but what it reads on
+ *    the way (a mail, a page) isn't, so in a workspace it names a job can only read, and change the
+ *    data of an app that takes jobs; it can't make, rewrite, take back or delete an app there, or
+ *    write a page's script. "own": only in its own workspace (_jobs); "named": in a workspace it
+ *    names too; "app": there, only on an app whose app.json says "jobs": true; "never": not at all.
+ *  - changes: it changes the app it names, whose page is written again after.
+ *  - pages: it reads apps, so what pages posted is taken first and what they did is said (all but
+ *    guide). */
+interface Rule {
+  job: "own" | "named" | "app" | "never";
+  changes?: true;
+  pages?: false;
+}
+const RULES: { [action in keyof typeof ACTIONS]: Rule } = {
+  list: { job: "named" },
+  create: { job: "own" },
+  do: { job: "app", changes: true },
+  read: { job: "named" },
+  page: { job: "own" },
+  undo: { job: "own", changes: true },
+  edit: { job: "own", changes: true },
+  delete: { job: "never" },
+  guide: { job: "named", pages: false },
 };
 
-/** What a scheduled job may do in a workspace it names: read, and change the data of an app that
- *  takes it. A job's prompt is the user's, but what it reads on the way (a mail, a page) isn't, so
- *  a job can't make, rewrite, take back or delete a workspace's app, or write a page's script. */
-const JOB_IN_A_WORKSPACE = new Set(["list", "read", "do", "guide"]);
-
 /** The workspace a call works on: AnythingLLM's for a chat; for a scheduled job, which AnythingLLM
- *  gives none, its own (_jobs) or one it names, within JOB_IN_A_WORKSPACE. Throws what it may not do. */
-function scopeFor(self: HandlerContext, action: string, p: Args): Scope {
+ *  gives none, its own (_jobs) or one it names, as RULES let it. Throws what it may not do. */
+function scopeFor(self: HandlerContext, action: keyof typeof ACTIONS, p: Args): Scope {
   const scope = scopeOf(self);
   const named = typeof p.workspace === "string" && p.workspace.trim() ? p.workspace.trim() : null;
   if (!scope.job) {
     if (named) throw new AppError("workspace is for a scheduled job: a chat works on its own workspace's apps, so leave it out");
     return scope;
   }
-  if (action === "delete") throw new AppError("a scheduled job can't delete an app: the user deletes one from a chat");
+  const { job } = RULES[action];
+  if (job === "never") throw new AppError(`a scheduled job can't ${action} an app: the user does that from a chat`);
   if (!named) return scope;
-  if (!JOB_IN_A_WORKSPACE.has(action)) throw new AppError(`a scheduled job may list, read and do in a workspace it names, not ${action}: ask the user to do that from a chat`);
-  if (action === "do" && store.read(named, p.name).jobs !== true)
+  if (job === "own") throw new AppError(`a scheduled job may list, read and do in a workspace it names, not ${action}: ask the user to do that from a chat`);
+  if (job === "app" && store.read(named, p.name).jobs !== true)
     throw new AppError(`${p.name} doesn't take changes from scheduled jobs: the user lets it from a chat, where its app.json gets "jobs": true`);
   return { workspace: named, job: true };
 }
 
-/** Actions that change an app named in the call, after which its page is written again. */
-const CHANGES = new Set(["do", "undo", "edit"]);
-
 async function run(self: HandlerContext, params: Args): Promise<string> {
-  const action = params.action || "list";
-  const act = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : undefined;
-  if (!act) throw new AppError(`action is one of ${Object.keys(ACTIONS).join(", ")}`);
+  const action = (params.action || "list") as keyof typeof ACTIONS;
+  if (!Object.hasOwn(ACTIONS, action)) throw new AppError(`action is one of ${Object.keys(ACTIONS).join(", ")}`);
+  const act: Action = ACTIONS[action];
+  const rule = RULES[action];
   const scope = scopeFor(self, action, params);
   // One key for every page a call writes, asked for when the first needs it.
   let asked: Promise<string> | undefined;
@@ -295,16 +315,16 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   // Pages' changes are applied as they land, by a watch that lasts as long as AnythingLLM's process;
   // a call takes what's waiting first, so it reads every app as its pages left it.
   keepWatching();
-  if (action !== "guide") {
+  if (rule.pages !== false) {
     // What older pages posted, before upgrade gives their apps a secret those pages don't have.
     await caughtUp(key);
     // A job's process ends within minutes and starts afresh each run: the chat's does this.
     if (!scope.job) await upgrade(key);
   }
   const reply = await act(scope, params, self);
-  if (CHANGES.has(action) && params.name) await refresh(scope.workspace, params.name, key);
+  if (rule.changes && params.name) await refresh(scope.workspace, params.name, key);
   // What pages did is said once, in the workspace's next chat call; a scheduled job is told none.
-  const lines = action === "guide" || scope.job ? [] : await news(scope.workspace);
+  const lines = rule.pages === false || scope.job ? [] : await news(scope.workspace);
   return lines.length ? [...lines, "", reply].join("\n") : reply;
 }
 

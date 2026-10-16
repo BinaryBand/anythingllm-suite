@@ -125,3 +125,13 @@ test("two changes to one app at once both land: each waits for the other's lock"
   await Promise.all(["a", "b", "c", "d"].map((t) => store.change("home", "busy", { patch: add(t) })));
   assert.deepEqual(store.read("home", "busy").data.items.map((i: any) => i.text).sort(), ["a", "b", "c", "d"]);
 });
+
+test("each change keeps the line it made, so an undo between changes leaves their lines right", async () => {
+  await store.create("home", "lines", definitionFor("list", { title: "Lines" }));
+  await store.change("home", "lines", { patch: add("a") });
+  await store.change("home", "lines", { patch: add("b") });
+  await store.undo("home", "lines");
+  await store.change("home", "lines", { patch: add("c") });
+  const app = store.read("home", "lines");
+  assert.deepEqual([app.line, app.history.map((h: any) => h.n)], [4, [1, 4]], "line 2 was taken back by the undo at line 3");
+});

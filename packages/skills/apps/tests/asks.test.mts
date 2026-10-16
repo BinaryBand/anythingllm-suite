@@ -54,3 +54,13 @@ test("a pick is found by what marks it in page.html, never by its text", () => {
   assert.equal(whereIs({ part: "stat", ref: "more" }, page), 'find "<b data-ref=\\"more\\">"');
   assert.equal(whereIs({ tag: "span", shown: "Hi" }, page), "not marked in page.html: read the file for the place");
 });
+
+test("an ask a page sends twice is kept once, as a change is", async () => {
+  await call("home", { action: "create", name: "twice", title: "Twice", starter: "checklist" });
+  const event = { workspace: "home", app: "twice", secret: store.read("home", "twice").secret, id: "same-ask", kind: "ask", ev: "ask", picks: [{ tag: "p", text: "Bigger" }] };
+  post(event);
+  post(event);
+  const listed = await call("home", { action: "list" });
+  assert.equal(store.read("home", "twice").asks.length, 1);
+  assert.equal(listed.match(/ask a\d+ on twice/g)?.length, 1, "told once");
+});
