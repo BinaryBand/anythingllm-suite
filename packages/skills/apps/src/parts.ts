@@ -178,7 +178,9 @@ export function template(name = DEFAULT_TEMPLATE): string {
 function split(name: string): { markup: string; script: string } {
   const part = parts()[name];
   if (!part || part.kind !== "component") throw new Error(`no component ${name}`);
+  // A component of markup alone (one in .static, say) has no script to place.
   const at = part.body.indexOf("<script>");
+  if (at < 0) return { markup: part.body.trim(), script: "" };
   return { markup: part.body.slice(0, at).trim(), script: part.body.slice(at).trim() };
 }
 

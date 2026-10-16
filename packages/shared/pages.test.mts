@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, beforeEach, test } from "node:test";
-import { embed, eventsDir, inTurn, pageKey, take, watch, writePublic, publicDir } from "./pages.mts";
+import { embed, eventsDir, inTurn, pageKey, putBack, take, watch, writePublic, publicDir } from "./pages.mts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pages-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -47,6 +47,13 @@ test("an event another process claimed (renamed) first isn't taken again", () =>
   fs.renameSync(file, `${file}.taken-1`);
   posted("c", { n: 2 });
   assert.deepEqual(take("c"), [{ n: 2 }]);
+});
+
+test("an event put back is taken again by the next pass", () => {
+  posted("c", { n: 1 });
+  const [event] = take("c");
+  putBack("c", event);
+  assert.deepEqual(take("c"), [{ n: 1 }]);
 });
 
 test("a file still being written waits; one that stays unreadable is dropped as null", () => {

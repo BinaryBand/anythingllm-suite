@@ -13,7 +13,7 @@ test("an app is made, changed, undone and kept apart by workspace", async () => 
   assert.deepEqual(app.data.items.map((i: any) => i.text), ["Eggs", "Milk"]);
   assert.equal(app.history.length, 2);
   const { app: back, undone } = await store.undo("home", "groceries");
-  assert.equal(undone.ev, "add");
+  assert.equal(undone?.ev, "add");
   assert.deepEqual(back.data.items.map((i: any) => i.text), ["Eggs"]);
   assert.deepEqual(store.list("work"), []);
   assert.throws(() => store.read("work", "groceries"), /no app named groceries/);
@@ -83,9 +83,9 @@ test("write and edit keep each file as it was, and revert puts back the newest c
   await store.writeFile("home", "kept", "page.html", page(3));
   assert.deepEqual(store.read("home", "kept").versions.map((v: any) => v.file), ["page.html", "page.html", "app.json"], "a write that changes nothing keeps no version");
 
-  // With no file named, the newest change of either; with one, that file's newest.
-  const { app, reverted } = await store.revert("home", "kept");
-  assert.equal(reverted.file, "app.json");
+  // undo takes back the newest change, here to either file; revert, the newest to the file named.
+  const { app, reverted } = await store.undo("home", "kept");
+  assert.equal(reverted?.file, "app.json");
   assert.equal(app.title, "Kept");
   assert.equal((await store.revert("home", "kept", "page.html")).app.page, page(2));
   assert.equal((await store.revert("home", "kept", "page.html")).app.page, page(1));
@@ -148,4 +148,46 @@ test("an app whose changes are from before they kept their lines gets them at it
   await store.undo("home", "older-lines");
   await store.change("home", "older-lines", { patch: add("d") });
   assert.deepEqual(store.read("home", "older-lines").history.map((h: any) => h.n), [1, 2, 5]);
+});
+
+test("undo takes back the newest change, data or file, told apart by the line each was made at", async () => {
+  await store.create("home", "close", definitionFor("list", { title: "Close" }), undefined);
+  const page = (b: number) => `<script src="app.js"></script><script>App.start(/*APP*/null)</script><b>${b}</b>`;
+  await store.change("home", "close", { patch: add("Eggs"), ev: "add" });
+  await store.writeFile("home", "close", "page.html", page(1));
+  const { reverted } = await store.undo("home", "close");
+  assert.equal(reverted?.file, "page.html", "the file's change came after the data's, however close");
+  const { undone } = await store.undo("home", "close");
+  assert.equal(undone?.ev, "add");
+  await assert.rejects(store.undo("home", "close"), /no change left/);
+});
+
+test("undo refuses data its app.json no longer fits, and an app with no history has nothing to undo", async () => {
+  await store.create("home", "narrowed", definitionFor("list", { title: "Narrowed" }), undefined);
+  await store.change("home", "narrowed", { patch: [{ op: "add", path: "/extra", value: 1 }] });
+  const json = JSON.parse(store.readFile("home", "narrowed", "app.json")!);
+  await store.writeFile("home", "narrowed", "app.json", JSON.stringify({ ...json, schema: { ...json.schema, required: [...(json.schema.required || []), "extra"] } }));
+  // The app.json change is kept no longer, so undo reaches the data's.
+  const file = `${root}/home/narrowed.json`;
+  const { versions, ...kept } = JSON.parse(fs.readFileSync(file, "utf8"));
+  fs.writeFileSync(file, JSON.stringify(kept));
+  await assert.rejects(store.undo("home", "narrowed"), /the app can't be undone:\n- data \/: needs extra/);
+  assert.equal(store.read("home", "narrowed").data.extra, 1, "nothing was changed");
+
+  const { history, ...rest } = kept;
+  fs.writeFileSync(file, JSON.stringify(rest));
+  await assert.rejects(store.undo("home", "narrowed"), /no change left/);
+});
+
+test("a page is checked before its app's lock is taken, so other changes don't wait on the check", async () => {
+  await store.create("home", "slow-check", definitionFor("list", { title: "Slow" }), undefined);
+  // A script that never ends keeps the check going for its whole time.
+  const start = Date.now();
+  const writing = store.writeFile("home", "slow-check", "page.html", `<script src="app.js"></script><script>App.start(/*APP*/null)</script><script>for (;;) {}</script>`);
+  await new Promise((go) => setTimeout(go, 50));
+  await store.change("home", "slow-check", { patch: add("Eggs") });
+  const changed = Date.now() - start;
+  const app = await writing;
+  assert.ok(Date.now() - start > 400 && changed < 300, `the change took ${changed} ms of the check's ${Date.now() - start}`);
+  assert.deepEqual(app.data.items.map((i: any) => i.text), ["Eggs"], "the write kept the change made meanwhile");
 });

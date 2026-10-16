@@ -140,6 +140,12 @@ export function take(title: string): unknown[] {
   return events;
 }
 
+/** Puts `event` back among those waiting for `title`, as AnythingLLM's collector writes what a page
+ *  posted, for a later pass to take: one that met something passing, such as a lock held too long. */
+export function putBack(title: string, event: unknown): void {
+  writeAtomic(path.join(eventsDir(), `raw-${title}-again-${crypto.randomUUID()}.json`), JSON.stringify({ pageContent: JSON.stringify(event) }), 0o600);
+}
+
 type Watch = { pass: () => Promise<void>; until: () => number; queued: boolean; seen: number; dir: number; watcher?: fs.FSWatcher; timer?: NodeJS.Timeout; stop: () => void };
 
 /** Runs `pass` for `title` after the one before it, whoever asked for it (the watch, or a call): one

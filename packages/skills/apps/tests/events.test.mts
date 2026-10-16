@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { definitionFor, eventsDir, post, publicDir, root } from "./harness.mts";
-import { caughtUp, collect, keepWatching, MOST_AT_ONCE, news, NEWS_KEPT, upgrade, versionOf } from "../src/page.ts";
+import { caughtUp, collect, keepWatching, MOST_AT_ONCE, news, NEWS_KEPT, TRIES, upgrade, versionOf } from "../src/page.ts";
 import * as store from "../src/store.ts";
 
 /** What a page posts for `app`: its event with the app's secret, as the page has it. */
@@ -115,6 +115,32 @@ test("a page sends at most MOST_AT_ONCE changes in one pass; the rest are refuse
   const results = await collect();
   assert.equal(results.filter((r) => r.ok).length, MOST_AT_ONCE);
   assert.deepEqual([...new Set(results.filter((r) => !r.ok).map((r) => r.why))], [`more than ${MOST_AT_ONCE} changes at once`]);
+  const app = store.read("home", "flood");
+  assert.deepEqual(app.refused.map((r: any) => r.id), ["f20", "f21", "f22"], "seen and refused, so their page drops them");
+  assert.ok(["f20", "f21", "f22"].every((id) => app.seen.includes(id)));
+});
+
+test("an event that meets something passing is put back and tried again, at most TRIES times", async () => {
+  await store.create("home", "locked-out", definitionFor("list", { title: "Locked out" }));
+  const file = path.join(root, "home", "locked-out.json");
+  from("home", "locked-out", add("Eggs", "l1"));
+  fs.chmodSync(file, 0);
+  try {
+    const [first] = await collect();
+    assert.deepEqual([first.ok, first.again], [false, true]);
+    assert.equal(waiting().length, 1, "put back");
+    for (let i = 2; i < TRIES; i++) assert.equal((await collect())[0].again, true);
+    assert.equal((await collect())[0].again, false, "given up on");
+    assert.deepEqual(waiting(), []);
+  } finally {
+    fs.chmodSync(file, 0o600);
+  }
+  from("home", "locked-out", add("Jam", "l2"));
+  fs.chmodSync(file, 0);
+  await collect();
+  fs.chmodSync(file, 0o600);
+  assert.deepEqual((await collect()).map((r) => r.ok), [true], "and applied once it can be");
+  assert.deepEqual(store.read("home", "locked-out").data.items.map((i: any) => i.text), ["Jam"]);
 });
 
 test("once a process, pages from an older skill are written again, with a secret, and the old font goes", async () => {

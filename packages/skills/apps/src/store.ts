@@ -7,6 +7,7 @@
 // never half written, and every read-change-write holds the app's lock (#shared/atomic), since a
 // scheduled job runs in a process of its own.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { locked, readJson, writeAtomic } from "#shared/atomic";
@@ -15,7 +16,7 @@ import { Told } from "#shared/errors";
 import { root } from "./dirs.ts";
 import { apply, PatchError, type Json } from "./patch.ts";
 import { DEFINITION, definitionOf, pageProblems } from "./parts.ts";
-import { problems, unknownKeywords } from "./schema.ts";
+import { problems, schemaProblems } from "./schema.ts";
 
 /** A mistake in what the agent asked for, said back to it in words. */
 export class AppError extends Told {}
@@ -62,14 +63,32 @@ export function read(workspace: string, name: unknown): Json {
 }
 
 /** Reads the app, changes it with `fn` and saves what `fn` answers, all under the app's lock; an
- *  answer that is the app itself, or one marked a duplicate, is saved for none. */
-function update(workspace: string, name: unknown, fn: (app: Json) => Json | Promise<Json>): Promise<Json> {
+ *  answer that is the app itself, or one marked a duplicate, is saved for none. With `pageFirst`,
+ *  for a change that may write page.html, `fn` is tried first on the app as it is, outside the lock,
+ *  so the page it writes is checked (the slow part) before the lock is taken, and found checked
+ *  under it; `fn` must change nothing but what it answers. */
+async function update(workspace: string, name: unknown, fn: (app: Json) => Json | Promise<Json>, pageFirst = false): Promise<Json> {
+  if (pageFirst)
+    try {
+      await fn(read(workspace, name));
+    } catch {} // said by the try under the lock
   return withLock(workspace, name, async () => {
     const app = read(workspace, name);
     const next = await fn(app);
     if (next !== app && !next.duplicate) save(workspace, next);
     return next;
   });
+}
+
+/** update for `fn` that answers the next app with more besides: the saved app and that more. */
+async function updateWith<R extends object>(workspace: string, name: unknown, fn: (app: Json) => Promise<{ next: Json } & R>, pageFirst = false): Promise<{ app: Json } & R> {
+  let more!: R;
+  const app = await update(workspace, name, async (app) => {
+    const { next, ...rest } = await fn(app);
+    more = rest as unknown as R;
+    return next;
+  }, pageFirst);
+  return { app, ...more };
 }
 
 /** `app` with the ask `id` cleared, for a change made for it; throws, so nothing is saved, when the
@@ -84,7 +103,7 @@ function cleared(app: Json, id: unknown): Json {
 /** `app`'s history with each change's line, for changes from before changes kept theirs: worked out
  *  back from the app's line, which is right only while none in the history has its own, so done at
  *  the first write that adds one. */
-function numbered(app: Json): Json[] {
+export function numbered(app: Json): Json[] {
   const history: Json[] = app.history || [];
   if (history.every((h) => h.n !== undefined)) return history;
   return history.map((h, i) => (h.n !== undefined ? h : { ...h, n: (app.line || 0) - (history.length - 1 - i) }));
@@ -94,6 +113,22 @@ function numbered(app: Json): Json[] {
 const seenWith = (app: Json, id: string): Json => ({ ...app, seen: [...(app.seen || []), id].slice(-SEEN) });
 const isSeen = (app: Json, id: string | undefined): boolean => !!id && (app.seen || []).includes(id);
 
+// The page check runs a page's scripts in a worker, which is slow next to a lock that should be held
+// for milliseconds: the newest pages' problems are kept, by a hash of their text, so a page checked
+// before its app's lock is taken (update's pageFirst) is found checked under it.
+const PAGES_KEPT = 8;
+const checkedPages = new Map<string, string[]>();
+async function problemsOfPage(page: unknown): Promise<string[]> {
+  if (typeof page !== "string") return pageProblems(page);
+  const key = crypto.createHash("sha256").update(page).digest("base64url");
+  let found = checkedPages.get(key);
+  if (!found) {
+    checkedPages.set(key, (found = await pageProblems(page)));
+    for (const old of [...checkedPages.keys()].slice(0, -PAGES_KEPT)) checkedPages.delete(old);
+  }
+  return found;
+}
+
 /** Why the definition can't hold `data`: every problem, empty when it can. The data is checked
  *  whenever the schema itself can be read, whatever else is wrong; the page only when `page`, as
  *  when it's new or changed (the check runs its scripts in a worker, which is the slow part). */
@@ -102,9 +137,9 @@ async function definitionProblems(app: Json, page: boolean): Promise<string[]> {
   if (typeof app.title !== "string" || !app.title.trim() || app.title.length > TITLE_MAX) out.push(`title: 1-${TITLE_MAX} characters`);
   if (app.about !== undefined && typeof app.about !== "string") out.push("about: a sentence");
   if (!Array.isArray(app.rules) || app.rules.some((r: unknown) => typeof r !== "string")) out.push("rules: a list of sentences");
-  const unknown = app.schema && typeof app.schema === "object" && !Array.isArray(app.schema) ? unknownKeywords(app.schema) : null;
-  if (!unknown) out.push("schema: a JSON Schema object");
-  else out.push(...unknown.map((k) => `schema${k}: not a keyword apps check; use type, properties, required, items, enum, minimum and the like`));
+  const schema = app.schema && typeof app.schema === "object" && !Array.isArray(app.schema) ? schemaProblems(app.schema) : null;
+  if (!schema) out.push("schema: a JSON Schema object");
+  else out.push(...schema.map((p) => `schema${p}`));
   if (!app.card || typeof app.card !== "object" || Array.isArray(app.card)) out.push("card: an object of summary, lines, items, text, done and where");
   else {
     for (const k of Object.keys(app.card)) if (!CARD_KEYS.has(k)) out.push(`card.${k}: not a card key (summary, lines, items, text, done, where)`);
@@ -116,8 +151,8 @@ async function definitionProblems(app: Json, page: boolean): Promise<string[]> {
   }
   if (app.icon !== undefined && typeof app.icon !== "string") out.push("icon: a name");
   if (app.jobs !== undefined && typeof app.jobs !== "boolean") out.push("jobs: true lets a scheduled job change the data with do");
-  if (page && app.page !== undefined) out.push(...(await pageProblems(app.page)));
-  if (unknown && !unknown.length) out.push(...problems(app.data, app.schema).map((p) => `data ${p}`));
+  if (page && app.page !== undefined) out.push(...(await problemsOfPage(app.page)));
+  if (schema && !schema.length) out.push(...problems(app.data, app.schema).map((p) => `data ${p}`));
   return out;
 }
 
@@ -169,6 +204,7 @@ export async function create(workspace: string, name: unknown, definition: Json,
     save(workspace, app);
     return app;
   };
+  if (typeof definition.page === "string") await problemsOfPage(definition.page); // before the lock
   // A name that can't be one has no lock to take: its problem is said with the others.
   return nameProblem(name) ? Promise.resolve().then(make) : withLock(workspace, name, make);
 }
@@ -225,40 +261,65 @@ export interface Answer {
   error?: Error;
 }
 
+/** `app` remembering the page events `ids` as seen and refused, for `why`, so their page stops
+ *  showing them and can say so. */
+function refusedWith(app: Json, ids: (string | undefined)[], why: string): Json {
+  const fresh = [...new Set(ids)].filter((id): id is string => !!id && !isSeen(app, id));
+  if (!fresh.length) return app;
+  return { ...app, seen: [...(app.seen || []), ...fresh].slice(-SEEN), refused: [...(app.refused || []), ...fresh.map((id) => ({ id, why }))].slice(-REFUSED) };
+}
+
 /** Several changes to one app, in order, read once and saved once: one answer for each (the
- *  others still apply when one doesn't). Throws when the app can't be read or saved. */
-export async function changeMany(workspace: string, name: unknown, changes: Change[]): Promise<Answer[]> {
+ *  others still apply when one doesn't). Those past the first `most` are refused untried, so a flood
+ *  can't push the app's changes out of its history. Throws when the app can't be read or saved. */
+export async function changeMany(workspace: string, name: unknown, changes: Change[], most = Infinity): Promise<Answer[]> {
   let answers: Answer[] = [];
   await update(workspace, name, (first) => {
     let app = first;
-    answers = changes.map((opts): Answer => {
+    answers = changes.slice(0, most).map((opts): Answer => {
       try {
         const next = applyChange(app, opts);
         if (next.duplicate) return { duplicate: true };
         app = next;
         return {};
       } catch (error) {
-        // A page's change that was refused is seen too, so the page stops showing it, and kept
-        // with why, so the page can say so.
-        if (opts.id && !isSeen(app, opts.id)) app = { ...seenWith(app, opts.id), refused: [...(app.refused || []), { id: opts.id, why: (error as Error).message.split("\n")[0] }].slice(-REFUSED) };
+        app = refusedWith(app, [opts.id], (error as Error).message.split("\n")[0]);
         return { error: error as Error };
       }
     });
+    const over = changes.slice(most);
+    if (over.length) {
+      const error = new AppError(`more than ${most} changes at once`);
+      app = refusedWith(app, over.map((c) => c.id), error.message);
+      answers.push(...over.map(() => ({ error })));
+    }
     return app;
   });
   return answers;
 }
 
-/** The app with its newest change taken back. */
-export async function undo(workspace: string, name: unknown): Promise<{ app: Json; undone: Json }> {
-  let undone: Json;
-  const app = await update(workspace, name, (app) => {
-    undone = app.history[app.history.length - 1];
-    if (!undone) throw new AppError(`${name} has no change left to undo`);
-    return { ...app, data: undone.before, line: (app.line || 0) + 1, changed: now(), history: numbered(app).slice(0, -1) };
-  });
-  return { app, undone: undone! };
+/** `app` with its newest data change taken back, checked: the data as it was may no longer fit the
+ *  schema (app.json changed since). */
+async function undoOn(app: Json): Promise<{ next: Json; undone: Json }> {
+  const history = numbered(app);
+  const undone = history.at(-1);
+  if (!undone) throw new AppError(`${app.name} has no change left to undo`);
+  const next = { ...app, data: undone.before, line: (app.line || 0) + 1, changed: now(), history: history.slice(0, -1) };
+  return { next: await checked(next, [], "undone", false), undone };
 }
+
+/** Whether `app`'s newest change is to one of its files rather than to its data. A file's change
+ *  keeps the line the app was at, so it came after the data change that made that line. */
+function fileIsNewest(app: Json): boolean {
+  const data = numbered(app).at(-1), file = (app.versions || []).at(-1);
+  if (!file || !data) return !!file;
+  return file.n !== undefined ? file.n >= data.n : file.t > data.t; // a version from before versions kept their line
+}
+
+/** The app with its newest change taken back, to its data (`undone`) or to one of its files
+ *  (`reverted`), decided under its lock. */
+export const undo = (workspace: string, name: unknown): Promise<{ app: Json; undone?: Json; reverted?: Json }> =>
+  updateWith(workspace, name, (app): Promise<{ next: Json; undone?: Json; reverted?: Json }> => (fileIsNewest(app) ? revertOn(app, app.versions.length - 1) : undoOn(app)), true);
 
 /** app.json's text: the definition as app.json holds it. */
 export const definitionText = (app: Json): string => JSON.stringify(definitionOf(app), null, 2) + "\n";
@@ -322,43 +383,53 @@ async function withFile(app: Json, file: string, text: Json): Promise<Json> {
 async function withVersion(app: Json, file: string, text: Json, ask?: unknown): Promise<Json> {
   const before = fileText(app, file);
   const next = cleared(await withFile(app, file, text), ask);
-  if (fileText(next, file) !== before) next.versions = [...(app.versions || []), { t: next.changed, file, before }].slice(-VERSIONS);
+  if (fileText(next, file) !== before) next.versions = [...(app.versions || []), { n: app.line || 0, t: next.changed, file, before }].slice(-VERSIONS);
   return next;
 }
 
 /** The app with one file replaced, and the file as it was kept for undo when it changed. */
 export async function writeFile(workspace: string, name: unknown, file: unknown, text: Json, ask?: unknown): Promise<Json> {
   readableCheck(file);
-  return update(workspace, name, (app) => withVersion(app, file, text, ask));
+  return update(workspace, name, (app) => withVersion(app, file, text, ask), file === "page.html");
 }
 
-/** The app with the newest change to `file` (else to either file) taken back, and that change. */
-export async function revert(workspace: string, name: unknown, file?: unknown): Promise<{ app: Json; reverted: Json }> {
-  if (file !== undefined) readableCheck(file);
-  let reverted: Json;
-  const app = await update(workspace, name, async (app) => {
-    const versions: Json[] = app.versions || [];
-    const at = file === undefined ? versions.length - 1 : versions.map((v) => v.file).lastIndexOf(file);
-    if (at < 0) throw new AppError(`${name} has no change to ${file || "app.json or page.html"} left to take back`);
-    reverted = versions[at];
-    return { ...(await withFile(app, reverted.file, reverted.before)), versions: [...versions.slice(0, at), ...versions.slice(at + 1)] };
-  });
-  return { app, reverted: reverted! };
+/** `app` with its version `at` (of app.json or page.html) put back, and that version. */
+async function revertOn(app: Json, at: number): Promise<{ next: Json; reverted: Json }> {
+  const versions: Json[] = app.versions;
+  const reverted = versions[at];
+  return { next: { ...(await withFile(app, reverted.file, reverted.before)), versions: [...versions.slice(0, at), ...versions.slice(at + 1)] }, reverted };
+}
+
+/** Where the newest change to `file` is in `app`'s versions; throws when there's none left. */
+function versionIndex(app: Json, file: string): number {
+  const at = (app.versions || []).map((v: Json) => v.file).lastIndexOf(file);
+  if (at < 0) throw new AppError(`${app.name} has no change to ${file} left to take back`);
+  return at;
+}
+
+/** The app with the newest change to `file` taken back, and that change. */
+export async function revert(workspace: string, name: unknown, file: unknown): Promise<{ app: Json; reverted: Json }> {
+  readableCheck(file);
+  return updateWith(workspace, name, (app) => revertOn(app, versionIndex(app, file)), file === "page.html");
+}
+
+/** `app`'s `file` with `find`, found once, replaced with `text`; throws, with the file as it is, when
+ *  it isn't found once. */
+function edited(app: Json, file: string, find: unknown, text: unknown): string {
+  const was = fileText(app, file);
+  if (was === null) throw new AppError(`${app.name} has no ${file} yet: write it whole with edit`);
+  if (typeof find !== "string" || !find) throw new AppError("edit needs find: text the file holds");
+  const at = was.indexOf(find);
+  // The file as it is comes with the refusal, so the next try needs no read first.
+  if (at < 0) throw new AppError(`${file} doesn't hold that text. It is now:\n${was}`);
+  if (was.indexOf(find, at + 1) >= 0) throw new AppError(`${file} holds that text more than once; give more of it, so it's found exactly once`);
+  return was.slice(0, at) + String(text ?? "") + was.slice(at + find.length);
 }
 
 /** The app with `find` in one file replaced, once, with `text`. */
 export async function editFile(workspace: string, name: unknown, file: unknown, find: unknown, text: unknown, ask?: unknown): Promise<Json> {
   readableCheck(file);
-  return update(workspace, name, (app) => {
-    const was = fileText(app, file);
-    if (was === null) throw new AppError(`${name} has no ${file} yet: write it whole with edit`);
-    if (typeof find !== "string" || !find) throw new AppError("edit needs find: text the file holds");
-    const at = was.indexOf(find);
-    // The file as it is comes with the refusal, so the next try needs no read first.
-    if (at < 0) throw new AppError(`${file} doesn't hold that text. It is now:\n${was}`);
-    if (was.indexOf(find, at + 1) >= 0) throw new AppError(`${file} holds that text more than once; give more of it, so it's found exactly once`);
-    return withVersion(app, file, was.slice(0, at) + String(text ?? "") + was.slice(at + find.length), ask);
-  });
+  return update(workspace, name, (app) => withVersion(app, file, edited(app, file, find, text), ask), file === "page.html");
 }
 
 /** The app with `fields` outside its data and history set, such as its page's token. */

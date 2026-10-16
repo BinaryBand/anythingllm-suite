@@ -278,3 +278,9 @@ test("every page a call touches is written, and they share one key for pages", a
   const keyOf = (name: string) => /"key":"([^"]+)"/.exec(page(name))![1];
   assert.equal(keyOf("one"), keyOf("two"), "one key for every page");
 });
+
+test("a parameter given as null is one left out", async () => {
+  await make("home", "nulls", "Nulls");
+  assert.match(await call("home", { action: "do", name: "nulls", ev: "add", patch: [{ op: "add", path: "/items/-", value: { text: "Eggs", done: false } }], ask: null, workspace: null }), /^Done: add on nulls\./);
+  assert.match(await call("home", { action: "undo", name: "nulls", file: null }), /^Took back add/);
+});

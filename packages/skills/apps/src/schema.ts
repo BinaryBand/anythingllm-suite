@@ -1,15 +1,9 @@
 // The part of JSON Schema an app's data is checked with. Every keyword it does not know is refused
-// when the schema is written (unknownKeywords), so no data goes unchecked by a keyword it ignores.
+// when the schema is written (schemaProblems), so no data goes unchecked by a keyword it ignores.
 
 import { clone, equal, type Json } from "./patch.ts";
 
 const ANNOTATIONS = new Set(["title", "description", "default", "examples", "$comment", "format"]);
-const KEYWORDS = new Set([
-  "type", "properties", "required", "additionalProperties", "minProperties", "maxProperties", "items", "minItems", "maxItems",
-  "uniqueItems", "minLength", "maxLength", "pattern", "minimum", "maximum", "exclusiveMinimum",
-  "exclusiveMaximum", "multipleOf", "enum", "const",
-]);
-
 const patterns = new Map<string, RegExp>();
 /** The compiled regular expression for a schema's pattern, kept so a long list compiles it once. */
 function patternOf(source: string): RegExp {
@@ -32,16 +26,45 @@ function typeOf(v: Json): string {
 
 const isType = (v: Json, t: string): boolean => typeOf(v) === t || (t === "number" && typeOf(v) === "integer");
 
-/** The keywords in `schema`, at any depth, that this checker does not know. */
-export function unknownKeywords(schema: Json, at = ""): string[] {
+const strings = (v: Json): boolean => Array.isArray(v) && v.every((x) => typeof x === "string");
+const compiles = (v: Json): boolean => {
+  try {
+    return typeof v === "string" && !!patternOf(v);
+  } catch {
+    return false;
+  }
+};
+const NUMBER: [(v: Json) => boolean, string] = [(v) => typeof v === "number", "a number"];
+/** Each keyword this checker knows, with what its value must be, so data is never checked by a
+ *  pattern that won't compile or a "required" that isn't a list (null: any value, or a schema). */
+const KEYWORDS: Record<string, [(v: Json) => boolean, string] | null> = {
+  type: [(v) => typeof v === "string" || strings(v), "a type's name, or a list of them"],
+  properties: [(v) => !!v && typeof v === "object" && !Array.isArray(v), "an object of schemas"],
+  required: [strings, "a list of key names"],
+  additionalProperties: null,
+  items: null,
+  uniqueItems: [(v) => typeof v === "boolean", "true or false"],
+  pattern: [compiles, "a regular expression that compiles"],
+  enum: [Array.isArray, "a list of the values allowed"],
+  const: null,
+  ...Object.fromEntries(
+    ["minProperties", "maxProperties", "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"].map((k) => [k, NUMBER]),
+  ),
+};
+
+/** What's wrong with `schema` for this checker, at any depth, as "/path: problem": a keyword it
+ *  doesn't know, or one whose value it can't use. */
+export function schemaProblems(schema: Json, at = ""): string[] {
   if (schema === true || schema === false) return [];
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) return [`${at || "/"}: not a schema`];
   const found: string[] = [];
   for (const [k, v] of Object.entries(schema as Record<string, Json>)) {
     if (ANNOTATIONS.has(k)) continue;
-    if (!KEYWORDS.has(k)) found.push(`${at}/${k}`);
-    else if (k === "properties") for (const [p, s] of Object.entries(v || {})) found.push(...unknownKeywords(s, `${at}/properties/${p}`));
-    else if (k === "items" || (k === "additionalProperties" && typeof v === "object")) found.push(...unknownKeywords(v, `${at}/${k}`));
+    const rule = KEYWORDS[k];
+    if (!Object.hasOwn(KEYWORDS, k)) found.push(`${at}/${k}: not a keyword apps check; use type, properties, required, items, enum, minimum and the like`);
+    else if (rule && !rule[0](v)) found.push(`${at}/${k}: ${rule[1]}`);
+    else if (k === "properties") for (const [p, s] of Object.entries(v)) found.push(...schemaProblems(s, `${at}/properties/${p}`));
+    else if (k === "items" || (k === "additionalProperties" && typeof v === "object")) found.push(...schemaProblems(v, `${at}/${k}`));
   }
   return found;
 }

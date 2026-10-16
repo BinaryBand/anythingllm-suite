@@ -96,3 +96,15 @@ test("a gantt draws dated steps on lanes, with today and a milestone, and skips 
   assert.match(svg, />Done</);
   assert.match(svg, /aria-label="Plan 11-03 to 11-09, done; Fit 11-10 to 11-16"/);
 });
+
+test("a component of markup alone is placed with no script", () => {
+  const all = parts.parts();
+  all["bare-note"] = { name: "bare-note", kind: "component", line: "", header: {}, body: "<p data-part=\"bare-note\">Hi</p>\n", text: "" };
+  try {
+    const page = parts.compose(parts.template("column"), "bare-note");
+    assert.ok(page.includes('<p data-part="bare-note">Hi</p>'));
+    assert.equal(parts.scriptsOf(page).length, parts.scriptsOf(parts.template("column")).length);
+  } finally {
+    delete all["bare-note"];
+  }
+});

@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SAMPLES } from "./harness.mts";
 import { file } from "../src/parts.ts";
-import { problems, unknownKeywords, withDefaults } from "../src/schema.ts";
+import { problems, schemaProblems, withDefaults } from "../src/schema.ts";
 
 /** The components static/ holds, by file name. */
 const components = (): string[] => Object.keys(STATIC_FILES).filter((f) => f.startsWith("parts/components/")).map((f) => f.slice("parts/components/".length));
 
 test("every starter's data satisfies its schema, which uses known keywords only", () => {
   for (const [name, s] of Object.entries(SAMPLES)) {
-    assert.deepEqual(unknownKeywords(s.schema), [], name);
+    assert.deepEqual(schemaProblems(s.schema), [], name);
     assert.deepEqual(problems(s.data, s.schema), [], name);
   }
 });
@@ -23,7 +23,7 @@ test("problems name the path and what is wrong", () => {
 });
 
 test("an unknown keyword is reported where it is", () => {
-  assert.deepEqual(unknownKeywords({ type: "object", properties: { a: { oneOf: [] } } }), ["/properties/a/oneOf"]);
+  assert.deepEqual(schemaProblems({ type: "object", properties: { a: { oneOf: [] } } }), ["/properties/a/oneOf: not a keyword apps check; use type, properties, required, items, enum, minimum and the like"]);
 });
 
 test("an object's keys are counted against minProperties and maxProperties", () => {
@@ -31,14 +31,14 @@ test("an object's keys are counted against minProperties and maxProperties", () 
   assert.deepEqual(problems({}, schema), ["/: fewer than 1 keys"]);
   assert.deepEqual(problems({ a: 1, b: 2 }, schema), []);
   assert.deepEqual(problems({ a: 1, b: 2, c: 3 }, schema), ["/: more than 2 keys"]);
-  assert.deepEqual(unknownKeywords(schema), []);
+  assert.deepEqual(schemaProblems(schema), []);
 });
 
 test("every schema the components carry is one this checker knows every keyword of", () => {
   for (const name of components()) {
     const head = /^<!--part\n([\s\S]*?)\n-->/.exec(file(`parts/components/${name}`))!;
     const { schema } = JSON.parse(head[1]);
-    if (schema) assert.deepEqual(unknownKeywords(schema), [], name);
+    if (schema) assert.deepEqual(schemaProblems(schema), [], name);
   }
 });
 
@@ -58,4 +58,12 @@ test("uniqueItems compares values, not their text: key order is no difference, a
   assert.deepEqual(problems([{ a: 1 }, { a: 2 }], unique), []);
   assert.deepEqual(problems(["[1]", [1]], unique), []);
   assert.deepEqual(problems([1, "1"], unique), []);
+});
+
+test("a keyword whose value the check can't use is said, at any depth", () => {
+  assert.deepEqual(
+    schemaProblems({ type: "object", required: "items", properties: { a: { type: 3, pattern: "(" }, b: { type: "array", items: { minItems: "2", enum: 1 } } } }),
+    ["/required: a list of key names", "/properties/a/type: a type's name, or a list of them", "/properties/a/pattern: a regular expression that compiles", "/properties/b/items/minItems: a number", "/properties/b/items/enum: a list of the values allowed"],
+  );
+  assert.deepEqual(schemaProblems({ type: ["string", "null"], pattern: "^a", required: [], enum: [1], minimum: 0 }), []);
 });

@@ -222,13 +222,8 @@ const ACTIONS = {
     ].join("\n");
   },
   undo: async ({ workspace }, p, self) => {
-    const app = store.read(workspace, p.name);
-    const data = app.history?.at(-1), file = app.versions?.at(-1);
-    if (p.file || (file && (!data || file.t > data.t))) {
-      const { app: next, reverted } = await store.revert(workspace, p.name, p.file || undefined);
-      return [`Put back ${next.name}'s ${reverted.file} as it was before its change at ${reverted.t}.`, ...cardOf(self, next)].join("\n");
-    }
-    const { app: next, undone } = await store.undo(workspace, p.name);
+    const { app: next, undone, reverted }: Awaited<ReturnType<typeof store.undo>> = p.file ? await store.revert(workspace, p.name, p.file) : await store.undo(workspace, p.name);
+    if (reverted) return [`Put back ${next.name}'s ${reverted.file} as it was before its change at ${reverted.t}.`, ...cardOf(self, next)].join("\n");
     return [`Took back ${undone.ev} (${undone.t}) on ${next.name}.`, ...cardOf(self, next)].join("\n");
   },
   edit: async ({ workspace }, p, self) => {
@@ -334,7 +329,8 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
 export const runtime = {
   handler: async function (this: HandlerContext, params: Args = {}): Promise<string> {
     try {
-      return await run(this, params);
+      // Models fill parameters they don't mean with null: one left out.
+      return await run(this, Object.fromEntries(Object.entries(params || {}).filter(([, v]) => v !== null)));
     } catch (e) {
       if (e instanceof Told) return `Apps: ${e.message}`;
       this?.logger?.(`apps-lean: ${(e as Error)?.stack || e}`);

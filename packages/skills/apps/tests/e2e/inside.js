@@ -52,7 +52,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.ok(cfg.key.startsWith("brx-"), "the pages' key is a browser-extension key AnythingLLM made");
   assert.ok(cfg.secret && !("base" in cfg), "the page has its app's secret, and no address of AnythingLLM's");
   const state = async () => (await fetch(stateUrl, { cache: "no-store" })).json();
-  assert.deepEqual(Object.keys(await state()).sort(), ["data", "line", "seen", "version"]);
+  assert.deepEqual(Object.keys(await state()).sort(), ["data", "line", "refused", "seen", "version"]);
 
   assert.match(await call("home", { action: "do", name: "groceries", ev: "add", patch: [{ op: "add", path: "/items/-", value: { text: "Bread", done: false } }] }), /\| ☐ \| Bread \|/);
   assert.match(await call("work", { action: "list" }), /^This workspace has no apps yet\./);

@@ -171,7 +171,7 @@ test("publishing writes the page's state beside it, and deleting leaves a note t
   await store.create("home", "stated", { ...definitionFor("list", { title: "Stated" }), page: listPage() });
   const token = (await publish(store.read("home", "stated"), "home", key))!;
   const state = JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8"));
-  assert.deepEqual(Object.keys(state).sort(), ["data", "line", "seen", "version"], "never the secret, the plan or the history");
+  assert.deepEqual(Object.keys(state).sort(), ["data", "line", "refused", "seen", "version"], "never the secret, the plan or the history");
   unpublish(store.read("home", "stated"));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8")), { gone: true });
 });
@@ -188,6 +188,27 @@ test("App.log gives the newest changes the page was written with, at once", asyn
   const { ctx } = browser(render(app, "home", "brx-k")!);
   const lines = await vm.runInContext("App.log(6).then((l) => JSON.stringify(l))", ctx);
   assert.deepEqual(JSON.parse(lines), [{ n: 7, t: "2026-10-13T12:01:00Z", by: "page", ev: "tick", text: "Eggs", patch: [{ op: "replace", path: "/items/0/done", value: true }] }]);
+  // A page's fields can't say it was the agent's, or at another line.
+  (app.history[1] as any).fields = { text: "Eggs", by: "agent", n: 99, ev: "add" };
+  const own = browser(render(app, "home", "brx-k")!);
+  const [line] = JSON.parse(await vm.runInContext("App.log(6).then((l) => JSON.stringify(l))", own.ctx));
+  assert.deepEqual([line.n, line.by, line.ev], [7, "page", "tick"]);
+});
+
+test("a change the app refused leaves the page, with why, though the app's line stays", async () => {
+  const first = groceries([{ text: "Eggs", done: false }]);
+  let served = JSON.stringify(stateOf(first));
+  const { ctx, storage, seen, close } = browser(render(first, "home", "brx-k")!, {
+    served: () => served,
+    stored: { pending: [{ id: "mine", patch: [{ op: "replace", path: "/items/0/done", value: true }] }] },
+  });
+  assert.deepEqual(value(ctx, "App.data.items.map((i) => i.done)"), [true]);
+  served = JSON.stringify(stateOf({ ...first, seen: ["mine"], refused: [{ id: "mine", why: "it breaks the app's schema" }] }));
+  await settle(300);
+  assert.deepEqual(JSON.parse(storage.v!).pending, []);
+  assert.deepEqual(value(ctx, "App.data.items.map((i) => i.done)"), [false]);
+  assert.deepEqual(seen.bars, ["A change wasn't saved: it breaks the app's schema"]);
+  close();
 });
 
 test("the page patches with one engine, and it agrees with the skill's patch.ts", () => {

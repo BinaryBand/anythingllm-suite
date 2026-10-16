@@ -112,9 +112,15 @@ var AppsLean = (() => {
         if (!typing()) location.reload();
         else bar("This app's page changed.", "Reload", () => location.reload());
       }
-      if (!next || typeof next.line !== "number" || next.line === served) return answer(200, { line: body.since, lines: [] });
+      if (!next || typeof next.line !== "number" || (next.line === served && !pending.length)) return answer(200, { line: body.since, lines: [] });
+      // A change the app saw is recorded, or was refused, which leaves the line as it was: either
+      // way it no longer goes over the data.
+      const seen = next.seen || [], left = pending.filter((e) => !seen.includes(e.id));
+      const refused = (next.refused || []).filter((r) => pending.some((e) => e.id === r.id));
+      if (next.line === served && left.length === pending.length) return answer(200, { line: body.since, lines: [] });
+      if (refused.length) bar((refused.length > 1 ? refused.length + " changes weren't saved: " : "A change wasn't saved: ") + refused[refused.length - 1].why);
       served = next.line;
-      pending = pending.filter((e) => !next.seen.includes(e.id));
+      pending = left;
       line = Math.max(line, next.line);
       return answer(200, { data: over(next.data), line });
     } catch (e) {

@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { jobTimeLeft, perProcess } from "#shared/anythingllm";
 import { readJson, updateJson, writeAtomicIfChanged } from "#shared/atomic";
-import { embed, inTurn, newSecret, pageKey, publicDir, removePublic, sameSecret, takeEvents, watch, writePublic } from "#shared/pages";
+import { embed, inTurn, newSecret, pageKey, publicDir, putBack, removePublic, sameSecret, takeEvents, watch, writePublic } from "#shared/pages";
 import { HUB_ID, root } from "./dirs.ts";
 import type { Json } from "./patch.ts";
 import { file, libraries, PLACEHOLDER, RUNTIME_TAG, tag } from "./parts.ts";
@@ -25,13 +25,9 @@ export const TITLE = "apps-lean-event";
 /** The key every page posts with. */
 export const keyForPages = (): Promise<string> => pageKey(root());
 
-/** The app's newest changes as log lines, as App.log gives them, each with the line it made (a
- *  change from before changes kept theirs is numbered back from the app's line). */
-function logOf(app: Json): Json[] {
-  const history: Json[] = app.history || [];
-  const last = app.line || history.length;
-  return history.map((h, i) => ({ n: h.n ?? last - (history.length - 1 - i), t: h.t, by: h.by, ev: h.ev, ...(h.fields || {}), patch: h.patch }));
-}
+/** The app's newest changes as log lines, as App.log gives them, each with the line it made. A
+ *  change's fields come first, so a page's own can't stand in for what the app recorded. */
+const logOf = (app: Json): Json[] => store.numbered(app).map((h) => ({ ...(h.fields || {}), n: h.n, t: h.t, by: h.by, ev: h.ev, patch: h.patch }));
 
 const inlineScript = (source: string): string => "<script>" + source.replace(/<\//g, "<\\/") + "</script>";
 const inlineStyle = (source: string): string => "<style>" + source.replace(/<\//g, "<\\/") + "</style>";
@@ -72,7 +68,7 @@ export function render(app: Json, workspace: string, key: string, version = vers
 const pageFile = (token: string): string => `${HUB_ID}/${token}.html`;
 /** What an open page reads every 2 s to keep up: never the secret, the plan or the history. */
 const stateFile = (token: string): string => `${HUB_ID}/${token}.json`;
-export const stateOf = (app: Json, version = versionOf(app)): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], version });
+export const stateOf = (app: Json, version = versionOf(app)): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], refused: app.refused || [], version });
 /** Writes a file of the public folder, unless it holds that already: an open page polls its state. */
 const putPublic = (rel: string, text: string): boolean => writeAtomicIfChanged(path.join(publicDir(), rel), text, 0o644);
 
@@ -128,6 +124,8 @@ export interface Result {
   why?: string;
   /** The id an ask from the page was kept under. */
   ask?: string;
+  /** Put back to be tried again: it met something passing, such as its app's lock held too long. */
+  again?: boolean;
 }
 
 /** How many events from one app's page are applied in one pass; the rest are refused, so a flood
@@ -136,11 +134,27 @@ export const MOST_AT_ONCE = 20;
 
 const firstLine = (e: unknown): string => (e as Error).message.split("\n")[0];
 
+/** How many times an event that met something passing is tried before it's given up on. */
+export const TRIES = 5;
+/** `event` put back among those waiting, to be tried again by the next pass; false once it was
+ *  tried TRIES times. An app's own refusal (an AppError) is final, and never put back. */
+function again(event: Json, error: unknown): boolean {
+  const tries = (Number(event.tries) || 0) + 1;
+  if (error instanceof store.AppError || tries >= TRIES) return false;
+  try {
+    putBack(TITLE, { ...event, tries });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface Row {
   workspace: string;
   app: string;
   said: Pick<Result, "kind" | "ev" | "fields">;
-  secret: unknown;
+  /** The event as its page posted it, to put back when it met something passing. */
+  event: Json;
   change?: store.Change;
   /** An ask: what was picked, and its own id as its page sent it, so one sent twice is kept once. */
   ask?: { event?: string; picks: Json[] };
@@ -162,7 +176,7 @@ export async function collect(): Promise<Result[]> {
     const fields = e.fields && typeof e.fields === "object" ? e.fields : undefined;
     const said = { kind, ev: String(e.ev || kind), fields } as const;
     const id = typeof e.id === "string" ? e.id : undefined;
-    const row: Row = { workspace: e.workspace, app: e.app, said, secret: e.secret };
+    const row: Row = { workspace: e.workspace, app: e.app, said, event: e };
     if (kind === "ask") row.ask = { event: id, picks: e.picks };
     else row.change = { patch: e.patch, ev: said.ev, fields, by: "page", id };
     const key = `${e.workspace}/${e.app}`;
@@ -172,38 +186,40 @@ export async function collect(): Promise<Result[]> {
   for (const waiting of byApp.values()) {
     const { workspace, app } = waiting[0];
     const mine = (row: Row, more: Partial<Result> & { ok: boolean }) => void (row.answer = { ...row.said, workspace, app, ...more });
+    const failure = (row: Row, error: unknown): Result => ({ ...row.said, ok: false, why: firstLine(error), again: again(row.event, error) });
     let found: Json;
     try {
       found = store.read(workspace, app);
     } catch (error) {
-      waiting.forEach((row) => void (row.answer = { ...row.said, ok: false, why: firstLine(error) }));
+      // Its workspace and app aren't said: the event's own say of them wasn't checked.
+      waiting.forEach((row) => void (row.answer = failure(row, error)));
       continue;
     }
     const asks: Row[] = [], changes: Row[] = [];
     for (const row of waiting)
-      if (found.secret && !sameSecret(row.secret, found.secret)) row.answer = { ...row.said, ok: false, why: "it didn't come from this app's page" };
+      if (found.secret && !sameSecret(row.event.secret, found.secret)) row.answer = { ...row.said, ok: false, why: "it didn't come from this app's page" };
       else (row.ask ? asks : changes).push(row);
     for (const row of asks)
       try {
         const added = await store.addAsk(workspace, app, row.ask!);
         mine(row, added ? { ok: true, ask: added.id, fields: { text: `${added.kept} picked` } } : { ok: false, duplicate: true });
       } catch (error) {
-        mine(row, { ok: false, why: firstLine(error) });
+        mine(row, failure(row, error));
       }
-    changes.slice(MOST_AT_ONCE).forEach((row) => mine(row, { ok: false, why: `more than ${MOST_AT_ONCE} changes at once` }));
-    const now = changes.slice(0, MOST_AT_ONCE);
-    if (!now.length) continue;
+    if (!changes.length) continue;
     let answers: store.Answer[];
     try {
-      answers = await store.changeMany(workspace, app, now.map((row) => row.change!));
-      if (!found.secret) await store.withSecret(workspace, app);
+      answers = await store.changeMany(workspace, app, changes.map((row) => row.change!), MOST_AT_ONCE);
     } catch (error) {
-      answers = now.map(() => ({ error: error as Error }));
+      changes.forEach((row) => mine(row, failure(row, error)));
+      continue;
     }
-    now.forEach((row, i) => {
+    // A change refused on its own was recorded as seen: final, whatever refused it.
+    changes.forEach((row, i) => {
       const { error, duplicate } = answers[i];
       mine(row, error ? { ok: false, why: firstLine(error) } : { ok: !duplicate, duplicate: !!duplicate });
     });
+    if (!found.secret) await store.withSecret(workspace, app).catch(() => {});
   }
   return rows.map((row) => row.answer!);
 }
@@ -240,12 +256,10 @@ const words = (r: Result): string =>
  *  workspace (Result), so a link can't write into another workspace's news, or anywhere a made-up
  *  workspace would name. */
 async function drain(key: () => Promise<string>): Promise<void> {
-  const results = await collect();
+  // What became of each event checked against its app, but for one seen before or put back.
+  const results = (await collect()).filter((r): r is Result & { workspace: string; app: string } => !!r.workspace && !r.duplicate && !r.again);
   const byWorkspace = new Map<string, string[]>();
-  for (const r of results) {
-    if (!r.workspace || r.duplicate) continue;
-    (byWorkspace.get(r.workspace) ?? byWorkspace.set(r.workspace, []).get(r.workspace)!).push(r.ok ? `- ${words(r)}` : `- skipped ${words(r)}: ${r.why}`);
-  }
+  for (const r of results) (byWorkspace.get(r.workspace) ?? byWorkspace.set(r.workspace, []).get(r.workspace)!).push(r.ok ? `- ${words(r)}` : `- skipped ${words(r)}: ${r.why}`);
   for (const [workspace, lines] of byWorkspace)
     try {
       await updateJson(newsFile(workspace), (): string[] => [], (kept) => {
@@ -253,8 +267,9 @@ async function drain(key: () => Promise<string>): Promise<void> {
         kept.splice(0, Math.max(0, kept.length - NEWS_KEPT));
       });
     } catch {} // a workspace whose news can't be kept still has its changes applied
-  const touched = new Map(results.filter((r) => r.ok).map((r) => [`${r.workspace}/${r.app}`, r]));
-  for (const r of touched.values()) await refresh(r.workspace!, r.app!, key);
+  // Applied or refused: a page learns its refused change was seen, and drops it.
+  const touched = new Map(results.map((r) => [`${r.workspace}/${r.app}`, r]));
+  for (const r of touched.values()) await refresh(r.workspace, r.app, key);
 }
 
 /** Takes what pages posted before a call reads any app, after whatever pass is already running. */
