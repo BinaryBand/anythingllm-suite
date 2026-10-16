@@ -117,7 +117,7 @@ function runtime(): string {
   const head = source.slice(0, source.indexOf('"use strict"')).split("\n").map((l) => l.replace(/^\/\/ ?/, "")).join("\n").trim();
   return `${head}
 
-In this edition (apps-lean), the page has no server of its own: a change is saved to AnythingLLM and reaches the app the next time the skill runs; changes from elsewhere arrive when the skill has written the page again. App.log(since) gives the newest 20 changes only.
+In this edition (apps-lean), the page has no server of its own: a change is saved to AnythingLLM and reaches the app as it lands; changes from elsewhere (another device, the agent) show within a few seconds while the page is open. App.log(since) gives the newest 20 changes only.
 `;
 }
 

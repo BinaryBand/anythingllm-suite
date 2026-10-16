@@ -61,7 +61,7 @@ const PLAN_MAX = 600;
  *  things an agent building from scratch overlooks, since nothing else makes it stop. */
 const PLAN_NEEDS =
   `plan: ${PLAN_MIN}-${PLAN_MAX} characters on how you'll build this, covering what the app keeps; data it needs from outside (a word list, rules) and how you'll get it: with the workspace's web skills first if it has them, or by the page fetching it, rather than from memory; ` +
-  "how time works (nothing runs while the page is closed: something daily is worked out from the date in the page); whether it is used on more than one device (a page's changes reach the app only at the next Apps call); " +
+  "how time works (nothing runs while the page is closed: something daily is worked out from the date in the page); whether it is used on more than one device (each open page shows the others' changes within seconds); " +
   "logic you can't run here (there is no browser check) and how you checked it by hand; and anything to tell the user";
 
 const changeLine = (h: Json): string => `- ${h.t} ${h.ev}${h.fields ? ` ${JSON.stringify(h.fields)}` : ""}`;

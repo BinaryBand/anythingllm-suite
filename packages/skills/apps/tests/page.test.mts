@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 import vm from "node:vm";
 import { definitionFor, publicDir, root, storage } from "./harness.mts";
-import { keyForPages, pageUrl, publish, refresh, render, unpublish } from "../src/page.ts";
+import { keyForPages, pageUrl, publish, refresh, render, stateOf, unpublish } from "../src/page.ts";
 import { apply } from "../src/patch.ts";
 import * as parts from "../src/parts.ts";
 import * as store from "../src/store.ts";
@@ -74,26 +74,32 @@ const browsers: (() => void)[] = [];
 afterEach(() => browsers.splice(0).forEach((close) => close()));
 
 /** Runs a rendered page's scripts (the stand-in and app.js) against a small stand-in for a browser,
- *  with `served` as what fetching the page itself gives. */
-function browser(html: string, { stored = null, served = () => html }: { stored?: unknown; served?: () => string } = {}) {
+ *  with `served` as what reading the page's state file gives. */
+function browser(html: string, { stored = null, served = () => "{}", typing = false }: { stored?: unknown; served?: () => string; typing?: boolean } = {}) {
   const lean = html.match(/<script id="apps-lean" type="application\/json">(.*?)<\/script>/)![1];
   const scripts = parts.scriptsOf(html);
   const posted: any[] = [];
   const storage = { v: (stored ? JSON.stringify(stored) : null) as string | null, getItem() { return this.v; }, setItem(_k: string, v: string) { this.v = v; } };
   const urls: string[] = [];
   const fetch = async (url: string, opts: any) => {
-    if (url === "https://x/p.html") return new Response(served());
+    if (url === "/apps-lean/p.json") return new Response(served());
     urls.push(url);
     posted.push(JSON.parse(JSON.parse(opts.body).textContent));
     return new Response("{}", { status: 200 });
   };
   let open = true;
+  const seen = { reloads: 0, bars: [] as string[] };
+  const element = () => ({ style: {}, textContent: "", setAttribute() {}, addEventListener() {}, append(child: any) { this.textContent += child.textContent ?? ""; } });
   const ctx: any = {
     console, JSON, Response, Promise, Object, Math, Date, Array, Error, URLSearchParams,
     // Fast, and none once closed, so the runtime's sync loop stops with the test.
     setTimeout: (fn: () => void, ms: number) => (open ? setTimeout(fn, Math.min(ms, 20)) : 0), clearTimeout,
-    localStorage: storage, location: { protocol: "https:", href: "https://x/p.html", search: "" },
-    document: { getElementById: (id: string) => (id === "apps-lean" ? { textContent: lean } : null), addEventListener() {}, removeEventListener() {}, visibilityState: "visible", hidden: false },
+    localStorage: storage,
+    location: { protocol: "https:", href: "https://x/apps-lean/p.html", pathname: "/apps-lean/p.html", search: "", reload: () => void seen.reloads++ },
+    document: {
+      getElementById: (id: string) => (id === "apps-lean" ? { textContent: lean } : null), addEventListener() {}, removeEventListener() {}, visibilityState: "visible", hidden: false,
+      activeElement: typing ? { tagName: "INPUT" } : null, createElement: element, body: { append: (el: any) => void seen.bars.push(el.textContent) },
+    },
     fetch,
   };
   ctx.window = ctx;
@@ -104,7 +110,7 @@ function browser(html: string, { stored = null, served = () => html }: { stored?
   vm.runInContext("var changes = []; App.start(AppsLean.app()); App.onchange((d) => changes.push(JSON.parse(JSON.stringify(d))));", ctx);
   const close = () => void (open = false);
   browsers.push(close);
-  return { ctx, posted, storage, close, urls };
+  return { ctx, posted, storage, close, urls, seen };
 }
 /** A value from inside the stand-in browser, as plain JSON. */
 const value = (ctx: any, expr: string) => JSON.parse(vm.runInContext(`JSON.stringify(${expr})`, ctx));
@@ -123,24 +129,51 @@ test("the page runtime saves through the stand-in: a change becomes an AnythingL
   close();
 });
 
-test("a rewritten page's data arrives under this page's unrecorded changes; recorded ones go", async () => {
+test("an open page keeps up from its state file: newer data under its unrecorded changes; recorded ones go", async () => {
   const first = groceries([{ text: "Eggs", done: false }, { text: "Jam", done: false }]);
-  let served = render(first, "home", "brx-k")!;
-  const { ctx, storage, close } = browser(served, {
+  let served = JSON.stringify(stateOf(first));
+  const { ctx, storage, close } = browser(render(first, "home", "brx-k")!, {
     served: () => served,
     stored: { pending: [{ id: "mine", patch: [{ op: "test", path: "/items/1/text", value: "Jam" }, { op: "replace", path: "/items/1/done", value: true }] }] },
   });
   assert.deepEqual(value(ctx, "App.data.items.map((i) => i.done)"), [false, true], "an unrecorded change shows over the page's data");
-  // The agent adds Tea elsewhere, and the skill writes the page again.
-  served = render({ ...first, changed: "2026-10-13T12:05:00Z", line: 5, data: { items: [...first.data.items, { text: "Tea", done: false }] } }, "home", "brx-k")!;
+  // The agent adds Tea elsewhere, and the skill writes the state file again.
+  served = JSON.stringify(stateOf({ ...first, line: 5, data: { items: [...first.data.items, { text: "Tea", done: false }] } }));
   await settle(300);
   assert.deepEqual(value(ctx, "App.data.items.map((i) => [i.text, i.done])"), [["Eggs", false], ["Jam", true], ["Tea", false]]);
   // Then the app records this page's change.
-  served = render({ ...first, changed: "2026-10-13T12:06:00Z", line: 6, seen: ["a", "mine"], data: { items: [{ text: "Eggs", done: false }, { text: "Jam", done: true }, { text: "Tea", done: false }] } }, "home", "brx-k")!;
+  served = JSON.stringify(stateOf({ ...first, line: 6, seen: ["a", "mine"], data: { items: [{ text: "Eggs", done: false }, { text: "Jam", done: true }, { text: "Tea", done: false }] } }));
   await settle(300);
   assert.deepEqual(JSON.parse(storage.v!).pending, []);
   assert.deepEqual(value(ctx, "App.data.items.map((i) => i.done)"), [false, true, false]);
   close();
+});
+
+test("a page whose parts changed reloads, unless the user is typing; a deleted app's page says so", async () => {
+  const app = groceries([{ text: "Eggs", done: false }]);
+  const newer = () => JSON.stringify({ ...stateOf(app), version: "newer" });
+  const idle = browser(render(app, "home", "brx-k")!, { served: newer });
+  await settle(200);
+  assert.ok(idle.seen.reloads >= 1);
+  idle.close();
+  const busy = browser(render(app, "home", "brx-k")!, { served: newer, typing: true });
+  await settle(200);
+  assert.equal(busy.seen.reloads, 0, "not while the user is typing");
+  assert.deepEqual(busy.seen.bars, ["This app's page changed.Reload"]);
+  busy.close();
+  const deleted = browser(render(app, "home", "brx-k")!, { served: () => JSON.stringify({ gone: true }) });
+  await settle(200);
+  assert.deepEqual(deleted.seen.bars, ["This app was deleted."]);
+  deleted.close();
+});
+
+test("publishing writes the page's state beside it, and deleting leaves a note that it's gone", async () => {
+  await store.create("home", "stated", { ...definitionFor("list", { title: "Stated" }), page: listPage() });
+  const token = (await publish(store.read("home", "stated"), "home", key))!;
+  const state = JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8"));
+  assert.deepEqual(Object.keys(state).sort(), ["data", "line", "seen", "version"], "never the secret, the plan or the history");
+  unpublish(store.read("home", "stated"));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8")), { gone: true });
 });
 
 test("App.log gives the newest changes the page was written with, at once", async () => {

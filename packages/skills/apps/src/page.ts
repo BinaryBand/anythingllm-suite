@@ -51,7 +51,7 @@ export function render(app: Json, workspace: string, key: string): string | null
   if (!app.page) return null;
   const lean = {
     workspace, app: app.name, secret: app.secret ?? null, title: app.title, card: app.card || {}, key, eventTitle: TITLE,
-    stamp: app.changed, line: app.line || 0, seen: app.seen || [], data: app.data, log: logOf(app),
+    version: versionOf(app), line: app.line || 0, seen: app.seen || [], data: app.data, log: logOf(app),
   };
   const libs = libraries();
   const inline: Record<string, string> = {
@@ -67,6 +67,9 @@ export function render(app: Json, workspace: string, key: string): string | null
 }
 
 const pageFile = (token: string): string => `${HUB_ID}/${token}.html`;
+/** What an open page reads every 2 s to keep up: never the secret, the plan or the history. */
+const stateFile = (token: string): string => `${HUB_ID}/${token}.json`;
+export const stateOf = (app: Json): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], version: versionOf(app) });
 
 /** The address of a page from its token: under `base`, AnythingLLM's address as the user's browser
  *  reaches it, or relative to AnythingLLM's own pages without it; null when it has no page yet. */
@@ -79,6 +82,7 @@ export async function publish(app: Json, workspace: string, key: () => Promise<s
   const token = app.pageToken || newSecret();
   try {
     writePublic(pageFile(token), render(app, workspace, await key())!);
+    writePublic(stateFile(token), JSON.stringify(stateOf(app)));
   } catch {
     return null;
   }
@@ -97,7 +101,13 @@ export async function refresh(workspace: string, name: string, key: () => Promis
 
 /** Removes an app's page. */
 export function unpublish(app: Json): void {
-  if (app.pageToken) removePublic(pageFile(app.pageToken));
+  if (!app.pageToken) return;
+  removePublic(pageFile(app.pageToken));
+  // A page still open says the app was deleted: AnythingLLM answers a missing file with its own
+  // page, which a page can't tell from a slow server.
+  try {
+    writePublic(stateFile(app.pageToken), JSON.stringify({ gone: true }));
+  } catch {}
 }
 
 /** What became of one event a page posted. */
