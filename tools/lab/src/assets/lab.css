@@ -82,3 +82,5 @@ iframe.signin { width: 100%; max-width: 460px; height: 430px; border: 1px solid 
 button.small { padding: .35rem .8rem; font-size: .9rem; }
 form.inline { display: flex; align-items: center; gap: .4rem; margin: 0; }
 form.inline input { width: 4rem; padding: .35rem .5rem; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.emoji-grid { font-size: 2.2rem; letter-spacing: .3rem; }
+.danger-text { color: var(--bad); border-color: var(--bad); }

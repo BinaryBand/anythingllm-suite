@@ -29,6 +29,7 @@ Gaps 1, 2, 3, 4 and 6 are now built in the lab (see **Built in the lab** below);
 | 4. Remember this device (and a forced challenge with `?risk=1`) | `stepup` | 4114 |
 | 6. Turnstile-style check that passes or escalates to a click, "Continue" interstitial, hard block page | `gate` (Fortress Bank) | 4116 |
 | Cookie dialog over the form, disabled-until-filled submit, a button for "Forgot password?", another language | `consent` (Acorn Market) | 4115 |
+| Element/Matrix leads E1–E7 (see below) | `murmur` (Murmur Chat), plus variants on `federated` and `stepup` | 4117, 4112, 4114 |
 
 `npm run smoke` covers each over HTTP and `npm run check` drives them in a real Chrome, reading pages with the
 skill's own snapshot code.
@@ -85,6 +86,11 @@ behaviour. Treat it as leads, not verified claims.
 | E5 | **Re-authentication for sensitive actions** (UIA) | A password prompt, or for SSO accounts a confirmation page that goes to the provider and back; the main page polls and carries on. Under MAS only a device-signing step asks. The exact dialog is unverified. | Extend `stepup`: "Remove device" gives a modal; a second variant opens a fallback page in a new tab while the first tab polls. |
 | E6 | **QR login** ("Link new device") | The agent can't scan it, so it must find "sign in another way". Current availability on matrix.org is unverified. | A QR image that changes every few seconds, beside a "Sign in another way" link. |
 | E7 | Smaller items | A 429 with a countdown after a few tries (`Retry-After`); a session that silently expires mid-task and falls back to the login page; an "use our other app" notice with a continue-anyway link; login options hidden by configuration. | A login that locks for 10 s after 3 tries; a token that expires while the agent works; an interstitial with "Continue anyway". |
+
+**Built:** E1 (`federated` `?social=fragment` and `?social=auto`, and Murmur's `sso.lab.test`, which redirects to Lumen ID at
+once), E2, E3, E4, E6 and E7 on `murmur` (4117), and E5 on `stepup` (Devices: confirm in a new tab while the first tab waits).
+The device-code grant in E1 is not built. Murmur's wording and screens are the lab's own: they follow the sources
+above, not Element's real pages, which no one has read live.
 
 Not found in any source: Element Web's accessibility roles and labels, its loading-state timing, and whether
 its SSO button opens a popup or a new tab. Only a live read would settle those.

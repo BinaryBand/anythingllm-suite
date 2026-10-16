@@ -23,6 +23,10 @@ export function redeem(site, recipient, purpose, code) {
   return true;
 }
 
+/** Whether the latest code sent to `recipient` for `purpose` has been used (a link opened, say). */
+export const used = (site, recipient, purpose) =>
+  Boolean(db.prepare("SELECT used FROM outbox WHERE site = ? AND recipient = ? AND purpose = ? ORDER BY id DESC LIMIT 1").get(site, recipient, purpose)?.used);
+
 export const recent = ({ site, recipient, limit = 50 } = {}) =>
   db
     .prepare(`SELECT * FROM outbox WHERE (? IS NULL OR site = ?) AND (? IS NULL OR recipient = ?) ORDER BY id DESC LIMIT ?`)

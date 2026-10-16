@@ -9,7 +9,11 @@ import { loginForm, signupForm } from "../lib/site.js";
 import * as users from "../lib/users.js";
 
 const SITE = "idp";
-const CLIENT = { id: "cirrus-docs", secret: "cirrus-secret", name: "Cirrus Docs" };
+// The apps that may ask: each one's callback is /auth/callback on its own site.
+const CLIENTS = {
+  "cirrus-docs": { name: "Cirrus Docs", secret: "cirrus-secret", site: "federated" },
+  murmur: { name: "Murmur Chat", secret: "murmur-secret", site: "murmur" },
+};
 const CODE_MS = 60_000;
 
 export default {
@@ -27,6 +31,7 @@ export default {
     const { app, render } = ctx;
     const refuse = (req, res, why) => render(req, res, "Can't sign in", html`<div class="card"><h1>This sign-in request isn't valid</h1><p class="error" role="alert">${why}</p><p class="muted">Go back to the app and try again.</p></div>`, { status: 400 });
     const auth = (req) => req.session.data.auth;
+    const clientOf = (req) => CLIENTS[auth(req)?.client_id];
     const accounts = (req) => (req.session.data.accounts ?? []).map(users.byId).filter((u) => u?.site === SITE);
 
     /** Signs `user` in on this browser and remembers them for the chooser, keeping the request in progress. */
@@ -38,18 +43,19 @@ export default {
     const onward = (req, res) => res.redirect(303, auth(req) ? "/consent" : "/account");
 
     app.get("/authorize", (req, res) => {
-      const { client_id, redirect_uri, response_type, state } = req.query;
-      if (client_id !== CLIENT.id) return refuse(req, res, "Unknown app.");
+      const { client_id, redirect_uri, response_type, response_mode, state } = req.query;
+      const client = Object.hasOwn(CLIENTS, client_id) ? CLIENTS[client_id] : null;
+      if (!client) return refuse(req, res, "Unknown app.");
       if (response_type !== "code") return refuse(req, res, "Only response_type=code is supported.");
-      if (redirect_uri !== `${siblingOrigin(req, "federated")}/auth/callback`) return refuse(req, res, `The redirect address isn't one registered for ${CLIENT.name}.`);
-      req.session.save({ auth: { redirect_uri, state: String(state ?? "") } });
+      if (redirect_uri !== `${siblingOrigin(req, client.site)}/auth/callback`) return refuse(req, res, `The redirect address isn't one registered for ${client.name}.`);
+      req.session.save({ auth: { client_id, redirect_uri, state: String(state ?? ""), fragment: response_mode === "fragment" } });
       res.redirect(303, accounts(req).length ? "/choose" : "/login");
     });
 
     app.get("/choose", (req, res) => {
       if (!auth(req)) return res.redirect(303, "/account");
       render(req, res, "Choose an account", html`<div class="card"><h1>Choose an account</h1>
-        <p class="muted">to continue to ${CLIENT.name}</p>
+        <p class="muted">to continue to ${clientOf(req).name}</p>
         ${accounts(req).map((u) => html`<form method="post" action="/choose"><button class="account-choice" type="submit" name="userId" value="${u.id}"><strong>${u.name}</strong><br><small>${u.email}${u.id === req.user?.id ? " · signed in" : ""}</small></button></form>`)}
         <p class="center"><a class="button ghost" href="/login?another=1">Use another account</a></p></div>`);
     });
@@ -61,7 +67,7 @@ export default {
     });
 
     const loginPage = (req, res, problem, status = 200) =>
-      render(req, res, "Sign in", loginForm({ email: req.body?.email ?? req.query.email ?? "", problem, after: auth(req) ? html`<p class="muted center">to continue to ${CLIENT.name}</p>` : "" }), { status });
+      render(req, res, "Sign in", loginForm({ email: req.body?.email ?? req.query.email ?? "", problem, after: auth(req) ? html`<p class="muted center">to continue to ${clientOf(req).name}</p>` : "" }), { status });
     app.get("/login", (req, res) => (req.user && !req.query.another ? onward(req, res) : loginPage(req, res)));
     app.post("/login", (req, res) => {
       const user = users.check(SITE, req.body.email, req.body.password);
@@ -80,9 +86,9 @@ export default {
     app.get("/consent", ctx.requireUser, (req, res) => {
       if (!auth(req)) return res.redirect(303, "/account");
       render(req, res, "Allow access", html`<form class="card" method="post" action="/consent">
-        <h1>${CLIENT.name} wants to sign you in</h1>
+        <h1>${clientOf(req).name} wants to sign you in</h1>
         <p>Signed in as <strong>${req.user.email}</strong></p>
-        <p>${CLIENT.name} will be able to see:</p>
+        <p>${clientOf(req).name} will be able to see:</p>
         <ul><li>your name</li><li>your email address</li></ul>
         <button type="submit" name="decision" value="allow">Allow</button>
         <p class="center"><button class="ghost" type="submit" name="decision" value="deny">Cancel</button></p>
@@ -93,9 +99,13 @@ export default {
       if (!pending) return res.redirect(303, "/account");
       req.session.save({ auth: null });
       const back = new URL(pending.redirect_uri);
-      if (req.body.decision === "allow") back.searchParams.set("code", issueToken(SITE, { kind: "code", userId: req.user.id, redirect_uri: pending.redirect_uri, exp: Date.now() + CODE_MS }));
-      else back.searchParams.set("error", "access_denied");
-      if (pending.state) back.searchParams.set("state", pending.state);
+      // The answer goes in the query, or after a # (response_mode=fragment) where only the page's script sees it.
+      const answer = new URLSearchParams();
+      if (req.body.decision === "allow") answer.set("code", issueToken(SITE, { kind: "code", userId: req.user.id, client_id: pending.client_id, redirect_uri: pending.redirect_uri, exp: Date.now() + CODE_MS }));
+      else answer.set("error", "access_denied");
+      if (pending.state) answer.set("state", pending.state);
+      if (pending.fragment) back.hash = answer.toString();
+      else back.search = answer.toString();
       res.redirect(303, back.toString());
     });
 
@@ -104,7 +114,8 @@ export default {
       const { code, redirect_uri, client_id, client_secret } = req.body;
       const grant = byToken(SITE, code);
       if (code) revokeToken(code); // one use, whether or not it was right
-      const bad = !grant || grant.kind !== "code" || grant.exp < Date.now() || grant.redirect_uri !== redirect_uri || client_id !== CLIENT.id || client_secret !== CLIENT.secret;
+      const client = Object.hasOwn(CLIENTS, client_id) ? CLIENTS[client_id] : null;
+      const bad = !grant || grant.kind !== "code" || grant.exp < Date.now() || grant.redirect_uri !== redirect_uri || !client || grant.client_id !== client_id || client_secret !== client.secret;
       if (bad) return res.status(400).json({ error: "invalid_grant" });
       res.json({ access_token: issueToken(SITE, { kind: "access", userId: grant.userId }), token_type: "Bearer", expires_in: 3600 });
     });
@@ -115,5 +126,5 @@ export default {
       res.json({ sub: String(user.id), email: user.email, name: user.name });
     });
   },
-  account: () => html`<h2>Your Lumen ID</h2><p>Apps you've allowed: Cirrus Docs. Sign in to an app with "Continue with Lumen ID" and you'll end up here when you come to this site directly.</p>`,
+  account: () => html`<h2>Your Lumen ID</h2><p>Apps that can ask: Cirrus Docs and Murmur Chat. Sign in to an app with "Continue with Lumen ID" and you'll end up here when you come to this site directly.</p>`,
 };

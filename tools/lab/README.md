@@ -1,15 +1,15 @@
 # Test lab
 
-Sixteen fake sites with sign-up and sign-in, for trying the AnythingLLM browser skill
+Seventeen fake sites with sign-up and sign-in, for trying the AnythingLLM browser skill
 (`anythingllm-suite/packages/skills/browser`) against the kinds of login it meets on the web. Each
 site tests one part of the skill: `login` with a saved or user-entered password, codes
 (`what: authenticator | email | sms`), passkeys, taking the tab over, and `call` with the tab's
 session, plus what real sites add around the form: sign-in through another provider, phone approval,
-step-up prompts, cookie dialogs and bot checks (see `GAPS.md`). They all run on localhost, one port each, and are meant to go behind a cloudflared tunnel.
+step-up prompts, cookie dialogs, bot checks and a chat client's homeserver, session verification and staged sign-up (see `GAPS.md`). They all run on localhost, one port each, and are meant to go behind a cloudflared tunnel.
 
 ```sh
 npm install
-npm start          # dashboard on http://localhost:4100, sites on 4101–4116
+npm start          # dashboard on http://localhost:4100, sites on 4101–4117
 npm run smoke      # its own lab on 4300+, with a throwaway database: every site's flow over HTTP
 npm run check      # its own lab on 4400+, driven in a real Chrome and read with the skill's own snapshot code
 npm run reset      # removes every account, session, passkey and code; seeds Alice again
@@ -35,7 +35,7 @@ Every site starts with **alice@lab.test** / **Alice-pass-1**.
 | Port | Site | Sign-in | What to try with the skill |
 |---|---|---|---|
 | 4101 | **basic**: Pinecrest Notes | Server-rendered email and password form | `login` with user_ref, pass_ref and submit_ref. Save the login on the tab's page, then sign out and back in to see it typed by itself. `call /api/me` and `/api/notes` with `auth: "session"`. The session lasting after Chrome restarts. |
-| 4102 | **twostep**: Northwind Mail | Email page → password page | `act` for the email, then `login` with only pass_ref. **"Show password"** turns the password field into `input[text]`, after which `act` will type into it. |
+| 4102 | **twostep**: Northwind Mail | Email page → password page | `act` for the email, then `login` with only pass_ref. **"Show password"** turns the password field into `input[text]`; the skill marks it when it first reads it, so `act` still won't type into it. |
 | 4103 | **spa**: Orbit Tasks | Drawn by script; bearer token in **localStorage** | Refs on content the client draws, and waiting for it (the app takes about 600 ms per view). After Chrome restarts the sign-in is gone (the skill keeps cookies, not localStorage). `call /api/me` answers **401**, because `call` sends cookies and this app wants `Authorization: Bearer`. |
 | 4104 | **totp**: Vaultline Bank | Password, then a 6-digit authenticator code | `login` with `what: "authenticator"`. A new account goes to a QR code and setup key to turn on two-step verification. 5 wrong codes sign you out. |
 | 4105 | **otp**: Parcelpost | No password: email or phone, then a code by email or SMS | `login` with `what: "email"` or `"sms"`. The code is in the outbox. "Send a new code" and "Use a different email or number" are there. |
@@ -45,11 +45,12 @@ Every site starts with **alice@lab.test** / **Alice-pass-1**.
 | 4109 | **shadow**: Prism Studio | Web components in open **shadow roots** | `read` lists the fields, a `switch "Keep me signed in"` and a `div role="button"` for submit. The form posts JSON with fetch. |
 | 4110 | **wizard**: Summit Travel | Plain sign-in; sign-up in 3 steps | Account → profile (a select, radios, a date, checkboxes; **Next stays disabled** until it's valid; you must be 18+) → an email code from the outbox. The account exists only after the code. |
 | 4111 | **idp**: Lumen ID | A sign-in provider on its own port | Not opened directly. It's where Cirrus Docs sends you: sign-in, a **Choose an account** page once this browser has used it (Alice, Bob), then **consent** (Allow / Cancel). Alice is `alice@lab.test`; Bob is `bob@lab.test` / `Bob-pass-123`. |
-| 4112 | **federated**: Cirrus Docs | Password, or **Continue with Lumen ID** | By default the button opens a **popup window** that tells the opener when it's done (`/login`); `/login?social=redirect` makes it a full-page redirect and back. Tests a second window or tab, and a cross-origin round trip. |
+| 4112 | **federated**: Cirrus Docs | Password, or **Continue with Lumen ID** | By default the button opens a **popup window** that tells the opener when it's done (`/login`); `/login?social=redirect` makes it a full-page redirect and back; `?social=fragment` has the provider answer after a `#` that only the page's script reads; `?social=auto` redirects at once, with no form drawn. Tests a second window or tab, and a cross-origin round trip. |
 | 4113 | **push**: Meridian Wallet | Password, then **approve on a phone** | The page shows a 2-digit number and waits. Answer it in the dashboard's **Phone** panel (type the number), or `POST /api/push/approve` there with `{"number": "42"}`. Deny and time-out (60 s, `LAB_PUSH_TTL`) end differently; "Use another method" takes an authenticator code. |
-| 4114 | **stepup**: Stratus Console | Password + authenticator code | "Trust this browser for 30 days" skips the code next time (`/login?risk=1` asks anyway). **Create API key**, **Change email** and **Delete account** ask to confirm (password or code) first, then not again for `LAB_SUDO_SECONDS` (120), renewed by each one. |
+| 4114 | **stepup**: Stratus Console | Password + authenticator code | "Trust this browser for 30 days" skips the code next time (`/login?risk=1` asks anyway). **Create API key**, **Change email** and **Delete account** ask to confirm (password or code) first, then not again for `LAB_SUDO_SECONDS` (120), renewed by each one. **Devices**: removing one without a recent confirmation opens the confirmation in a **new tab**, while the first tab waits and carries on by itself. |
 | 4115 | **consent**: Acorn Market | Email and password under a **cookie dialog** | The page behind the dialog takes no typing until Accept all / Reject all / Manage. Also: Log in is disabled until both fields are filled, "Forgot password?" is a button, `/login?lang=sv` is Swedish, `?banner=bottom` leaves the form usable, `?banner=late` opens the dialog after two seconds. |
 | 4116 | **gate**: Fortress Bank | Password behind a **bot check** | `/login`: "Verifying you are human…" passes by itself, or asks for a click when the browser looks automated (headless Chrome does; `?gate=hard` forces it). `/interstitial/login`: a Continue page first. `/blocked/login`: a 403 block page with no form. |
+| 4117 | **murmur**: Murmur Chat | A chat client, in the shape of Element/Matrix | **Homeserver**: "Your conversations will be hosted by lab.test · Edit"; a typed server is looked up (slowly) and the form changes: `sso.lab.test` redirects to Lumen ID at once, `token.lab.test` and `captcha.lab.test` are password servers, anything else says it can't find a homeserver. **Verify this session** after every sign-in (another device, a recovery key, a red reset that **must not be pressed**; Skip for now everywhere except `token.lab.test`). **Sign-up** in the server's stages: token, username, terms, captcha, or an emailed link opened in another tab (`/register/confirm?code=…&email=…`, the code is in the outbox). A QR sign-in that changes every 5 s, a 10 s lockout after 3 wrong passwords, a "get the new app" notice before sign-up, and a session that ends by itself after `LAB_MURMUR_SESSION_SECONDS` (600). Alice is `alice` on every server; the recovery key and registration token are on the dashboard. |
 
 Every site also has `/account` ("Signed in as …"), `POST /logout` (also `GET /logout`), and
 `GET /api/me` (JSON, or 401 when signed out). Each site uses its own cookie, `lab_<site>_sid`,
@@ -87,8 +88,7 @@ also don't work on `http://host.docker.internal` (Chrome allows WebAuthn only on
 localhost). The tunnel fixes both.
 
 **Behind cloudflared:** copy `cloudflared.example.yml` to `cloudflared.yml`, put in your domain and
-tunnel, and route one hostname per site (the commands are at the top of the file). Cirrus Docs needs **both** `idp` and
-`federated` on the tunnel, and `LAB_PUBLIC_URL` set, so the popup and the redirects go to Lumen ID's public host. Then set
+tunnel, and route one hostname per site (the commands are at the top of the file). Cirrus Docs and Murmur Chat each need `idp` on the tunnel too, and `LAB_PUBLIC_URL` set, so the popup and the redirects go to Lumen ID's public host. Then set
 `LAB_PUBLIC_URL=https://lab-{name}.example.com` so the dashboard links to them. The sites trust
 `X-Forwarded-Proto` and `X-Forwarded-Host`, so cookies are `Secure` and passkeys use the public host
 as their relying party. Public https hosts pass the fence with no `FENCE_ALLOW`. Keep the dashboard

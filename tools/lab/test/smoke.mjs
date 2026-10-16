@@ -245,6 +245,27 @@ const checks = {
       }
       assert.equal((await app.me()).email, ALICE);
     }
+    // the provider can answer after a # (response_mode=fragment): the page's script posts it to the server
+    const frag = new Visitor(12);
+    const fid = new Visitor(11);
+    const fstart = new URL((await frag.go("/auth/lumen?mode=redirect&response=fragment")).location);
+    assert.equal(fstart.searchParams.get("response_mode"), "fragment");
+    redirects(await fid.go(fstart.pathname + fstart.search), "/login");
+    redirects(await fid.post("/login", { email: ALICE, password: PASS }), "/consent");
+    const fback = new URL((await fid.post("/consent", { decision: "allow" })).location);
+    assert.equal(fback.search, "", "nothing in the query");
+    const answer = new URLSearchParams(fback.hash.slice(1));
+    assert.ok(answer.get("code") && answer.get("state"));
+    assert.match((await frag.go("/auth/callback")).text, /auth\/callback\/complete/);
+    const bad2 = await frag.go("/auth/callback/complete", { method: "POST", json: { code: answer.get("code"), state: "nope" } });
+    assert.equal(bad2.status, 400);
+    await frag.go("/auth/lumen?mode=redirect&response=fragment");
+    const again = await frag.go("/auth/callback/complete", { method: "POST", json: { code: answer.get("code"), state: "stale" } });
+    assert.equal(again.json.ok, false);
+    // an auto-redirect login has no form at all
+    const auto = await new Visitor(12).go("/login?social=auto");
+    assert.equal(auto.status, 302);
+    assert.equal(auto.location, "/auth/lumen?mode=redirect");
     const stray = new Visitor(12);
     await stray.go("/auth/lumen?mode=popup");
     const bad = await stray.go("/auth/callback?code=x&state=nope");
@@ -308,6 +329,22 @@ const checks = {
     redirects(await v.post("/sudo", { method: "code", code: totpNow(), return_to: "/account/email" }), "/account/email");
     redirects(await v.post("/account/email", { email: "alice2@lab.test" }), "/account?msg=" + encodeURIComponent("Your email was changed."));
     assert.equal((await v.me()).email, "alice2@lab.test");
+    // removing a device with no recent confirmation opens a confirmation page, answered in another tab
+    const d = new Visitor(14);
+    redirects(await d.post("/login", { email: "alice2@lab.test", password: PASS }), "/login/code");
+    redirects(await d.post("/login/code", { code: totpNow() }), "/account");
+    assert.match((await d.go("/account/devices")).text, /Firefox on macOS/);
+    const asked = await d.post("/account/devices/remove", { id: "d2" });
+    const token = asked.text.match(/href="\/confirm\?token=([0-9a-f]+)"/)[1];
+    assert.equal((await d.go("/account/devices/status")).json.done, false);
+    const other = new Visitor(14); // the same browser's other tab shares the cookies
+    other.jar = d.jar;
+    assert.match((await other.go(`/confirm?token=${token}`)).text, /A client is trying to change your account/);
+    assert.equal((await other.post("/confirm", { token, password: "wrong" })).status, 401);
+    assert.match((await other.post("/confirm", { token, password: PASS })).text, /Confirmed/);
+    assert.equal((await d.go("/account/devices/status")).json.done, true);
+    assert.doesNotMatch((await d.go("/account/devices")).text, /Firefox on macOS/);
+    assert.equal((await d.go(`/confirm?token=${token}`)).status, 400, "a confirmation works once");
     redirects(await v.post("/account/delete", {}), "/");
     await v.me(401);
   },
@@ -351,6 +388,91 @@ const checks = {
     assert.match((await w.go("/interstitial/login")).text, /<button type="submit">Continue<\/button>/);
     redirects(await w.post("/interstitial/continue", {}), "/login");
     redirects(await w.go("/interstitial/login"), "/login");
+  },
+
+  async murmur() {
+    const v = new Visitor(17);
+    const login = (visitor, server, username, password = PASS) => visitor.post("/login", { server, username, password });
+    assert.equal((await v.go("/.well-known/matrix/client?server=nope.test")).status, 404);
+    assert.equal((await v.go("/.well-known/matrix/client?server=sso.lab.test")).json["lab.immediate"], true);
+    const immediate = await v.go("/login?server=sso.lab.test");
+    assert.equal(immediate.status, 302);
+    assert.equal(immediate.location, "/sso/start");
+    assert.match((await v.go("/login/methods?server=sso.lab.test")).text, /Continue with single sign-on/);
+    assert.match((await v.go("/login")).text, /hosted by <strong id="server-name">lab\.test<\/strong>[\s\S]*Edit/);
+    // three wrong passwords lock the form, even for the right one
+    assert.equal((await login(v, "lab.test", "alice", "x")).status, 401);
+    assert.equal((await login(v, "lab.test", "alice", "x")).status, 401);
+    const locked = await login(v, "lab.test", "alice", "x");
+    assert.equal(locked.status, 429);
+    assert.match(locked.text, /Try again in <span id="countdown">10<\/span> seconds/);
+    assert.equal((await login(v, "lab.test", "alice")).status, 429);
+    // a good sign-in goes to the verify screen, which can be skipped on lab.test
+    const w = new Visitor(17);
+    redirects(await login(w, "lab.test", "@alice:lab.test"), "/verify");
+    const verify = (await w.go("/verify")).text;
+    assert.match(verify, /Verify this session[\s\S]*Use another device[\s\S]*Enter recovery key[\s\S]*Can't confirm\?[\s\S]*Skip for now/);
+    assert.match((await w.go("/verify/device")).text, /Waiting for your other device/);
+    redirects(await w.post("/verify/skip", {}), "/account");
+    assert.match((await w.go("/account")).text, /not verified \(skipped\)/);
+    // token.lab.test insists: no skip, and the account stays behind it until the recovery key is given
+    const s = new Visitor(17);
+    redirects(await login(s, "token.lab.test", "alice"), "/verify");
+    assert.doesNotMatch((await s.go("/verify")).text, /Skip for now/);
+    redirects(await s.go("/account"), "/verify");
+    redirects(await s.post("/verify/skip", {}), "/verify");
+    assert.equal((await s.post("/verify/key", { key: "wrong" })).status, 401);
+    redirects(await s.post("/verify/key", { key: "estc lab1 verf y123" }), "/account");
+    assert.match((await s.go("/account")).text, /This session is verified/);
+    // the reset is real, and irreversible on the page
+    const r = new Visitor(17);
+    await login(r, "captcha.lab.test", "alice");
+    assert.match((await r.go("/verify/reset")).text, /can't be undone/);
+    assert.match((await r.post("/verify/reset", {})).location, /^\/account\?msg=/);
+    assert.match((await r.go("/account")).text, /Your identity was reset/);
+    // QR codes change
+    const [q1, q2] = [(await v.go("/login/qr/code")).json, (await v.go("/login/qr/code")).json];
+    assert.match(q1.image, /^data:image\/png/);
+    assert.notEqual(q1.code, q2.code);
+    // sign-up stages follow the server
+    assert.deepEqual((await v.go("/api/registration/flows?server=token.lab.test")).json.flows[0].stages, ["token", "username", "terms"]);
+    assert.deepEqual((await v.go("/api/registration/flows?server=captcha.lab.test")).json.flows[0].stages, ["username", "captcha", "terms"]);
+    const g = new Visitor(17);
+    assert.match((await g.go("/register?server=token.lab.test")).text, /Murmur X is here[\s\S]*Continue anyway/);
+    redirects(await g.go("/register/start?server=token.lab.test"), "/register/step");
+    assert.match((await g.go("/register/step")).text, /Registration token/);
+    assert.equal((await g.post("/register/step", { token: "nope" })).status, 400);
+    redirects(await g.post("/register/step", { token: "lab-token-1" }), "/register/step");
+    const name = `gil${Date.now().toString(36)}`;
+    assert.match((await g.post("/register/step", { username: "alice", password: "Gil-pass-123", confirm: "Gil-pass-123" })).text, /That username is taken/);
+    redirects(await g.post("/register/step", { username: name, password: "Gil-pass-123", confirm: "Gil-pass-123" }), "/register/step");
+    assert.equal((await g.post("/register/step", {})).status, 400, "terms not accepted");
+    redirects(await g.post("/register/step", { terms: "on" }), "/register/step");
+    redirects(await g.go("/register/step"), "/verify");
+    assert.equal((await g.me()).email, `${name}@token.lab.test`);
+    // on lab.test the last stage is an emailed link, opened in another tab while this one waits
+    const h = new Visitor(17);
+    const hname = `hal${Date.now().toString(36)}`;
+    redirects(await h.go("/register/start?server=lab.test"), "/register/step");
+    redirects(await h.post("/register/step", { username: hname, password: "Hal-pass-123", confirm: "Hal-pass-123" }), "/register/step");
+    redirects(await h.post("/register/step", { terms: "on" }), "/register/step");
+    assert.match((await h.go("/register/step")).text, /Add your email/);
+    const email = `${hname}@mail.test`;
+    redirects(await h.post("/register/step", { email }), "/register/step");
+    assert.match((await h.go("/register/step")).text, /Check your email/);
+    assert.equal((await h.go("/register/status")).json.confirmed, false);
+    redirects(await h.post("/register/continue", {}), "/register/step");
+    const code = await lastCode("murmur", email);
+    assert.equal((await new Visitor(17).go(`/register/confirm?code=${code}&email=${encodeURIComponent(email)}`)).status, 200);
+    assert.equal((await new Visitor(17).go(`/register/confirm?code=${code}&email=${encodeURIComponent(email)}`)).status, 400, "a link works once");
+    assert.equal((await h.go("/register/status")).json.confirmed, true);
+    redirects(await h.post("/register/continue", {}), "/register/step");
+    redirects(await h.go("/register/step"), "/verify");
+    assert.equal((await h.me()).email, `${hname}@lab.test`);
+    // a session ends by itself
+    await sleep(3300);
+    redirects(await h.go("/account"), "/login?expired=1");
+    await h.me(401);
   },
 };
 

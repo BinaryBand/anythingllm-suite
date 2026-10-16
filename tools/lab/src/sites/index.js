@@ -5,6 +5,7 @@ import federated from "./federated.js";
 import gate from "./gate.js";
 import idp from "./idp.js";
 import iframe from "./iframe.js";
+import murmur from "./murmur.js";
 import otp from "./otp.js";
 import passkey from "./passkey.js";
 import push from "./push.js";
@@ -15,7 +16,7 @@ import totp from "./totp.js";
 import twostep from "./twostep.js";
 import wizard from "./wizard.js";
 
-export const SITES = [basic, twostep, spa, totp, otp, passkey, captcha, iframe, shadow, wizard, idp, federated, push, stepup, consent, gate];
+export const SITES = [basic, twostep, spa, totp, otp, passkey, captcha, iframe, shadow, wizard, idp, federated, push, stepup, consent, gate, murmur];
 
 export { BASE_PORT, portOf, publicUrlOf } from "../lib/ports.js";
 

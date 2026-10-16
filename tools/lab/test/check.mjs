@@ -10,7 +10,7 @@ import { readPage } from "./.snapshot.mjs";
 
 const BASE = Number(process.env.CHECK_BASE_PORT || 4400);
 const SECRET = "JBSWY3DPEHPK3PXP";
-const lab = await startLab({ base: BASE, env: { LAB_SUDO_SECONDS: "30", LAB_PUSH_TTL: "60" } });
+const lab = await startLab({ base: BASE, env: { LAB_SUDO_SECONDS: "30", LAB_PUSH_TTL: "60", LAB_MURMUR_SESSION_SECONDS: "180" } });
 const U = (offset, path = "/") => `http://localhost:${lab.port(offset)}${path}`;
 const dashboard = (path, init) => fetch(`http://localhost:${BASE}${path}`, init);
 
@@ -37,6 +37,7 @@ async function read(label, p = page, { quiet = true } = {}) {
   if (!quiet) console.log(`\n--- ${label}  ${url}\n${snap.elements.join("\n")}`);
   return snap;
 }
+const refsOf = (snap, re) => snap.elements.filter((l) => re.test(l)).map((l) => l.match(/^\[(e\d+)\]/)[1]);
 const refOf = (snap, re) => snap.elements.find((l) => re.test(l))?.match(/^\[(e\d+)\]/)?.[1];
 const has = (snap, re) => snap.elements.some((l) => re.test(l));
 const byRef = (ref, p = page) => p.$(`pierce/[data-bw-ref="${ref}"]`); // as the skill's act finds an element (element() in act.ts)
@@ -301,6 +302,139 @@ await step("gate", async () => {
   s = await read("gate passed");
   await signInOn(s, "alice@lab.test", "Alice-pass-1");
   ok(await signedIn(), "gate: signs in after the check");
+});
+
+await step("federated fragment and auto", async () => {
+  await go(U(12, "/logout"));
+  await go(U(12, "/login?social=fragment"));
+  let s = await read("federated fragment");
+  await Promise.all([page.waitForNavigation(), (await act(s, /link "Continue with Lumen ID"/)).click()]);
+  s = await read("idp chooser fragment");
+  await Promise.all([page.waitForNavigation(), (await act(s, /Alice Example/)).click()]);
+  s = await read("idp consent fragment");
+  await (await act(s, /button "Allow"/)).click();
+  await page.waitForFunction(() => location.pathname === "/account", { timeout: 10000 });
+  ok(new URL(page.url()).port === String(lab.port(12)) && (await signedIn()), "federated: the answer after a # is picked up by the page's script and signs in");
+  await go(U(12, "/logout"));
+  await go(U(12, "/login?social=auto"));
+  ok(new URL(page.url()).port === String(lab.port(11)), "federated: ?social=auto lands on the provider with no form drawn first");
+});
+
+await step("stepup device in a new tab", async () => {
+  await go(U(14, "/account/devices"));
+  let s = await read("stepup devices");
+  const removes = refsOf(s, /button "Remove"/);
+  ok(removes.length === 3, "stepup: the devices page lists three devices");
+  await Promise.all([page.waitForNavigation(), (await byRef(removes[1])).click()]);
+  s = await read("stepup wait");
+  ok(has(s, /link "Open the confirmation page"/), "stepup: removing a device asks to confirm in a new tab");
+  const href = await page.$eval("#open-confirm", (a) => a.href);
+  const tab = await browser.newPage();
+  watch(tab);
+  await go(href, tab);
+  const t = await read("stepup confirm tab", tab);
+  await (await act(t, /input\[password\]/, tab)).type("Alice-pass-1");
+  await Promise.all([tab.waitForNavigation(), (await act(t, /button "Confirm"/, tab)).click()]);
+  ok(/Confirmed/.test(await text(tab)), "stepup: the other tab confirms");
+  await tab.close();
+  await page.waitForFunction(() => location.pathname === "/account/devices" && /Removed/.test(document.body.innerText), { timeout: 8000 });
+  ok(!(await text()).includes("Firefox on macOS"), "stepup: the first tab carries on by itself and the device is gone");
+});
+
+await step("murmur", async () => {
+  await go(U(17, "/login"));
+  let s = await read("murmur");
+  ok(has(s, /button "Edit"/) && (await text()).includes("hosted by lab.test"), "murmur: the page names the homeserver, with an Edit button");
+  await (await act(s, /button "Edit"/)).click();
+  s = await read("murmur picker");
+  const server = await act(s, /Homeserver/);
+  await server.evaluate((e) => (e.value = ""));
+  await server.type("nope.test");
+  await (await act(s, /button "Continue"/)).click();
+  await page.waitForFunction(() => /Can't find a homeserver/.test(document.getElementById("picker-msg").textContent), { timeout: 5000 });
+  ok(true, "murmur: an unknown homeserver gives an inline error");
+  await server.evaluate((e) => (e.value = ""));
+  await server.type("sso.lab.test");
+  await (await act(await read("murmur picker again"), /button "Continue"/)).click();
+  await page.waitForFunction((p) => location.port === p, { timeout: 8000 }, String(lab.port(11)));
+  ok(true, "murmur: a single-sign-on server sends the page straight to the provider");
+  s = await read("murmur idp");
+  if (has(s, /input\[email\]/)) {
+    await signInOn(s, "alice@lab.test", "Alice-pass-1", /button "Sign in"/);
+    s = await read("murmur idp consent");
+  } else {
+    await Promise.all([page.waitForNavigation(), (await act(s, /Alice Example/)).click()]);
+    s = await read("murmur idp consent");
+  }
+  await (await act(s, /button "Allow"/)).click();
+  await page.waitForFunction(() => location.pathname === "/verify", { timeout: 10000 });
+  s = await read("murmur verify");
+  ok(has(s, /Use another device/) && has(s, /Enter recovery key/) && has(s, /Can't confirm\?/) && has(s, /button "Skip for now"/), "murmur: Verify this session offers another device, a recovery key, a reset and Skip");
+  await Promise.all([page.waitForNavigation(), (await act(s, /button "Skip for now"/)).click()]);
+  ok(/not verified \(skipped\)/.test(await text()), "murmur: Skip for now gets into the account, unverified");
+  await go(U(17, "/logout"));
+
+  // a strict server: no Skip, and the recovery key unlocks it
+  await go(U(17, "/login?server=token.lab.test"));
+  s = await read("murmur token server");
+  await (await act(s, /input\[text\] "Username"/)).type("alice");
+  await (await act(s, /input\[password\]/)).type("Alice-pass-1");
+  await Promise.all([page.waitForNavigation(), (await act(s, /button "Sign in"/)).click()]);
+  s = await read("murmur strict verify");
+  ok(page.url().endsWith("/verify") && !has(s, /Skip for now/), "murmur: token.lab.test gives no way to skip");
+  await Promise.all([page.waitForNavigation(), (await act(s, /link "Enter recovery key"/)).click()]);
+  s = await read("murmur key");
+  await (await act(s, /Recovery key/)).type("EsTc Lab1 Verf Y123");
+  await Promise.all([page.waitForNavigation(), (await act(s, /button "Continue"/)).click()]);
+  ok(/This session is verified/.test(await text()), "murmur: the recovery key verifies the session");
+  await go(U(17, "/logout"));
+
+  // three wrong passwords lock the form, with a countdown
+  await go(U(17, "/login"));
+  for (let i = 0; i < 3; i++) {
+    s = await read("murmur wrong");
+    await (await act(s, /input\[text\] "Username"/)).type("alice");
+    await (await act(s, /input\[password\]/)).type("wrong-pass");
+    await Promise.all([page.waitForNavigation(), (await act(s, /button "Sign in"/)).click()]);
+  }
+  s = await read("murmur locked");
+  ok(has(s, /button "Sign in" \(disabled\)/) && /Try again in \d+ seconds/.test(await text()), "murmur: three wrong passwords disable Sign in, with a countdown");
+  await page.waitForFunction(() => !document.querySelector("form button[type=submit]").disabled, { timeout: 14000 });
+  ok(true, "murmur: the form comes back when the countdown ends");
+
+  // QR login changes
+  await go(U(17, "/login/qr"));
+  await pause(500);
+  const first = await page.$eval("#qr", (i) => i.src);
+  await pause(5600);
+  ok(first.startsWith("data:image/png") && first !== (await page.$eval("#qr", (i) => i.src)), "murmur: the QR code changes every few seconds");
+
+  // sign-up: the notice, the stages, and the emailed link opened in another tab
+  await go(U(17, "/register"));
+  s = await read("murmur notice");
+  ok(has(s, /link "Continue anyway"/) && has(s, /link "Get the new app"/), "murmur: sign-up starts with a 'new app' notice and Continue anyway");
+  await Promise.all([page.waitForNavigation(), (await act(s, /link "Continue anyway"/)).click()]);
+  s = await read("murmur stage 1");
+  const user = `viv${Date.now().toString(36)}`;
+  await (await act(s, /input\[text\] "Username"/)).type(user);
+  await (await act(s, /input\[password\] "Password"/)).type("Viv-pass-123");
+  await (await act(s, /input\[password\] "Confirm password"/)).type("Viv-pass-123");
+  await Promise.all([page.waitForNavigation(), (await act(s, /button "Continue"/)).click()]);
+  s = await read("murmur terms");
+  await (await act(s, /checkbox\] "I accept/)).click();
+  await Promise.all([page.waitForNavigation(), (await act(s, /button "Continue"/)).click()]);
+  s = await read("murmur email");
+  const email = `${user}@mail.test`;
+  await (await act(s, /input\[email\]/)).type(email);
+  await Promise.all([page.waitForNavigation(), (await act(s, /button "Send a link"/)).click()]);
+  ok(/Waiting for you to open the link/.test(await text()), "murmur: the sign-up waits for an emailed link");
+  const code = (await (await dashboard(`/api/outbox?site=murmur&to=${encodeURIComponent(email)}`)).json())[0].code;
+  const tab = await browser.newPage();
+  await go(U(17, `/register/confirm?code=${code}&email=${encodeURIComponent(email)}`), tab);
+  ok(/Email confirmed/.test(await text(tab)), "murmur: the link, opened in another tab, confirms the email");
+  await tab.close();
+  await page.waitForFunction(() => location.pathname === "/verify", { timeout: 8000 });
+  ok(true, "murmur: the first tab carries on by itself, to Verify this session");
 });
 
 console.log(errors.length ? `\npage errors:\n${errors.join("\n")}` : "\nno page errors");

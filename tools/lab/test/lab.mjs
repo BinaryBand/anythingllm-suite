@@ -12,7 +12,7 @@ export async function startLab({ base, env = {} }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "test-lab-"));
   const server = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "src/server.js"], {
     cwd: path.resolve(import.meta.dirname, ".."),
-    env: { ...process.env, LAB_DB: path.join(dir, "lab.db"), LAB_BASE_PORT: String(base), LAB_FIXED_CAPTCHA: CAPTCHA, LAB_SECRET: "test", LAB_BIND: "127.0.0.1", LAB_PUSH_TTL: "2", LAB_SUDO_SECONDS: "2", ...env },
+    env: { ...process.env, LAB_DB: path.join(dir, "lab.db"), LAB_BASE_PORT: String(base), LAB_FIXED_CAPTCHA: CAPTCHA, LAB_SECRET: "test", LAB_BIND: "127.0.0.1", LAB_PUSH_TTL: "2", LAB_SUDO_SECONDS: "2", LAB_MURMUR_SESSION_SECONDS: "3", ...env },
     stdio: ["ignore", "pipe", "inherit"],
   });
   await new Promise((resolve, reject) => {

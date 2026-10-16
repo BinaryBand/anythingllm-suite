@@ -9,6 +9,7 @@ import * as outbox from "./lib/outbox.js";
 import * as push from "./lib/push.js";
 import * as users from "./lib/users.js";
 import { SITES, portOf, publicUrlOf, seedAll } from "./sites/index.js";
+import { RECOVERY_KEY, REGISTRATION_TOKEN } from "./sites/murmur.js";
 import { ALICE_SECRET } from "./sites/totp.js";
 
 const page = (body) => html`<!doctype html>
@@ -40,7 +41,8 @@ export function dashboard() {
     res.type("html").send(page(html`
       <h1>Sites</h1>
       <p class="muted">Every site starts with <strong>${users.ALICE.email}</strong> / <code>${users.ALICE.pass}</code>.
-        Alice's authenticator code on Vaultline Bank right now: <strong class="secret" id="totp">${otplib.authenticator.generate(ALICE_SECRET)}</strong> (secret <code>${ALICE_SECRET}</code>).</p>
+        Alice's authenticator code on Vaultline Bank right now: <strong class="secret" id="totp">${otplib.authenticator.generate(ALICE_SECRET)}</strong> (secret <code>${ALICE_SECRET}</code>).
+        Murmur Chat: recovery key <code>${RECOVERY_KEY}</code>, registration token <code>${REGISTRATION_TOKEN}</code>.</p>
       <table><tr><th>Site</th><th>Address</th><th>What it tests</th><th>Users</th></tr>
       ${SITES.map((s) => {
         const list = users.ofSite(s.name);

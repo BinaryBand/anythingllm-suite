@@ -4,7 +4,7 @@
 
 import otplib from "otplib";
 import crypto from "node:crypto";
-import { error, field, html, notice } from "../lib/html.js";
+import { error, field, html, notice, raw } from "../lib/html.js";
 import { cookies, sign, unsign } from "../lib/session.js";
 import { localPath, passwordAuth } from "../lib/site.js";
 import * as users from "../lib/users.js";
@@ -15,7 +15,11 @@ const TRUST = "lab_stepup_trust";
 const TRUST_MS = 30 * 24 * 60 * 60 * 1000;
 const { authenticator } = otplib;
 const windowMs = () => Math.max(1, Number(process.env.LAB_SUDO_SECONDS) || 120) * 1000;
-const keysOf = (user) => JSON.parse(user.profile || "{}").keys ?? [];
+const profileOf = (user) => JSON.parse(user.profile || "{}");
+const keysOf = (user) => profileOf(user).keys ?? [];
+const DEVICES = [{ id: "d1", name: "Chrome on Linux (this device)" }, { id: "d2", name: "Firefox on macOS" }, { id: "d3", name: "Phone" }];
+const devicesOf = (user) => profileOf(user).devices ?? DEVICES;
+const saveProfile = (user, patch) => users.update(user.id, { profile: JSON.stringify({ ...profileOf(user), ...patch }) });
 
 export default {
   name: SITE,
@@ -23,7 +27,7 @@ export default {
   title: "Stratus Console",
   color: "#4d7c0f",
   tagline: "Cloud keys, kept close.",
-  tests: "Password + authenticator code with \"Trust this browser for 30 days\" (a later sign-in skips the code; /login?risk=1 asks anyway), and a password or code prompt before creating an API key, changing the email or deleting the account (/sudo).",
+  tests: "Password + authenticator code with \"Trust this browser for 30 days\" (a later sign-in skips the code; /login?risk=1 asks anyway), and a password or code prompt before creating an API key, changing the email or deleting the account (/sudo), and Devices: removing one opens the confirmation in a new tab while the first tab waits.",
   seed: () => users.seed(SITE, { totp: ALICE_SECRET }),
   build(ctx) {
     const { app, render } = ctx;
@@ -93,7 +97,7 @@ export default {
         ${field({ label: "Key name", name: "name", required: true, autofocus: true })}<button type="submit">Create key</button><p class="muted"><a href="/account">Cancel</a></p></form>`));
     app.post("/account/keys/new", ctx.requireUser, needSudo("/account/keys/new"), (req, res) => {
       const key = { name: String(req.body.name ?? "").trim() || "Untitled", secret: `lab_sk_${crypto.randomBytes(12).toString("hex")}`, created: new Date().toISOString().slice(0, 16).replace("T", " ") };
-      users.update(req.user.id, { profile: JSON.stringify({ keys: [...keysOf(req.user), key] }) });
+      saveProfile(req.user, { keys: [...keysOf(req.user), key] });
       render(req, res, "API key created", html`<div class="card"><h1>API key created</h1><p>Copy it now; it won't be shown again.</p><p class="secret" id="new-key">${key.secret}</p><a class="button" href="/account">Done</a></div>`);
     });
     app.get("/account/email", ctx.requireUser, needSudo(), (req, res) =>
@@ -105,6 +109,55 @@ export default {
       users.update(req.user.id, { email: users.normal(req.body.email) });
       res.redirect(303, "/account?msg=" + encodeURIComponent("Your email was changed."));
     });
+    // Removing a device: with a recent confirmation it just happens; without one, the confirmation is a separate
+    // page opened in a new tab (as when a provider has to approve it) while this tab waits and carries on by itself.
+    const removeDevice = (user, id) => saveProfile(user, { devices: devicesOf(user).filter((d) => d.id !== id) });
+    app.get("/account/devices", ctx.requireUser, (req, res) =>
+      render(req, res, "Devices", html`<div class="card wide"><h1>Your devices</h1>${notice(req.query.msg)}
+        <table>${devicesOf(req.user).map((d) => html`<tr><td>${d.name}</td><td><form method="post" action="/account/devices/remove"><input type="hidden" name="id" value="${d.id}"><button class="ghost small" type="submit">Remove</button></form></td></tr>`)}</table>
+        <p class="muted"><a href="/account">Back to your account</a></p></div>`));
+    app.post("/account/devices/remove", ctx.requireUser, (req, res) => {
+      const device = devicesOf(req.user).find((d) => d.id === req.body.id);
+      if (!device) return res.redirect(303, "/account/devices");
+      if (active(req)) {
+        removeDevice(req.user, device.id);
+        req.session.save({ sudoUntil: Date.now() + windowMs() });
+        return res.redirect(303, "/account/devices?msg=" + encodeURIComponent(`Removed ${device.name}.`));
+      }
+      const token = crypto.randomBytes(8).toString("hex");
+      req.session.save({ confirm: { deviceId: device.id, token, done: false } });
+      render(req, res, "Confirm in a new tab", html`<div class="card"><h1>Confirm in a new tab</h1>
+        <p>To remove <strong>${device.name}</strong>, confirm it's you on a separate page.</p>
+        <p><a class="button" id="open-confirm" href="/confirm?token=${token}" target="_blank" rel="noopener">Open the confirmation page</a></p>
+        <p class="muted" id="confirm-status" role="status">Waiting for you to confirm…</p>
+        <p class="muted"><a href="/account/devices">Cancel</a></p></div>
+        ${raw(`<script>setInterval(function () { fetch("/account/devices/status").then(function (r) { return r.json(); }).then(function (d) { if (d.done) location.href = "/account/devices?msg=" + encodeURIComponent("Removed."); }); }, 1000);</script>`)}`);
+    });
+    app.get("/account/devices/status", ctx.requireUser, (req, res) => {
+      const done = Boolean(req.session.data.confirm?.done);
+      if (done) req.session.save({ confirm: null });
+      res.json({ done });
+    });
+    const confirmPage = (req, res, problem, status = 200) => {
+      const device = devicesOf(req.user).find((d) => d.id === req.session.data.confirm?.deviceId);
+      render(req, res, "Confirm the change", html`<form class="card" method="post" action="/confirm">
+        <h1>A client is trying to change your account</h1>
+        <p class="error">Only continue if this was you. It wants to remove <strong>${device?.name ?? "a device"}</strong>.</p>
+        ${error(problem)}<input type="hidden" name="token" value="${req.body?.token ?? req.query.token ?? ""}">
+        ${field({ label: "Password", name: "password", type: "password", autocomplete: "current-password", required: true, autofocus: true })}
+        <button type="submit">Confirm</button><p class="muted">You can close this tab afterwards.</p></form>`, { status });
+    };
+    const validToken = (req, token) => req.session.data.confirm && req.session.data.confirm.token === token && !req.session.data.confirm.done;
+    app.get("/confirm", ctx.requireUser, (req, res) =>
+      validToken(req, req.query.token) ? confirmPage(req, res) : render(req, res, "Nothing to confirm", html`<div class="card"><h1>Nothing to confirm</h1><p>This confirmation has expired or was already used.</p></div>`, { status: 400 }));
+    app.post("/confirm", ctx.requireUser, (req, res) => {
+      if (!validToken(req, req.body.token)) return res.redirect(303, "/account");
+      if (!users.check(SITE, req.user.email, req.body.password)) return confirmPage(req, res, "That password isn't right.", 401);
+      removeDevice(req.user, req.session.data.confirm.deviceId);
+      req.session.save({ confirm: { ...req.session.data.confirm, done: true } });
+      render(req, res, "Confirmed", html`<div class="card"><h1>Confirmed</h1><p>You can close this tab and go back to the other one.</p></div>`);
+    });
+
     app.get("/account/delete", ctx.requireUser, needSudo(), (req, res) =>
       render(req, res, "Delete account", html`<form class="card" method="post" action="/account/delete"><h1>Delete your account</h1><p>This removes your account and its keys.</p>
         <button class="danger" type="submit">Delete my account</button><p class="muted"><a href="/account">Cancel</a></p></form>`));
@@ -118,7 +171,7 @@ export default {
     const left = Math.max(0, Math.round(((req.session.data.sudoUntil ?? 0) - Date.now()) / 1000));
     return html`<h2>API keys</h2>
       ${keysOf(req.user).length ? html`<table><tr><th>Name</th><th>Key</th><th>Created</th></tr>${keysOf(req.user).map((k) => html`<tr><td>${k.name}</td><td><code>${k.secret.slice(0, 10)}…</code></td><td>${k.created}</td></tr>`)}</table>` : html`<p class="muted">No keys yet.</p>`}
-      <p class="actions"><a class="button" href="/account/keys/new">Create API key</a> <a class="button ghost" href="/account/email">Change email</a> <a class="button danger" href="/account/delete">Delete account</a></p>
+      <p class="actions"><a class="button" href="/account/keys/new">Create API key</a> <a class="button ghost" href="/account/email">Change email</a> <a class="button ghost" href="/account/devices">Devices</a> <a class="button danger" href="/account/delete">Delete account</a></p>
       <p class="muted" id="sudo-state">${left ? `Confirmed: no prompt for the next ${left} seconds.` : "Sensitive changes will ask you to confirm."}</p>`;
   },
 };

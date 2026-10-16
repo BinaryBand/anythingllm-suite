@@ -3,7 +3,7 @@
 #
 #   cloudflared tunnel login
 #   cloudflared tunnel create test-lab
-#   for s in basic twostep spa totp otp passkey captcha iframe shadow wizard idp federated push stepup consent gate; do
+#   for s in basic twostep spa totp otp passkey captcha iframe shadow wizard idp federated push stepup consent gate murmur; do
 #     cloudflared tunnel route dns test-lab lab-$s.example.com
 #   done
 #   cloudflared tunnel --config cloudflared.yml run test-lab
@@ -49,4 +49,6 @@ ingress:
     service: http://localhost:4115
   - hostname: lab-gate.example.com
     service: http://localhost:4116
+  - hostname: lab-murmur.example.com
+    service: http://localhost:4117
   - service: http_status:404
