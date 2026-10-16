@@ -2,7 +2,7 @@
 # implemented here, so `make` and the scripts never disagree.
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks lint test boundaries check e2e routes package install
+.PHONY: help hooks lint test boundaries check e2e e2e-skill routes package install
 
 PART    ?=# bridge, control, skills or app; empty: all
 SKILL   ?=# a skill's folder name under packages/skills
@@ -35,6 +35,9 @@ check: ## Test a part (PART=control) or, with no PART, all of them
 
 e2e: ## Install into a throwaway AnythingLLM and run the suite against it (needs podman or docker)
 	tools/e2e
+
+e2e-skill: ## Run a skill's own check inside a throwaway AnythingLLM (SKILL=browser; empty: every skill that has one)
+	tools/e2e-skill $(SKILL)
 
 routes: ## Fail if AnythingLLM stopped declaring a route the default list names (needs the image)
 	tools/routes

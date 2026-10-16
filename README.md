@@ -48,7 +48,7 @@ packages/shared/    helpers the JavaScript parts bundle in (writeAtomic, the per
 packages/package.json, tsconfig.json   the toolchain: one install, one type-check
 app/                the Flutter app
 contract/           endpoints.md, default-allow.txt, versions.env: read by every part
-tools/              check, package, install, e2e, routes, boundaries
+tools/              check, package, install, e2e, e2e-skill, routes, boundaries
 docs/               architecture.md; notes/ for decisions, repo-wide and per part
 .github/workflows/  the tests on Linux, macOS and Windows, and the e2e on Linux
 dist/               build output, ignored

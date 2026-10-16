@@ -38,10 +38,7 @@ On 2026-10-15: the spike, bundled, on the 1.16 image's Node 18.20.8 (the async k
 On 2026-10-15, phase 1: `tests/handler.test.mts` (18 tests against the built bundle and a stand-in API) and `tests/e2e/inside.js` inside the 1.16 image, by hand:
 
 ```sh
-cd packages && node build.mjs skills library
-podman run --rm --entrypoint node -e HUB_ID=library-lean -e FENCE_ALLOW=127.0.0.1 \
-  -v $PWD/skills/library/build/library-lean:/app/server/storage/plugins/agent-skills/library-lean:ro,Z \
-  -v $PWD/skills/library/tests/e2e:/e2e:ro,Z -w /app/server docker.io/mintplexlabs/anythingllm:1.16 /e2e/inside.js
+make e2e-skill SKILL=library
 ```
 
 It printed ok. The bundle is 982 KB.

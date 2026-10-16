@@ -121,7 +121,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const refused = await call("home", { action: "edit", name: "groceries", file: "page.html", find: "<!--scripts-->", text: "<script>App.onchange(draw);</script>\n<!--scripts-->" });
   assert.match(refused, /page\.html uses draw, which no script declares/);
 
-  assert.equal(await call("home", { action: "delete", name: "groceries" }, false), "The user kept groceries.");
+  // The last tap's event may land after the calls above, and then the reply leads with the page-changes note.
+  assert.match(await call("home", { action: "delete", name: "groceries" }, false), /(^|\n)The user kept groceries\.$/);
   assert.match(asked[0].description, /Delete the app Groceries/);
   assert.match(await call("home", { action: "delete", name: "groceries" }), /^Deleted the app groceries, its changes and its page\./);
   assert.deepEqual(await state(), { gone: true }, "a page still open is told");
