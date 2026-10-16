@@ -90,6 +90,20 @@ export async function reachable(target: ElementHandle, ref: string): Promise<voi
   throw new BrowserError(`${ref} is behind a dialog${named ? ` (${named})` : ""}, so nothing reaches it: close the dialog first (a cookie one with the choice that shares least, unless the user said otherwise), read again, then try again`);
 }
 
+/** The words of a check that a person is at the browser, which is the user's to pass. */
+const HUMAN_CHECK = /verify (that )?you('| a)re (a )?human|i'?m not a robot|human (check|verification)|captcha/i;
+
+/** A BrowserError when `target` (`ref`) is, or sits in, a check that a person is at the browser
+ *  ("Verify you are human"): ticking it for them is passing as them. */
+async function notHumanCheck(target: ElementHandle, ref: string): Promise<void> {
+  const words: string = await target.evaluate((el) => {
+    const group = el.closest?.('[role="group"], fieldset, label, [aria-label]');
+    return [el.getAttribute("aria-label"), el.labels?.[0]?.innerText, el.innerText, el.value, group?.getAttribute?.("aria-label"), group?.tagName === "LABEL" ? group.innerText : ""].filter(Boolean).join(" ");
+  });
+  const said = words.match(HUMAN_CHECK)?.[0];
+  if (said) throw new BrowserError(`${ref} is a check that a person is at the browser ("${said}"): that's the user's to do, never yours. Tell them to tap the card, take the tab over, do it, and hand it back`);
+}
+
 /** The input types a value is set into whole, as a picker would, rather than typed: Chrome types
  *  them by segments, in the user's locale's order. Each with the format its value takes. */
 const SET_WHOLE: Record<string, string> = { date: "YYYY-MM-DD", time: "HH:MM", month: "YYYY-MM", week: "YYYY-Www", "datetime-local": "YYYY-MM-DDTHH:MM" };
@@ -235,6 +249,7 @@ export async function act(page: Page, action: string, ref: string, text: string)
     throw new BrowserError(`${ref || "the focused field"} is a password field, which act never types into, even with a password the page or the chat shows: use login, which types a saved login or what the user enters on the tab's page`);
   }
   if (target && REACHES.has(action)) await reachable(target, ref);
+  if (target && (action === "click" || action === "check")) await notHumanCheck(target, ref);
   const navigation = { waitUntil: "domcontentloaded", timeout: NAVIGATE_MS };
   switch (action) {
     case "click":

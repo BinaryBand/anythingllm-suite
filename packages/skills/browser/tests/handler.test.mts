@@ -352,3 +352,13 @@ test("a read of a page with a password or a code field points to login", async (
   assert.match(await call({ action: "open", url: "https://otp.example/" }), /This page asks for a code: use login with what/);
   assert.doesNotMatch(await call({ action: "open", url: "https://shop.example/" }), /use login/);
 });
+
+test("a check that a person is at the browser isn't clicked or ticked by the agent", async () => {
+  site("https://gate2.example/", { title: "Sign in", fields: { ...SIGN_IN, e8: { type: "checkbox", name: "Verify you are human", attrs: { "aria-label": "Verify you are human" } }, e9: { type: "checkbox", name: "Remember me" } } });
+  const call = inWorkspace("gate2");
+  await call({ action: "open", url: "https://gate2.example/" });
+  assert.match(await call({ action: "act", do: "check", ref: "e8" }), /e8 is a check that a person is at the browser \("Verify you are human"\): that's the user's to do/);
+  assert.match(await call({ action: "act", do: "click", ref: "e8" }), /that's the user's to do/);
+  assert.deepEqual(lastPage().clicks, []);
+  assert.match(await call({ action: "act", do: "check", ref: "e9" }), /^Did check e9\./);
+});
