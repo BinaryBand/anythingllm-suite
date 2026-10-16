@@ -1,6 +1,6 @@
 # Notes
 
-Repo-wide decisions and their reasons. A part's own notes live beside this file, under `docs/notes/<group>/<part>/`: [skills/library](skills/library/README.md) and [skills/browser](skills/browser/README.md). The memory skill's notes went with it to the branch `archive/memory-skill`.
+Repo-wide decisions and their reasons. A part's own notes live beside this file, under `docs/notes/<group>/<part>/`: [skills/library](skills/library/README.md), [skills/browser](skills/browser/README.md) and [skills/apps](skills/apps/README.md). The memory skill's notes went with it to the branch `archive/memory-skill`.
 
 ## Layout, 2026-10-15
 
@@ -216,7 +216,7 @@ Repo-wide decisions and their reasons. A part's own notes live beside this file,
 - **The page check runs in a worker thread:** the lean check built its stand-in browser in the skill's realm (so `App.set.constructor("return process")()` reached Node) and ran draws outside vm's timeout (so a looping draw held AnythingLLM). Now the stand-ins are made inside the check's context, and the check runs in a worker the call waits for (`Atomics.wait`, at most 4 s) and then ends: a vm timeout that cuts into a microtask corrupts Node's async hooks, which ends a process, and in a worker only the worker. Node's vm is still no security boundary; page.html is the model's own.
 - **Pages keep up:** a folder watch applies what pages post as it lands, for the life of AnythingLLM's process (not in a scheduled job's); each workspace's next chat call is told what its pages did (`.news.json`, said once). An open page reads its state file beside it every 2 s and reloads when its parts change.
 - **Same-origin pages, recorded, not fixed:** every page is model-written script served on AnythingLLM's own origin, so in a browser signed in to AnythingLLM it could read the web UI's token and call its API, as the lean edition's could. The fix is a trusted shell holding the page in a sandboxed iframe, posting and polling over `postMessage`; until then jobs can't edit pages (to come with jobs naming a workspace).
-- **Not done:** the rest of the plan (new parts: bars, timeline dates, table, listen; jobs that name a workspace; highlights; the question part). Not tried: a real agent in a real AnythingLLM, or the upgrade on the live instance.
+- **Not done:** the rest of the plan (new parts: bars, timeline dates, table, listen; jobs that name a workspace; highlights; the question part). Tried: `tests/e2e/inside.js` in the 1.16 image ([skills/apps](skills/apps/README.md)). Not tried: a real agent, or the upgrade on the live instance.
 
 ## The memory skill archived, 2026-10-16
 
