@@ -1,0 +1,42 @@
+{
+  "about": "A login asked for on the tab's page, typed in, and saved",
+  "site": "basic",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and tell me who I'm signed in as"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "asked": [
+      {
+        "kind": "login",
+        "hasUser": true
+      }
+    ],
+    "calls": {
+      "includes": [
+        {
+          "tool": "browser-lean",
+          "args": {
+            "action": "login"
+          }
+        }
+      ]
+    },
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    },
+    "budget": {
+      "calls": 12
+    }
+  }
+}

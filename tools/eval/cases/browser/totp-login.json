@@ -1,0 +1,38 @@
+{
+  "about": "A password, then an authenticator code, both on the tab's page",
+  "site": "totp",
+  "steps": [
+    {
+      "say": "@agent sign in to $url as $email"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "asked": [
+      {
+        "kind": "login"
+      },
+      {
+        "kind": "code",
+        "label": "/authenticator/"
+      }
+    ],
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    }
+  }
+}

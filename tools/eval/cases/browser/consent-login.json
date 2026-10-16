@@ -1,0 +1,23 @@
+{
+  "about": "A cookie dialog over the sign-in form; Log in disabled until both fields are filled",
+  "site": "consent",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and tell me who I'm signed in as"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    }
+  }
+}

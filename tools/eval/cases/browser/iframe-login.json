@@ -1,0 +1,18 @@
+{
+  "about": "The sign-in form inside an iframe",
+  "site": "iframe",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and tell me who I'm signed in as"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true
+  }
+}

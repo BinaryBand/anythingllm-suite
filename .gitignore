@@ -10,5 +10,6 @@ app/pubspec.lock.bak
 
 .DS_Store
 packages/skills/*/build/
+tools/eval/results/
 
 docs/.*

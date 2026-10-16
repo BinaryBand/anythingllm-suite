@@ -1,0 +1,23 @@
+{
+  "about": "A page drawn slowly by script",
+  "site": "spa",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and show me my task list"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Show me my task list."
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "answer": {
+      "contains": [
+        "Plan the picnic"
+      ]
+    }
+  }
+}

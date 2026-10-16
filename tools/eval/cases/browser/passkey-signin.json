@@ -1,0 +1,21 @@
+{
+  "about": "Sign in with the saved passkey, by itself",
+  "site": "passkey",
+  "after": "browser/passkey-add",
+  "steps": [
+    {
+      "say": "@agent sign in to $url with my passkey and tell me who I'm signed in as"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    },
+    "budget": {
+      "calls": 8
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "about": "The site's API answers 401: it wants a bearer token, not cookies",
+  "site": "spa",
+  "steps": [
+    {
+      "say": "@agent call /api/me on $url with my session and tell me what it answers"
+    }
+  ],
+  "expect": {
+    "calls": {
+      "includes": [
+        {
+          "tool": "browser-lean",
+          "args": {
+            "action": "call",
+            "auth": "session"
+          }
+        }
+      ]
+    },
+    "answer": {
+      "contains": [
+        "401"
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "about": "Continue with Lumen ID: a full-page redirect to another site and back",
+  "site": "federated",
+  "account": "idp",
+  "steps": [
+    {
+      "say": "@agent sign in to $url/login?social=redirect with my Lumen ID account and tell me who I'm signed in as"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": {
+      "site": "federated"
+    },
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    }
+  }
+}

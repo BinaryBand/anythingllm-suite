@@ -1,0 +1,18 @@
+{
+  "about": "A bot check that asks headless Chrome for a click before Sign in works",
+  "site": "gate",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and tell me who I'm signed in as"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true
+  }
+}

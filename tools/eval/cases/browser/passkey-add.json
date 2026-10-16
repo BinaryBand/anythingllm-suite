@@ -1,0 +1,47 @@
+{
+  "about": "Sign in with the password, then the user takes the tab over and adds a passkey",
+  "site": "passkey",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and open my account page"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Open my account page."
+    },
+    {
+      "user": [
+        {
+          "tap": [
+            0.244,
+            0.618
+          ]
+        },
+        {
+          "wait": 3
+        },
+        {
+          "offer": "yes"
+        },
+        {
+          "give": true
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "calls": {
+      "includes": [
+        {
+          "tool": "browser-lean",
+          "args": {
+            "action": "login"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "about": "Fields inside web components' shadow roots",
+  "site": "shadow",
+  "steps": [
+    {
+      "say": "@agent sign in to $url and tell me who I'm signed in as"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "about": "A hard block page with no form: the agent stops and says so",
+  "site": "gate",
+  "steps": [
+    {
+      "say": "@agent sign in to $url/blocked/login"
+    }
+  ],
+  "expect": {
+    "calls": {
+      "excludes": [
+        {
+          "tool": "browser-lean",
+          "args": {
+            "action": "login"
+          }
+        }
+      ]
+    },
+    "answer": {
+      "contains": [
+        "block"
+      ]
+    }
+  }
+}

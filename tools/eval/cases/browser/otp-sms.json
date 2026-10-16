@@ -1,0 +1,24 @@
+{
+  "about": "No password: a code sent by text to the phone",
+  "site": "otp",
+  "steps": [
+    {
+      "say": "@agent sign in to $url with a code sent by text message to my phone, $phone"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Am I signed in?"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "asked": [
+      {
+        "kind": "code",
+        "label": "/phone/"
+      }
+    ]
+  }
+}

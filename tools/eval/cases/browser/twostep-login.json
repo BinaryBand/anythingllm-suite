@@ -1,0 +1,29 @@
+{
+  "about": "Email page, then password page: login without a username field",
+  "site": "twostep",
+  "steps": [
+    {
+      "say": "@agent sign in to $url as $email"
+    },
+    {
+      "answer": {}
+    },
+    {
+      "say": "Done. Who am I signed in as?"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "asked": [
+      {
+        "kind": "login",
+        "hasUser": false
+      }
+    ],
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "about": "The saved login typed in by itself, without asking",
+  "site": "basic",
+  "after": "browser/basic-login",
+  "steps": [
+    {
+      "say": "@agent sign in to $url, sign out, then sign in again, and tell me who I'm signed in as"
+    }
+  ],
+  "expect": {
+    "signedIn": true,
+    "calls": {
+      "includes": [
+        {
+          "tool": "browser-lean",
+          "args": {
+            "action": "login"
+          }
+        }
+      ]
+    },
+    "answer": {
+      "contains": [
+        "$email"
+      ]
+    }
+  }
+}
