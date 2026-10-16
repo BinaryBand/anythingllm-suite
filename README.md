@@ -5,7 +5,7 @@ Everything that extends a stock AnythingLLM, in one repository: an MCP server an
 | Part | Folder | Runs | Toolchain |
 | --- | --- | --- | --- |
 | Control server (MCP: chat and schedule) | `packages/control` | started by AnythingLLM, from its storage folder, with `node` | Node 18+, no dependencies shipped |
-| Agent skills (memory, library, browser; apps to come) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+; nothing installed beside them (library bundles QuickJS; browser uses the Chrome AnythingLLM's image ships) |
+| Agent skills (library, browser) | `packages/skills/<name>` | inside AnythingLLM's own process | Node 18+; nothing installed beside them (library bundles QuickJS; browser uses the Chrome AnythingLLM's image ships) |
 | Bridge to AnythingLLM's internal API, and the installer | `packages/bridge` | the command you run; the bridge beside AnythingLLM, as a service | Node 20.3+, no dependencies shipped |
 | Phone app (AnywhereLLM Lite) | `app` | on the phone | Flutter |
 
@@ -23,7 +23,7 @@ node anythingllm-suite.cjs install --storage ~/anythingllm   # Docker: the folde
 It writes the control server, its entry in AnythingLLM's MCP servers file and the skills into AnythingLLM's storage folder, and AnythingLLM runs them itself: nothing runs beside it, so there is no service, socket or key to set up. Then, in AnythingLLM, open Settings > Agent Skills, refresh the MCP servers (or restart AnythingLLM) and switch on what you want.
 
 - **Which AnythingLLM:** `--storage DIR`, else the one install was last given, else AnythingLLM Desktop's (`%APPDATA%\anythingllm-desktop\storage`, `~/Library/Application Support/anythingllm-desktop/storage`, `~/.config/anythingllm-desktop/storage`). For Docker it is the host folder you bind-mounted, as AnythingLLM's own instructions do; a named volume isn't reachable from the host. With rootless podman, start the container with `--userns=keep-id` or run install inside `podman unshare`, so the storage is yours to write.
-- **What it puts in:** `--roles chat,schedule` (default `chat`: the schedule role lets the agent plant prompts that run later, unattended), `--skills all|none|memory,...` (default all), `--runtime container|native` (default: native for Desktop's storage, container for any other).
+- **What it puts in:** `--roles chat,schedule` (default `chat`: the schedule role lets the agent plant prompts that run later, unattended), `--skills all|none|library,...` (default all), `--runtime container|native` (default: native for Desktop's storage, container for any other).
 - **The bridge,** which only AnywhereLLM Lite needs: add `--bridge`. It runs under the user's own service manager: systemd on Linux, launchd on macOS, the Task Scheduler on Windows, or your own supervisor (`--service foreground`). See [packages/bridge](packages/bridge/README.md).
 - `health` checks it all, `uninstall` takes it out again (a skill's data stays), `pair` prints the link the phone app opens.
 
@@ -54,7 +54,7 @@ dist/               build output, ignored
 
 - **No part imports another.** A JavaScript part's build fails if its bundle takes in a file from outside its own `src/` (the helpers in `packages/shared/` aside; `build.test.mts` tests this), and `tools/boundaries` fails if the app imports a path into another part. Imports that are erased or not bundled (types, tests) are not checked. Parts share the contract and the tooling, never modules. The installer carries the control server and the skills as built text, not as imports.
 - **One version of AnythingLLM under test.** `contract/versions.env` pins the image every check uses.
-- **Parts version and release on their own.** Tags are prefixed: `skills/memory-lean-v0.2.0`, `app-v1.4.0`.
+- **Parts version and release on their own.** Tags are prefixed: `skills/library-lean-v0.3.0`, `app-v1.4.0`.
 
 ## Checks
 
@@ -62,7 +62,7 @@ dist/               build output, ignored
 
 ## Status
 
-Moved in: the bridge, the control server (chat and schedule, ported from Python to TypeScript; AnythingLLM 1.16.2 starts it from its storage and `make e2e` drives it there) and the `memory` skill (AnythingLLM lists it after install; not yet called by a real agent). The `library` and `browser` skills are in too (see their READMEs). Not yet: `app/` (holds a `.gitkeep`), the `apps` skill, the browser's takeover and passkeys, a run on real macOS and Windows machines. The memory and sandbox MCP servers stay in `anythingllm-mcp`.
+Moved in: the bridge, the control server (chat and schedule, ported from Python to TypeScript; AnythingLLM 1.16.2 starts it from its storage and `make e2e` drives it there), and the `library` and `browser` skills (see their READMEs). The `memory` skill is archived on the branch `archive/memory-skill`. Not yet: `app/` (holds a `.gitkeep`), the `apps` skill, a run on real macOS and Windows machines.
 
 ## License
 

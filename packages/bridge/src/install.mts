@@ -153,7 +153,7 @@ export function uninstall(ctx: Ctx, opts: { storage?: string } = {}): void {
   saveEnv(fileFor(ctx), { ANYTHINGLLM_STORAGE: null });
   if (stopped) ctx.print("Stopped the bridge.");
   else if (manager) ctx.print(`${manager.label} would not stop: stop the bridge yourself.`);
-  if (storage) ctx.print("A skill's data stays in the storage (the memory skill's in memory-lean/).");
+  if (storage) ctx.print("A skill's data stays in the storage (the library's in library-lean/).");
 }
 
 /** Every health check; false when one failed. */

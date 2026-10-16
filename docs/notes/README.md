@@ -1,6 +1,6 @@
 # Notes
 
-Repo-wide decisions and their reasons. A part's own notes live beside this file, under `docs/notes/<group>/<part>/`: [skills/memory](skills/memory/README.md) is the first.
+Repo-wide decisions and their reasons. A part's own notes live beside this file, under `docs/notes/<group>/<part>/`: [skills/library](skills/library/README.md) and [skills/browser](skills/browser/README.md). The memory skill's notes went with it to the branch `archive/memory-skill`.
 
 ## Layout, 2026-10-15
 
@@ -206,3 +206,8 @@ Repo-wide decisions and their reasons. A part's own notes live beside this file,
 - **One pass at a time over a page's events** (`#shared/pages` `inTurn`): the e2e found the agent reading while the folder watch was still typing the user's login into the page. The watch's passes and each call's drain now take turns per event title, so a call reads the page after what was posted, and two passes never split a page's events between them.
 - **The hold is checked in one place:** `open`, `act`, `login` and `call` go through the dispatcher's check, which also marks the tab busy, so a `take` posted while the agent is mid-step is refused (the page says so) rather than both driving the tab.
 
+## The memory skill archived, 2026-10-16
+
+- **Taken out of `main`, kept on the branch `archive/memory-skill`** (its last commit there is the suite as it was with the skill). It wrote into AnythingLLM's own vector database through its server modules, it had not been called by a real agent, and AnythingLLM 1.16 has memory of its own (the default-on `rag-memory` tool, and workspace Memories filled by background extraction), so it overlapped the built-ins and leaned on internals.
+- **If it comes back,** the plan discussed was a skill independent of the built-ins: its facts in its own file as before, its vectors in a file of its own searched directly, embeddings from the developer API's `POST /v1/openai/embeddings` (AnythingLLM's chosen embedder, with a developer key), and keyword search when no key is set.
+- **The live instance** keeps its data (`memory-lean/` in the storage) whatever happens to the skill; `install` doesn't take out a skill it no longer carries.

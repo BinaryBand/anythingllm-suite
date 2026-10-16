@@ -61,7 +61,7 @@ test("AnythingLLM starts the control server install put in, and lists the skill"
   assert.ok(found?.running, JSON.stringify(found));
   assert.deepEqual(found.tools.map((t: { name: string }) => t.name).sort(), ["chat_clear", "chat_delete", "chat_history", "chat_list", "chat_new", "chat_rename", "chat_workspaces", "schedule"]);
   const { settings } = await allm("/admin/system-preferences-for?labels=imported_agent_skills");
-  assert.ok(settings.imported_agent_skills.some((s: { hubId: string }) => s.hubId === "memory-lean"), JSON.stringify(settings));
+  assert.ok(settings.imported_agent_skills.some((s: { hubId: string }) => s.hubId === "library-lean"), JSON.stringify(settings));
 });
 
 test("a chat is found, started, renamed and deleted in the real AnythingLLM", run, async () => {

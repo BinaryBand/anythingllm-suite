@@ -13,7 +13,7 @@ import { FakeAnythingLLM } from "./fakes/anythingllm.mts";
 import { tempDir } from "./fakes/tmp.mts";
 
 const DEFAULT = "/workspaces, GET /scheduled-jobs, GET /workspace/*/threads, POST /workspace/*/thread/new";
-const PAYLOAD: Payload = { control: "// control\n", skills: [{ name: "memory", hubId: "memory-lean", files: { "handler.js": "// memory\n" } }] };
+const PAYLOAD: Payload = { control: "// control\n", skills: [{ name: "library", hubId: "library-lean", files: { "handler.js": "// library\n" } }] };
 const tmp = tempDir("install");
 
 let fake: FakeAnythingLLM;
@@ -51,7 +51,7 @@ test("install puts the server, its entry and the skills into the storage, and as
   await install(ctx, opts());
   assert.equal(fs.readFileSync(path.join(storage, "anythingllm-suite", "control.cjs"), "utf8"), PAYLOAD.control);
   assert.deepEqual(control(), { command: "node", args: ["/app/server/storage/anythingllm-suite/control.cjs"], env: { ANYTHINGLLM_MCP_ROLES: "chat" } });
-  assert.ok(fs.existsSync(path.join(storage, "plugins", "agent-skills", "memory-lean", "handler.js")));
+  assert.ok(fs.existsSync(path.join(storage, "plugins", "agent-skills", "library-lean", "handler.js")));
   assert.deepEqual(settings(), { ANYTHINGLLM_STORAGE: storage }, "no BRIDGE_ALLOW without --bridge");
   assert.deepEqual(fake.calls, []);
   assert.equal(fake.logins, 0);
@@ -111,12 +111,12 @@ test("--bridge sets BRIDGE_ALLOW when none is; an owner's stays, empty included"
 
 test("uninstall takes it all out and forgets the storage; the skill's data and BRIDGE_ALLOW stay", async () => {
   await install(ctx, opts({ bridge: true }));
-  fs.mkdirSync(path.join(storage, "memory-lean"));
+  fs.mkdirSync(path.join(storage, "library-lean"));
   uninstall(ctx);
   assert.deepEqual(JSON.parse(fs.readFileSync(serversFile(storage), "utf8")).mcpServers, {});
   assert.ok(!fs.existsSync(path.join(storage, "anythingllm-suite")));
-  assert.ok(!fs.existsSync(path.join(storage, "plugins", "agent-skills", "memory-lean")));
-  assert.ok(fs.existsSync(path.join(storage, "memory-lean")));
+  assert.ok(!fs.existsSync(path.join(storage, "plugins", "agent-skills", "library-lean")));
+  assert.ok(fs.existsSync(path.join(storage, "library-lean")));
   assert.deepEqual(settings(), { BRIDGE_ALLOW: DEFAULT });
   printed.length = 0;
   uninstall(ctx);

@@ -1,6 +1,6 @@
 // Where a skill finds AnythingLLM: its storage folder, and its server's own modules, which a skill
 // requires by a path built at run time (so esbuild leaves them alone). AnythingLLM's server code is
-// not a public API: each skill types what it uses of it (memory's host.ts).
+// not a public API: each skill types what it uses of it (its host.ts).
 
 import { createRequire } from "node:module";
 import path from "node:path";

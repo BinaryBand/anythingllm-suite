@@ -11,7 +11,7 @@ const tmp = tempDir("addons");
 const PAYLOAD: Payload = {
   control: "// the control server\n",
   skills: [
-    { name: "memory", hubId: "memory-lean", files: { "handler.js": "// memory\n", "plugin.json": "{}\n" } },
+    { name: "library", hubId: "library-lean", files: { "handler.js": "// library\n", "plugin.json": "{}\n" } },
     { name: "other", hubId: "other-skill", files: { "handler.js": "// other\n" } },
   ],
 };
@@ -42,23 +42,23 @@ test("put writes the server, the entry and the skills, and a second put changes 
   const first = put(dir, PAYLOAD, ENTRY, PAYLOAD.skills.slice(0, 1));
   assert.equal(fs.readFileSync(path.join(dir, "anythingllm-suite", "control.cjs"), "utf8"), PAYLOAD.control);
   assert.deepEqual(servers(dir), { control: ENTRY });
-  assert.equal(fs.readFileSync(path.join(dir, "plugins", "agent-skills", "memory-lean", "handler.js"), "utf8"), "// memory\n");
+  assert.equal(fs.readFileSync(path.join(dir, "plugins", "agent-skills", "library-lean", "handler.js"), "utf8"), "// library\n");
   assert.ok(!fs.existsSync(path.join(dir, "plugins", "agent-skills", "other-skill")), "only the skills chosen");
-  assert.match(first.join("\n"), /wrote the control server.*\n.*set control.*\n.*wrote the memory skill/);
+  assert.match(first.join("\n"), /wrote the control server.*\n.*set control.*\n.*wrote the library skill/);
   assert.ok(put(dir, PAYLOAD, ENTRY, PAYLOAD.skills.slice(0, 1)).every((line) => line.startsWith("unchanged")));
 });
 
 test("an update removes what an older version of a skill left in its folder (the lean browser's modules), and checks find it first", () => {
   const dir = storage();
-  const folder = path.join(dir, "plugins", "agent-skills", "memory-lean");
+  const folder = path.join(dir, "plugins", "agent-skills", "library-lean");
   fs.mkdirSync(folder, { recursive: true });
   for (const name of ["act.js", "guide.md", "handler.js"]) fs.writeFileSync(path.join(folder, name), "// lean\n");
-  const [memory] = PAYLOAD.skills;
-  assert.match(checks(dir, PAYLOAD).find(([what]) => what === "the memory skill")![2], /handler\.js, plugin\.json not this version's; act\.js, guide\.md left from an older version: run install again/);
-  const done = put(dir, PAYLOAD, ENTRY, [memory]);
-  assert.match(done.at(-1)!, /wrote the memory skill: .* \(removed what it no longer ships: act\.js, guide\.md\)$/);
+  const [library] = PAYLOAD.skills;
+  assert.match(checks(dir, PAYLOAD).find(([what]) => what === "the library skill")![2], /handler\.js, plugin\.json not this version's; act\.js, guide\.md left from an older version: run install again/);
+  const done = put(dir, PAYLOAD, ENTRY, [library]);
+  assert.match(done.at(-1)!, /wrote the library skill: .* \(removed what it no longer ships: act\.js, guide\.md\)$/);
   assert.deepEqual(fs.readdirSync(folder).sort(), ["handler.js", "plugin.json"]);
-  assert.ok(checks(dir, PAYLOAD).find(([what]) => what === "the memory skill")![1]);
+  assert.ok(checks(dir, PAYLOAD).find(([what]) => what === "the library skill")![1]);
 });
 
 test("a skill's update keeps what AnythingLLM and the skill saved in its plugin.json: on or off, its settings, what it lists", () => {
@@ -115,13 +115,13 @@ test("a native entry on Windows is still ours", () => {
 test("take removes the server, the entry and the skills it knows, and leaves a skill's data", () => {
   const dir = storage();
   put(dir, PAYLOAD, ENTRY, PAYLOAD.skills);
-  fs.mkdirSync(path.join(dir, "memory-lean"));
-  fs.writeFileSync(path.join(dir, "memory-lean", "memory.json"), "{}");
+  fs.mkdirSync(path.join(dir, "library-lean"));
+  fs.writeFileSync(path.join(dir, "library-lean", "data.json"), "{}");
   take(dir, PAYLOAD);
   assert.deepEqual(servers(dir), {});
   assert.ok(!fs.existsSync(path.join(dir, "anythingllm-suite")));
   assert.deepEqual(fs.readdirSync(path.join(dir, "plugins", "agent-skills")), []);
-  assert.ok(fs.existsSync(path.join(dir, "memory-lean", "memory.json")));
+  assert.ok(fs.existsSync(path.join(dir, "library-lean", "data.json")));
 });
 
 test("checks find what is missing or not this version's", () => {
@@ -130,9 +130,9 @@ test("checks find what is missing or not this version's", () => {
   assert.deepEqual(failing(), ["the control server: missing: run install again", `the control entry: missing from ${serversFile(dir)}`]);
   put(dir, PAYLOAD, ENTRY, PAYLOAD.skills.slice(0, 1));
   assert.deepEqual(failing(), []);
-  fs.writeFileSync(path.join(dir, "plugins", "agent-skills", "memory-lean", "handler.js"), "old");
+  fs.writeFileSync(path.join(dir, "plugins", "agent-skills", "library-lean", "handler.js"), "old");
   fs.writeFileSync(path.join(dir, "anythingllm-suite", "control.cjs"), "old");
-  assert.deepEqual(failing(), ["the control server: not this version's: run install again", "the memory skill: handler.js not this version's: run install again"]);
+  assert.deepEqual(failing(), ["the control server: not this version's: run install again", "the library skill: handler.js not this version's: run install again"]);
 });
 
 test("skills are chosen by name, all by default", () => {
@@ -143,7 +143,7 @@ test("skills are chosen by name, all by default", () => {
     chosen(PAYLOAD, ["other"]).map((s) => s.hubId),
     ["other-skill"],
   );
-  assert.throws(() => chosen(PAYLOAD, ["memory", "nope"]), /no such skill: nope; the skills are memory, other/);
+  assert.throws(() => chosen(PAYLOAD, ["library", "nope"]), /no such skill: nope; the skills are library, other/);
 });
 
 test("a storage that isn't the user's to write says what to do", { skip: process.platform === "win32" || process.getuid?.() === 0 }, () => {

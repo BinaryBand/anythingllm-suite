@@ -39,7 +39,7 @@ e2e: ## Install into a throwaway AnythingLLM and run the suite against it (needs
 routes: ## Fail if AnythingLLM stopped declaring a route the default list names (needs the image)
 	tools/routes
 
-package: ## Build and zip a skill into dist/ (SKILL=memory)
+package: ## Build and zip a skill into dist/ (SKILL=library)
 	tools/package $(SKILL)
 
 install: ## Build and install into AnythingLLM's storage (STORAGE=<folder>; empty: Desktop's)
