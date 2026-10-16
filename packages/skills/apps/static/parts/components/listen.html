@@ -1,0 +1,63 @@
+<!--part
+{"name":"listen","line":"reads the page aloud in the device's own voice: a briefing, a walkthrough","events":[]}
+-->
+<div class="row" data-part="listen">
+<button type="button" class="primary" data-ref="play">Listen</button>
+<button type="button" data-ref="speed" aria-label="Reading speed">1×</button>
+<small class="quiet" data-ref="note" hidden></small>
+</div>
+<script>
+App.mount("listen", ({ root, q }) => {
+  // The browser's own speech (Web Speech), so no server and no key: one utterance per sentence,
+  // as Chrome cuts long ones short, each block marked while it's read. A page names what's read
+  // with data-say; without any, its headings, paragraphs and list items, in order. Nothing is
+  // saved. Android's WebView has no speech: there the control says so and stands aside.
+  const speech = window.speechSynthesis, Say = window.SpeechSynthesisUtterance;
+  const speeds = [1, 1.25, 1.5, 0.75];
+  let rate = 0, playing = false, queue = [];
+  const off = (text) => {
+    q("play").hidden = q("speed").hidden = true;
+    Object.assign(q("note"), { hidden: false, textContent: text });
+  };
+  if (!speech || !Say) return off("Reading aloud needs Chrome or Safari.");
+  let voices = speech.getVoices();
+  speech.addEventListener?.("voiceschanged", () => (voices = speech.getVoices()));
+  setTimeout(() => { if (!speech.getVoices().length) off("This device has no voice to read with."); }, 1500);
+  const blocks = () => {
+    const named = [...document.querySelectorAll("[data-say]")];
+    const found = named.length ? named : [...document.querySelectorAll("main h1, main h2, main h3, main p, main li")];
+    return found.filter((b) => !root.contains(b) && b.offsetParent !== null && b.textContent.trim());
+  };
+  const mark = (b) => document.querySelectorAll(".saying").forEach((x) => x !== b && x.classList.remove("saying")) || b?.classList.add("saying");
+  function next() {
+    const item = queue.shift();
+    if (!item || !playing) return stop();
+    const u = new Say(item.text);
+    u.rate = speeds[rate];
+    const lang = document.documentElement.lang;
+    if (lang) u.voice = voices.find((v) => v.lang.replace("_", "-").startsWith(lang)) || null;
+    u.onstart = () => mark(item.block);
+    u.onend = u.onerror = next;
+    speech.speak(u);
+  }
+  function stop() {
+    playing = false;
+    speech.cancel();
+    mark(null);
+    q("play").textContent = "Listen";
+  }
+  q("play").onclick = () => {
+    if (playing) return stop();
+    queue = blocks().flatMap((block) => (block.textContent.match(/[^.!?]+[.!?]*/g) || []).map((s) => ({ block, text: s.trim() })).filter((s) => s.text));
+    if (!queue.length) return;
+    playing = true;
+    q("play").textContent = "Stop";
+    next();
+  };
+  q("speed").onclick = () => {
+    rate = (rate + 1) % speeds.length;
+    q("speed").textContent = speeds[rate] + "×";
+  };
+  document.addEventListener("visibilitychange", () => document.hidden && playing && stop());
+});
+</script>

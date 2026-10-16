@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import "./harness.mts";
+import vm from "node:vm";
 import * as parts from "../src/parts.ts";
 
 const column = parts.template("column");
@@ -61,4 +62,37 @@ test("a page that loops forever is stopped, in its script, a draw or an onchange
   }
   assert.ok(Date.now() - started < 10_000, "each is stopped at its timeout");
   assert.deepEqual(parts.pageProblems(bare("", "App.onchange(() => draw());")), ["page.html uses draw, which no script declares when it draws (script 2, line 1): the page stops there"], "the rest is still judged");
+});
+
+test("every component, alone in a page, passes the page check", () => {
+  for (const name of Object.values(parts.parts()).filter((p) => p.kind === "component").map((p) => p.name))
+    assert.deepEqual(parts.pageProblems(parts.assemble("column", [name]).page), [], name);
+});
+
+/** A figure drawn from `spec` by parts.js and its kinds, in a stand-in browser: the SVG it makes. */
+function drawn(spec: Record<string, unknown>): string {
+  const made: any[] = [];
+  const document = { createElement: () => { const e: any = { dataset: {}, className: "", innerHTML: "" }; made.push(e); return e; }, querySelectorAll: () => [], addEventListener() {} };
+  const ctx: any = { document, queueMicrotask: () => {}, setTimeout, console };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(parts.libraries()["parts.js"], ctx);
+  return vm.runInContext(`Parts.figure(${JSON.stringify(spec)}).innerHTML`, ctx);
+}
+
+test("bars draw one bar per item, scaled to the largest, the marked one filled, said in words", () => {
+  const svg = drawn({ kind: "bars", items: [{ label: "May", value: 310 }, { label: "Jun", value: 155 }], mark: 0, unit: "£" });
+  const bars = [...svg.matchAll(/<rect class="(f[is])" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g)].map((m) => [m[1], Math.round(Number(m[3]))]);
+  assert.deepEqual(bars, [["fi", 120], ["fs", 60]]);
+  assert.match(svg, /aria-label="May £310, Jun £155"/);
+  assert.match(drawn({ kind: "bars", items: [] }), /aria-label="No values yet"/);
+});
+
+test("a gantt draws dated steps on lanes, with today and a milestone, and skips a step it can't date", () => {
+  const svg = drawn({ kind: "gantt", items: [{ label: "Plan", start: "2026-11-03", end: "2026-11-09", done: true }, { label: "Fit", start: "2026-11-10", end: "2026-11-16" }, { label: "Bad", start: "soon", end: "later" }], today: "2026-11-10", milestone: { label: "Done", date: "2026-11-16" } });
+  assert.equal([...svg.matchAll(/<rect class="f[is]"/g)].length, 2);
+  assert.match(svg, /<rect class="fi"[^>]*\/><text class="ti" x="8"[^>]*>Fit/, "the done step filled, the next one not");
+  assert.match(svg, />today</);
+  assert.match(svg, />Done</);
+  assert.match(svg, /aria-label="Plan 11-03 to 11-09, done; Fit 11-10 to 11-16"/);
 });

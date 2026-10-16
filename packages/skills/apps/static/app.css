@@ -90,3 +90,4 @@ hr{margin:0;border:0;border-top:1px solid var(--line)}
 .tree summary{list-style:none}.tree summary::-webkit-details-marker{display:none}.tree details{border:0;padding:0}
 .tree b{font:500 14px var(--mono)}.tree [aria-pressed=true]{background:var(--soft)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.saying{background:var(--soft);border-radius:6px}
