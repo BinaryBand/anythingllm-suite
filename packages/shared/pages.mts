@@ -19,6 +19,8 @@ import { publicKey } from "./vault.mts";
 const PARTIAL_MS = 5000;
 /** In case the folder watch misses a file; a pass skips the folder when it hasn't changed. */
 const POLL_MS = 30 * 1000;
+/** A folder changed this recently may change again without its mtime moving (coarse clocks). */
+const RECENT_MS = 2000;
 /** How long the pages' key is taken as still valid before AnythingLLM is asked again. */
 const KEY_CHECKED_MS = 5 * 60 * 1000;
 
@@ -103,7 +105,9 @@ export function take(title: string): unknown[] {
   } catch {
     return [];
   }
-  if (!names.length) return void empty.set(title, at), [];
+  // A file made in the same clock tick as the listing leaves the mtime as it was: an mtime that
+  // recent isn't trusted to mean nothing came.
+  if (!names.length) return void (Date.now() - at > RECENT_MS && empty.set(title, at)), [];
   empty.delete(title);
   const files = names
     .map((n) => {

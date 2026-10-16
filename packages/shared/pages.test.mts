@@ -61,10 +61,21 @@ test("a file still being written waits; one that stays unreadable is dropped as 
   assert.ok(!fs.existsSync(partial));
 });
 
+test("an event that lands in the clock tick of a pass that found nothing is still taken", () => {
+  fs.mkdirSync(eventsDir(), { recursive: true });
+  const tick = Math.floor(Date.now() / 1000); // a coarse clock: the folder's mtime doesn't move
+  fs.utimesSync(eventsDir(), tick, tick);
+  assert.deepEqual(take("r"), []);
+  posted("r", { n: 1 });
+  fs.utimesSync(eventsDir(), tick, tick);
+  assert.deepEqual(take("r"), [{ n: 1 }]);
+});
+
 test("the watch applies events as they land, until it's told to stop", async () => {
   const seen: unknown[] = [];
   let until = Date.now() + 60_000;
   watch("w", async () => void seen.push(...take("w")), () => until);
+  await new Promise((r) => setTimeout(r, 200)); // macOS's watch starts a moment after it's made
   posted("w", { n: 1 });
   for (let i = 0; i < 100 && !seen.length; i++) await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(seen, [{ n: 1 }]);
@@ -86,7 +97,7 @@ test("the pages' key is kept, and made again once AnythingLLM no longer takes it
   delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("anythingllm-suite.pages.key-checked")];
   const second = await pageKey(dir);
   assert.notEqual(second, first);
-  assert.equal((fs.statSync(path.join(dir, ".page-key.json")).mode & 0o777).toString(8), "600");
+  if (process.platform !== "win32") assert.equal((fs.statSync(path.join(dir, ".page-key.json")).mode & 0o777).toString(8), "600"); // Windows has no modes
 });
 
 test("a public file is written where AnythingLLM serves it", () => {

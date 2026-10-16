@@ -33,7 +33,7 @@ test("an entry kept is there to load, and the file holds it encrypted", async ()
   const text = fs.readFileSync(path.join(dir, "vault.json"), "utf8");
   assert.ok(!text.includes("secret-work"), "the value isn't in the file in clear");
   assert.equal(JSON.parse(text).v, 1);
-  assert.equal((fs.statSync(path.join(dir, "vault.json")).mode & 0o777).toString(8), "600");
+  if (process.platform !== "win32") assert.equal((fs.statSync(path.join(dir, "vault.json")).mode & 0o777).toString(8), "600"); // Windows has no modes
 });
 
 test("what's changed in a loaded copy isn't kept, and a change that throws writes nothing", async () => {
