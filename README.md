@@ -63,3 +63,7 @@ dist/               build output, ignored
 ## Status
 
 Moved in: the bridge, the control server (chat and schedule, ported from Python to TypeScript; AnythingLLM 1.16.2 starts it from its storage and `make e2e` drives it there) and the `memory` skill (AnythingLLM lists it after install; not yet called by a real agent). The `library` and `browser` skills are in too (see their READMEs). Not yet: `app/` (holds a `.gitkeep`), the `apps` skill, the browser's takeover and passkeys, a run on real macOS and Windows machines. The memory and sandbox MCP servers stay in `anythingllm-mcp`.
+
+## License
+
+None is granted: all rights reserved. The code is public to read.
