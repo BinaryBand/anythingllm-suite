@@ -14,10 +14,7 @@
     {
       "user": [
         {
-          "tap": [
-            0.244,
-            0.618
-          ]
+          "tap": "Add a passkey"
         },
         {
           "wait": 3
