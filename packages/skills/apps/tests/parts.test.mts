@@ -38,3 +38,27 @@ test("a script that doesn't parse is said once, with its line", () => {
   assert.equal(found.length, 1);
   assert.match(found[0], /^page\.html's script 2 of 2 doesn't parse: Illegal return statement at: return \(\) => \{$/);
 });
+
+test("the check's stand-ins reach nothing of the skill's: a page can't get at Node through them", () => {
+  const tries = [
+    'App.set.constructor("return process")().env.APPS_ESCAPED = "set";',
+    'console.log.constructor("return process")().env.APPS_ESCAPED = "log";',
+    'App.data.constructor.constructor("return process")().env.APPS_ESCAPED = "proxy";',
+    'this.constructor.constructor("return process")().env.APPS_ESCAPED = "global";',
+    'App.mount("x", (part) => () => part.q.constructor("return process")().env.APPS_ESCAPED = "mount");',
+  ];
+  for (const code of tries) {
+    parts.pageProblems(bare('<div data-part="x"></div>', `${code}\nApp.mount("x", () => () => {});`));
+    assert.equal(process.env.APPS_ESCAPED, undefined, code);
+  }
+});
+
+test("a page that loops forever is stopped, in its script, a draw or an onchange, and the check goes on", () => {
+  const started = Date.now();
+  for (const code of ["while (true) {}", 'App.mount("x", () => () => { for (;;) {} });', "App.onchange(() => { while (true) {} });", "Promise.resolve().then(() => { for (;;) {} });"]) {
+    const found = parts.pageProblems(bare('<div data-part="x"></div>', `${code}\nApp.mount("x", () => () => {});`));
+    assert.deepEqual(found.filter((p) => !p.includes("more than once")), [], code);
+  }
+  assert.ok(Date.now() - started < 10_000, "each is stopped at its timeout");
+  assert.deepEqual(parts.pageProblems(bare("", "App.onchange(() => draw());")), ["page.html uses draw, which no script declares when it draws (script 2, line 1): the page stops there"], "the rest is still judged");
+});
