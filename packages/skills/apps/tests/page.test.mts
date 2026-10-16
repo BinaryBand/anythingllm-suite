@@ -89,7 +89,7 @@ function browser(html: string, { stored = null, served = () => "{}", typing = fa
   };
   let open = true;
   const seen = { reloads: 0, bars: [] as string[] };
-  const element = () => ({ style: {}, textContent: "", setAttribute() {}, addEventListener() {}, append(child: any) { this.textContent += child.textContent ?? ""; } });
+  const element = () => ({ style: {}, dataset: {}, textContent: "", setAttribute() {}, addEventListener() {}, append(child: any) { this.textContent += child.textContent ?? ""; } });
   const ctx: any = {
     console, JSON, Response, Promise, Object, Math, Date, Array, Error, URLSearchParams,
     // Fast, and none once closed, so the runtime's sync loop stops with the test.
@@ -171,7 +171,7 @@ test("publishing writes the page's state beside it, and deleting leaves a note t
   await store.create("home", "stated", { ...definitionFor("list", { title: "Stated" }), page: listPage() });
   const token = (await publish(store.read("home", "stated"), "home", key))!;
   const state = JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8"));
-  assert.deepEqual(Object.keys(state).sort(), ["asks", "data", "line", "seen", "version"], "never the secret, the plan or the history");
+  assert.deepEqual(Object.keys(state).sort(), ["data", "line", "seen", "version"], "never the secret, the plan or the history");
   unpublish(store.read("home", "stated"));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8")), { gone: true });
 });

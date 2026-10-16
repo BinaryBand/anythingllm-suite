@@ -42,12 +42,12 @@ App.mount("table", ({ at, q }) => {
     q("none").hidden = rows.length > 0;
     q("rows").replaceChildren(...shown.map(({ row, i }) => {
       const tr = el("tr");
+      const cell = (b) => { const td = el("td"); td.append(b(td)); tr.append(td); };
       for (const c of columns) {
-        const td = el("td");
-        td.append(btn(show(c, row[c.key]) || "—", `${c.label}: ${show(c, row[c.key]) || "empty"}, edit`, () => edit(td, i, row, c)));
-        tr.append(td);
+        const text = show(c, row[c.key]);
+        cell((td) => btn(text || "—", `${c.label}: ${text || "empty"}, edit`, () => edit(td, i, row, c)));
       }
-      tr.append(el("td").appendChild(btn("✕", "Remove this row", () => App.patch([guard(i, row), { op: "remove", path: `${at}/rows/${i}` }], { ev: "remove-row" }))).parentNode);
+      cell(() => btn("✕", "Remove this row", () => App.patch([guard(i, row), { op: "remove", path: `${at}/rows/${i}` }], { ev: "remove-row" })));
       return tr;
     }));
   }

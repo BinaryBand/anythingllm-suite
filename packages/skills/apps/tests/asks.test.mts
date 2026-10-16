@@ -4,7 +4,7 @@ import { call, post } from "./harness.mts";
 import { whereIs } from "../src/handler.ts";
 import * as store from "../src/store.ts";
 
-const ask = (app: string, picks: unknown[], workspace = "home") => post({ workspace, app, secret: store.read(workspace, app).secret, id: `ask-${Math.random()}`, ev: "ask", picks });
+const ask = (app: string, picks: unknown[], workspace = "home") => post({ workspace, app, secret: store.read(workspace, app).secret, id: `ask-${Math.random()}`, kind: "ask", ev: "ask", picks });
 
 test("an ask from the page waits on the app, apart from its data and history, and list counts it", async () => {
   await call("home", { action: "create", name: "reading", title: "Reading", starter: "tracker" });

@@ -14,9 +14,10 @@ Parts.kinds.gantt = (f, { W, svg, fit, rect, mid }) => {
     return `<text class="ti" x="8" y="${y + lane / 2 + 3.5}">${fit(it.label, 10)}</text>` + rect(x(it.a), y + 3, Math.max(3, x(it.b + 1) - x(it.a)), lane - 6, it.done ? "fi" : "fs", 3);
   }).join("");
   const bottom = top + items.length * lane;
+  const inRange = (d) => !isNaN(d) && d >= lo && d <= hi;
   const today = day(f.today);
-  if (!isNaN(today) && today >= lo && today <= hi) body += `<path class="lq" stroke-dasharray="4 3" d="M${x(today)} ${top - 4}V${bottom + 2}"/>` + mid("tx", x(today), bottom + 14, "today");
-  const ms = f.milestone && day(f.milestone.date);
-  if (ms && !isNaN(ms) && ms >= lo && ms <= hi) body += `<path class="ln" d="M${x(ms)} ${bottom + 4}l5 6l-5 6l-5-6z"/>` + mid("tx", x(ms), bottom + 30, fit(f.milestone.label, 14));
+  if (inRange(today)) body += `<path class="lq" stroke-dasharray="4 3" d="M${x(today)} ${top - 4}V${bottom + 2}"/>` + mid("tx", x(today), bottom + 14, "today");
+  const ms = day(f.milestone?.date);
+  if (inRange(ms)) body += `<path class="ln" d="M${x(ms)} ${bottom + 4}l5 6l-5 6l-5-6z"/>` + mid("tx", x(ms), bottom + 30, fit(f.milestone.label, 14));
   return svg(body, items.map((i) => `${i.label} ${fmt(i.a)} to ${fmt(i.b)}${i.done ? ", done" : ""}`).join("; "));
 };

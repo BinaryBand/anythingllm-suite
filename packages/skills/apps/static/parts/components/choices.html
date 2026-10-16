@@ -14,7 +14,7 @@ App.mount("choices", ({ at, q }) => {
     e.preventDefault();
     const picked = q("choices").querySelector("input:checked");
     if (!picked) return (q("sent").textContent = "Pick one first.");
-    const answer = { choice: picked.value, note: q("note").value.trim().slice(0, 500), at: new Date().toISOString() };
+    const answer = { choice: picked.value, note: q("note").value.trim(), at: new Date().toISOString() };
     App.patch([{ op: "test", path: at + "/question", value: App.get(at + "/question") }, { op: "replace", path: at + "/answer", value: answer }], { ev: "answer", text: answer.choice });
   };
   return () => {

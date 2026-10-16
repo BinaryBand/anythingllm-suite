@@ -9,7 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { locked, writeAtomic } from "#shared/atomic";
+import { locked, readJson, writeAtomic } from "#shared/atomic";
 import { newSecret } from "#shared/pages";
 import { Told } from "#shared/errors";
 import { root } from "./dirs.ts";
@@ -32,10 +32,6 @@ const REFUSED = 20;
 const TITLE_MAX = 80;
 const CARD_KEYS = new Set(["summary", "lines", "items", "text", "done", "where"]);
 const FILES = ["app.json", "page.html"];
-/** Refuses a `file` that isn't one of the app's two. */
-function fileCheck(file: unknown): asserts file is string {
-  if (!FILES.includes(file as string)) throw new AppError(`file is ${FILES.join(" or ")}`);
-}
 
 const now = (): string => new Date().toISOString().replace(/\.\d+Z$/, "Z");
 
@@ -56,17 +52,43 @@ function fileOf(workspace: string, name: unknown): string {
 /** Runs `fn` holding the app's lock: one change to an app at a time, in any process. */
 const withLock = <T,>(workspace: string, name: unknown, fn: () => T): Promise<T> => locked(`${fileOf(workspace, name)}.lock`, `the app ${name}`, fn);
 
-const save = (workspace: string, app: Json): void => writeAtomic(fileOf(workspace, app.name), JSON.stringify(app, null, 1) + "\n");
+// For the owner alone: an app holds its page's secret.
+const save = (workspace: string, app: Json): void => writeAtomic(fileOf(workspace, app.name), JSON.stringify(app, null, 1) + "\n", 0o600);
 
 export function read(workspace: string, name: unknown): Json {
-  const file = fileOf(workspace, name);
-  if (!fs.existsSync(file)) throw new AppError(`this workspace has no app named ${name}; list shows its apps`);
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+  return readJson(fileOf(workspace, name), () => {
+    throw new AppError(`this workspace has no app named ${name}; list shows its apps`);
+  });
 }
 
+/** Reads the app, changes it with `fn` and saves what `fn` answers, all under the app's lock; an
+ *  answer that is the app itself, or one marked a duplicate, is saved for none. */
+function update(workspace: string, name: unknown, fn: (app: Json) => Json | Promise<Json>): Promise<Json> {
+  return withLock(workspace, name, async () => {
+    const app = read(workspace, name);
+    const next = await fn(app);
+    if (next !== app && !next.duplicate) save(workspace, next);
+    return next;
+  });
+}
+
+/** `app` with the ask `id` cleared, for a change made for it; throws, so nothing is saved, when the
+ *  app has no such ask. No `id`: `app` as it is. */
+function cleared(app: Json, id: unknown): Json {
+  if (id === undefined) return app;
+  const asks: Json[] = app.asks || [];
+  if (!asks.some((a) => a.id === id)) throw new AppError(`${app.name} has no ask ${JSON.stringify(id)}${asks.length ? `; its asks are ${asks.map((a) => a.id).join(", ")}` : ""}: nothing was changed`);
+  return { ...app, asks: asks.filter((a) => a.id !== id) };
+}
+
+/** `app` remembering the page event `id`, so one sent twice applies once. */
+const seenWith = (app: Json, id: string): Json => ({ ...app, seen: [...(app.seen || []), id].slice(-SEEN) });
+const isSeen = (app: Json, id: string | undefined): boolean => !!id && (app.seen || []).includes(id);
+
 /** Why the definition can't hold `data`: every problem, empty when it can. The data is checked
- *  whenever the schema itself can be read, whatever else is wrong. */
-function definitionProblems(app: Json): string[] {
+ *  whenever the schema itself can be read, whatever else is wrong; the page only when `page`, as
+ *  when it's new or changed (the check runs its scripts in a worker, which is the slow part). */
+async function definitionProblems(app: Json, page: boolean): Promise<string[]> {
   const out: string[] = [];
   if (typeof app.title !== "string" || !app.title.trim() || app.title.length > TITLE_MAX) out.push(`title: 1-${TITLE_MAX} characters`);
   if (app.about !== undefined && typeof app.about !== "string") out.push("about: a sentence");
@@ -85,14 +107,14 @@ function definitionProblems(app: Json): string[] {
   }
   if (app.icon !== undefined && typeof app.icon !== "string") out.push("icon: a name");
   if (app.jobs !== undefined && typeof app.jobs !== "boolean") out.push("jobs: true lets a scheduled job change the data with do");
-  if (app.page !== undefined) out.push(...pageProblems(app.page));
+  if (page && app.page !== undefined) out.push(...(await pageProblems(app.page)));
   if (unknown && !unknown.length) out.push(...problems(app.data, app.schema).map((p) => `data ${p}`));
   return out;
 }
 
 /** `app`, unless it or `earlier` has a problem: then all of them, in one error. */
-function checked(app: Json, earlier: string[] = [], what = "saved"): Json {
-  const found = [...earlier, ...definitionProblems(app)];
+async function checked(app: Json, earlier: string[] = [], what = "saved", page = true): Promise<Json> {
+  const found = [...earlier, ...(await definitionProblems(app, page))];
   if (found.length) throw new AppError(`the app can't be ${what}:\n- ${found.join("\n- ")}`);
   return app;
 }
@@ -128,13 +150,13 @@ export function freeName(workspace: string, title: unknown): string {
 /** A new app: `definition` is app.json's keys and `data`, its first data; `page` its page.html.
  *  `earlier` are problems the caller found, reported with the app's own. */
 export async function create(workspace: string, name: unknown, definition: Json, thread?: number, earlier: string[] = []): Promise<Json> {
-  const make = () => {
+  const make = async () => {
     const found = [...earlier];
     const why = nameProblem(name);
     if (why) found.push(why);
     else if (fs.existsSync(fileOf(workspace, name))) found.push(`this workspace already has an app named ${name}`);
     const t = now();
-    const app = checked({ name, rules: [], ...definition, line: 0, made: t, changed: t, ...(thread !== undefined ? { thread } : {}), history: [], secret: newSecret() }, found, "made");
+    const app = await checked({ name, rules: [], ...definition, line: 0, made: t, changed: t, ...(thread !== undefined ? { thread } : {}), history: [], secret: newSecret() }, found, "made");
     save(workspace, app);
     return app;
   };
@@ -150,13 +172,15 @@ export interface Change {
   thread?: number;
   by?: string;
   id?: string;
+  /** The page's ask this change is made for, cleared with it. */
+  ask?: string;
 }
 
 /** `app` with `patch` applied to its data and checked against its schema, unsaved. `by` names who
  *  changed it (the agent unless said); a change with an `id` already seen is skipped, and the app
  *  comes back as it was with `duplicate` set. */
 function applyChange(app: Json, { patch, ev, fields, thread, by, id }: Change): Json {
-  if (id && (app.seen || []).includes(id)) return { ...app, duplicate: true };
+  if (isSeen(app, id)) return { ...app, duplicate: true };
   let data;
   try {
     data = apply(app.data, patch);
@@ -168,16 +192,15 @@ function applyChange(app: Json, { patch, ev, fields, thread, by, id }: Change): 
   if (found.length) throw new AppError(`the change breaks the app's schema:\n- ${found.join("\n- ")}`);
   const entry = { t: now(), by: by || "agent", ev: ev || "change", ...(fields ? { fields } : {}), ...(thread !== undefined ? { thread } : {}), patch, before: app.data };
   const next = { ...app, data, line: (app.line || 0) + 1, changed: entry.t, history: [...app.history, entry].slice(-KEEP) };
-  if (id) next.seen = [...(app.seen || []), id].slice(-SEEN);
-  return next;
+  return id ? seenWith(next, id) : next;
 }
 
-/** The app with `patch` applied to its data, checked against its schema and saved. */
+/** The app with `patch` applied to its data, checked against its schema and saved, and the ask it
+ *  was made for, if any, cleared. */
 export async function change(workspace: string, name: unknown, opts: Change): Promise<Json> {
-  return withLock(workspace, name, () => {
-    const next = applyChange(read(workspace, name), opts);
-    if (!next.duplicate) save(workspace, next);
-    return next;
+  return update(workspace, name, (app) => {
+    const next = applyChange(app, opts);
+    return next.duplicate ? next : cleared(next, opts.ask);
   });
 }
 
@@ -190,10 +213,10 @@ export interface Answer {
 /** Several changes to one app, in order, read once and saved once: one answer for each (the
  *  others still apply when one doesn't). Throws when the app can't be read or saved. */
 export async function changeMany(workspace: string, name: unknown, changes: Change[]): Promise<Answer[]> {
-  return withLock(workspace, name, () => {
-    const first = read(workspace, name);
+  let answers: Answer[] = [];
+  await update(workspace, name, (first) => {
     let app = first;
-    const answers = changes.map((opts): Answer => {
+    answers = changes.map((opts): Answer => {
       try {
         const next = applyChange(app, opts);
         if (next.duplicate) return { duplicate: true };
@@ -202,26 +225,24 @@ export async function changeMany(workspace: string, name: unknown, changes: Chan
       } catch (error) {
         // A page's change that was refused is seen too, so the page stops showing it, and kept
         // with why, so the page can say so.
-        if (opts.id && !(app.seen || []).includes(opts.id))
-          app = { ...app, seen: [...(app.seen || []), opts.id].slice(-SEEN), refused: [...(app.refused || []), { id: opts.id, why: (error as Error).message.split("\n")[0] }].slice(-REFUSED) };
+        if (opts.id && !isSeen(app, opts.id)) app = { ...seenWith(app, opts.id), refused: [...(app.refused || []), { id: opts.id, why: (error as Error).message.split("\n")[0] }].slice(-REFUSED) };
         return { error: error as Error };
       }
     });
-    if (app !== first) save(workspace, app);
-    return answers;
+    return app;
   });
+  return answers;
 }
 
 /** The app with its newest change taken back. */
 export async function undo(workspace: string, name: unknown): Promise<{ app: Json; undone: Json }> {
-  return withLock(workspace, name, () => {
-    const app = read(workspace, name);
-    const last = app.history[app.history.length - 1];
-    if (!last) throw new AppError(`${name} has no change left to undo`);
-    const next = { ...app, data: last.before, line: (app.line || 0) + 1, changed: now(), history: app.history.slice(0, -1) };
-    save(workspace, next);
-    return { app: next, undone: last };
+  let undone: Json;
+  const app = await update(workspace, name, (app) => {
+    undone = app.history[app.history.length - 1];
+    if (!undone) throw new AppError(`${name} has no change left to undo`);
+    return { ...app, data: undone.before, line: (app.line || 0) + 1, changed: now(), history: app.history.slice(0, -1) };
   });
+  return { app, undone: undone! };
 }
 
 /** app.json's text: the definition as app.json holds it. */
@@ -258,7 +279,7 @@ const fileText = (app: Json, file: string): string | null => (file === "app.json
 function readableCheck(file: unknown): asserts file is string {
   if (["app.js", "app.css", "parts.js"].includes(file as string))
     throw new AppError(`${file} isn't one of the app's files: every page gets it inline. guide runtime explains App, guide styles is app.css, and guide <part> gives a part's code`);
-  fileCheck(file);
+  if (!FILES.includes(file as string)) throw new AppError(`file is ${FILES.join(" or ")}`);
 }
 
 /** One of the app's files as text: app.json, or page.html (null while it has none). */
@@ -269,7 +290,7 @@ export function readFile(workspace: string, name: unknown, file: unknown): strin
 
 /** `app` with one file replaced by `text` (null: no page.html), checked: app.json's keys, which its
  *  data must still fit, or page.html. */
-function withFile(app: Json, file: string, text: Json): Json {
+async function withFile(app: Json, file: string, text: Json): Promise<Json> {
   const earlier: string[] = [];
   let next;
   if (file === "page.html") next = { ...app, page: text ?? undefined };
@@ -278,43 +299,42 @@ function withFile(app: Json, file: string, text: Json): Json {
     if (!definition) throw new AppError(earlier.join("; "));
     next = { ...Object.fromEntries(Object.entries(app).filter(([k]) => !DEFINITION.includes(k))), ...definition };
   }
-  return checked({ ...next, changed: now() }, earlier);
+  return checked({ ...next, changed: now() }, earlier, "saved", file === "page.html");
 }
 
-function writeFileOn(workspace: string, app: Json, file: string, text: Json): Json {
+/** `app` with one file replaced, the file as it was kept for undo when it changed, and the ask it was
+ *  changed for, if any, cleared. */
+async function withVersion(app: Json, file: string, text: Json, ask?: unknown): Promise<Json> {
   const before = fileText(app, file);
-  const next = withFile(app, file, text);
+  const next = cleared(await withFile(app, file, text), ask);
   if (fileText(next, file) !== before) next.versions = [...(app.versions || []), { t: next.changed, file, before }].slice(-VERSIONS);
-  save(workspace, next);
   return next;
 }
 
 /** The app with one file replaced, and the file as it was kept for undo when it changed. */
-export async function writeFile(workspace: string, name: unknown, file: unknown, text: Json): Promise<Json> {
-  fileCheck(file);
-  return withLock(workspace, name, () => writeFileOn(workspace, read(workspace, name), file, text));
+export async function writeFile(workspace: string, name: unknown, file: unknown, text: Json, ask?: unknown): Promise<Json> {
+  readableCheck(file);
+  return update(workspace, name, (app) => withVersion(app, file, text, ask));
 }
 
 /** The app with the newest change to `file` (else to either file) taken back, and that change. */
 export async function revert(workspace: string, name: unknown, file?: unknown): Promise<{ app: Json; reverted: Json }> {
-  if (file !== undefined) fileCheck(file);
-  return withLock(workspace, name, () => {
-    const app = read(workspace, name);
+  if (file !== undefined) readableCheck(file);
+  let reverted: Json;
+  const app = await update(workspace, name, async (app) => {
     const versions: Json[] = app.versions || [];
     const at = file === undefined ? versions.length - 1 : versions.map((v) => v.file).lastIndexOf(file);
     if (at < 0) throw new AppError(`${name} has no change to ${file || "app.json or page.html"} left to take back`);
-    const was = versions[at];
-    const next = { ...withFile(app, was.file, was.before), versions: [...versions.slice(0, at), ...versions.slice(at + 1)] };
-    save(workspace, next);
-    return { app: next, reverted: was };
+    reverted = versions[at];
+    return { ...(await withFile(app, reverted.file, reverted.before)), versions: [...versions.slice(0, at), ...versions.slice(at + 1)] };
   });
+  return { app, reverted: reverted! };
 }
 
 /** The app with `find` in one file replaced, once, with `text`. */
-export async function editFile(workspace: string, name: unknown, file: unknown, find: unknown, text: unknown): Promise<Json> {
+export async function editFile(workspace: string, name: unknown, file: unknown, find: unknown, text: unknown, ask?: unknown): Promise<Json> {
   readableCheck(file);
-  return withLock(workspace, name, () => {
-    const app = read(workspace, name);
+  return update(workspace, name, (app) => {
     const was = fileText(app, file);
     if (was === null) throw new AppError(`${name} has no ${file} yet: write it whole with edit`);
     if (typeof find !== "string" || !find) throw new AppError("edit needs find: text the file holds");
@@ -322,20 +342,13 @@ export async function editFile(workspace: string, name: unknown, file: unknown, 
     // The file as it is comes with the refusal, so the next try needs no read first.
     if (at < 0) throw new AppError(`${file} doesn't hold that text. It is now:\n${was}`);
     if (was.indexOf(find, at + 1) >= 0) throw new AppError(`${file} holds that text more than once; give more of it, so it's found exactly once`);
-    return writeFileOn(workspace, app, file, was.slice(0, at) + String(text ?? "") + was.slice(at + find.length));
+    return withVersion(app, file, was.slice(0, at) + String(text ?? "") + was.slice(at + find.length), ask);
   });
 }
 
 /** The app with `fields` outside its data and history set, such as its page's token. */
-export async function mark(workspace: string, name: unknown, fields: Json): Promise<Json> {
-  return withLock(workspace, name, () => {
-    const next = { ...read(workspace, name), ...fields };
-    save(workspace, next);
-    return next;
-  });
-}
+export const mark = (workspace: string, name: unknown, fields: Json): Promise<Json> => update(workspace, name, (app) => ({ ...app, ...fields }));
 
-/** The app with a secret for its page's events, made now for an app from before apps had one. */
 /** How many asks from an app's page wait for the chat, how many picks one holds, and how long its
  *  words may be. */
 export const ASKS_WAITING = 10;
@@ -345,45 +358,24 @@ export const ASK_TEXT = 500;
 /** An ask from the app's page: what the user picked on it ("Change this") and what they want of
  *  each, kept apart from the data and its history until the agent clears it. Refused when it's
  *  malformed, or when ASKS_WAITING already wait. */
-export async function addAsk(workspace: string, name: unknown, ask: { id?: string; picks: Json }): Promise<Json> {
+export async function addAsk(workspace: string, name: unknown, ask: { picks: Json }): Promise<{ id: string; kept: number }> {
   const picks = Array.isArray(ask.picks) ? ask.picks.slice(0, PICKS) : [];
   const clip = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : undefined);
   const clean = picks
     .map((p: Json) => ({ id: clip(p?.id, 80), ref: clip(p?.ref, 80), part: clip(p?.part, 80), at: clip(p?.at, 200), figure: clip(p?.figure, 40), tag: clip(p?.tag, 20), cls: clip(p?.cls, 60), shown: clip(p?.shown, 80), text: clip(p?.text, ASK_TEXT) }))
     .filter((p: Json) => p.text);
   if (!clean.length) throw new AppError("an ask says what should change of something picked on the page");
-  return withLock(workspace, name, () => {
-    const app = read(workspace, name);
+  const app = await update(workspace, name, (app) => {
     const asks: Json[] = app.asks || [];
     if (asks.length >= ASKS_WAITING) throw new AppError(`${ASKS_WAITING} asks are waiting already: the chat has to catch up first`);
-    const id = `a${(app.askSeq || 0) + 1}`;
-    const next = { ...app, askSeq: (app.askSeq || 0) + 1, asks: [...asks, { id, t: now(), picks: clean }] };
-    save(workspace, next);
-    return { app: next, id, kept: clean.length };
+    const seq = (app.askSeq || 0) + 1;
+    return { ...app, askSeq: seq, asks: [...asks, { id: `a${seq}`, t: now(), picks: clean }] };
   });
+  return { id: app.asks.at(-1).id, kept: clean.length };
 }
 
-/** The app with the ask `id` cleared, once the agent has done it; throws naming the asks there are. */
-export async function clearAsk(workspace: string, name: unknown, id: unknown): Promise<Json> {
-  return withLock(workspace, name, () => {
-    const app = read(workspace, name);
-    const asks: Json[] = app.asks || [];
-    if (!asks.some((a) => a.id === id)) throw new AppError(`${name} has no ask ${JSON.stringify(id)}${asks.length ? `; its asks are ${asks.map((a) => a.id).join(", ")}` : ""}`);
-    const next = { ...app, asks: asks.filter((a) => a.id !== id) };
-    save(workspace, next);
-    return next;
-  });
-}
-
-export async function withSecret(workspace: string, name: unknown): Promise<Json> {
-  return withLock(workspace, name, () => {
-    const app = read(workspace, name);
-    if (app.secret) return app;
-    const next = { ...app, secret: newSecret() };
-    save(workspace, next);
-    return next;
-  });
-}
+/** The app with a secret for its page's events, made now for an app from before apps had one. */
+export const withSecret = (workspace: string, name: unknown): Promise<Json> => update(workspace, name, (app) => (app.secret ? app : { ...app, secret: newSecret() }));
 
 /** The workspaces that have apps. */
 export function workspaces(): string[] {

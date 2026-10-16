@@ -27,17 +27,16 @@ test("page events apply in order, once each, as changes by the page, and their f
   assert.deepEqual(waiting(), []);
 });
 
-test("events that no longer apply, break the schema or can't be read are skipped and said", async () => {
+test("events that no longer apply or break the schema are skipped and said; one a page wouldn't send is dropped", async () => {
   from("home", "groceries", { id: "e3", ev: "tick", fields: { text: "Milk" }, patch: [{ op: "test", path: "/items/0/text", value: "Milk" }, { op: "replace", path: "/items/0/done", value: true }] });
   from("home", "groceries", { id: "e4", ev: "add", patch: [{ op: "add", path: "/items/-", value: { text: "" } }] });
   post({ workspace: "home", app: "nope", id: "e5", ev: "add", patch: [] });
   post({}, "not json at all");
   const results = await collect();
-  assert.deepEqual(results.map((r) => r.ok), [false, false, false, false]);
+  assert.deepEqual(results.map((r) => r.ok), [false, false, false]);
   assert.match(results[0].why!, /test \/items\/0\/text failed/);
   assert.match(results[1].why!, /breaks the app's schema/);
   assert.match(results[2].why!, /no app named nope/);
-  assert.match(results[3].why!, /couldn't be read/);
   assert.equal(store.read("home", "groceries").history.length, 2);
   assert.deepEqual(waiting(), []);
 });

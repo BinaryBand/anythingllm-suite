@@ -22,7 +22,7 @@ test("list names every starter, and no starter shares a part's name", async () =
 for (const name of names) {
   test(`the ${name} starter is a page apps take, with data its schema accepts`, async () => {
     const s = parts.starter(name)!;
-    assert.deepEqual(parts.pageProblems(s.page), []);
+    assert.deepEqual(await parts.pageProblems(s.page), []);
     assert.ok(s.definition.schema.required.length, "the components ask for keys");
     assert.deepEqual(problems(s.data, s.definition.schema), []);
     assert.equal((await store.create("home", name, { ...s.definition, data: s.data, page: s.page }, undefined)).name, name, "the store takes it whole");

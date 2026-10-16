@@ -35,15 +35,22 @@ var AppsLean = (() => {
   const uuid = () => (self.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2));
   const native = window.fetch.bind(window);
 
-  async function append(body) {
+  /** Posts an event of this app's page, with its secret, as a document AnythingLLM only stores;
+   *  relative, as the page is served by AnythingLLM itself at whatever address the user reached it.
+   *  Answers the response and the event's id. */
+  async function upload(fields) {
     const id = uuid();
-    const event = { apps_lean_event: 1, workspace: cfg.workspace, app: cfg.app, secret: cfg.secret, id, ev: body.ev || "change", fields: body.fields, patch: body.patch, t: new Date().toISOString() };
-    // Relative: the page is served by AnythingLLM itself, at whatever address the user reached it.
+    const event = { apps_lean_event: 1, workspace: cfg.workspace, app: cfg.app, secret: cfg.secret, id, t: new Date().toISOString(), ...fields };
     const r = await native("/api/browser-extension/upload-content", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
       body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.eventTitle, docSource: "apps-lean page" } }),
     });
+    return { r, id };
+  }
+
+  async function append(body) {
+    const { r, id } = await upload({ kind: "change", ev: body.ev || "change", fields: body.fields, patch: body.patch });
     if (r.status === 403) return answer(403, { error: "AnythingLLM refused this page's key; ask the agent for the page again." });
     if (!r.ok) return answer(r.status >= 500 ? 503 : r.status, { error: "AnythingLLM answered " + r.status + "." });
     pending.push({ id, patch: body.patch });
@@ -62,25 +69,27 @@ var AppsLean = (() => {
     const t = setTimeout(done, ms);
     document.addEventListener("visibilitychange", wake);
   });
-  /** A bar along the bottom saying what the user should know, with an optional button. */
-  let barred = false;
+  /** The bar along the bottom saying what the user should know now, with an optional button: one
+   *  bar, whose words are the newest. */
+  let barEl = null;
   function bar(text, label, act) {
-    if (barred) return;
-    barred = true;
-    const el = document.createElement("div");
-    el.id = "apps-lean-bar";
-    el.setAttribute("role", "status");
-    el.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:9;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:12px;background:var(--ink,#222);color:var(--panel,#fff);font:15px/1.4 system-ui,sans-serif";
-    el.textContent = text;
+    if (!barEl) {
+      barEl = document.createElement("div");
+      barEl.setAttribute("role", "status");
+      barEl.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:9;display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:12px;background:var(--ink,#222);color:var(--panel,#fff);font:15px/1.4 system-ui,sans-serif";
+    }
+    if (barEl.dataset && barEl.dataset.said === text) return;
+    if (barEl.dataset) barEl.dataset.said = text;
+    barEl.textContent = text;
     if (label) {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = label;
       b.style.cssText = "min-height:44px;padding:0 14px;border-radius:10px;border:0;font:inherit;font-weight:600";
       b.addEventListener("click", act);
-      el.append(b);
+      barEl.append(b);
     }
-    document.body.append(el);
+    document.body.append(barEl);
   }
   const typing = () => { const a = document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || !!(a && a.isContentEditable); };
   let gone = false;
@@ -91,7 +100,7 @@ var AppsLean = (() => {
     await pause();
     if (!/^https?:$/.test(location.protocol)) return answer(200, { line: body.since, lines: [] });
     try {
-      const next = await (await native(stateUrl, { cache: "no-store" })).json();
+      const next = await (await native(stateUrl, { cache: "no-cache" })).json();
       if (next && next.gone) {
         gone = true;
         bar("This app was deleted.");
@@ -117,7 +126,7 @@ var AppsLean = (() => {
   // to the chat as an ask, which the agent acts on only when the user asks it to there. While
   // picking, taps pick instead of pressing: these listeners, on the window and added before any
   // part's, see each tap first and keep it from the page; scrolling still works.
-  const PICKS = 5, WORDS = 500;
+  const PICKS = cfg.picks || 5, WORDS = cfg.words || 500;
   let picking = false, picks = [];
   const host = document.createElement("div");
   const ui = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
@@ -159,26 +168,22 @@ var AppsLean = (() => {
     tray();
   }
   async function send() {
-    const id = uuid();
-    const event = { apps_lean_event: 1, workspace: cfg.workspace, app: cfg.app, secret: cfg.secret, id, ev: "ask", picks: picks.map((p) => ({ ...p.where, text: String(p.text || "").slice(0, WORDS) })).filter((p) => p.text.trim()), t: new Date().toISOString() };
-    if (!event.picks.length) return;
-    const r = await native("/api/browser-extension/upload-content", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
-      body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.eventTitle, docSource: "apps-lean page" } }),
-    }).catch(() => null);
+    const picked = picks.map((p) => ({ ...p.where, text: String(p.text || "").slice(0, WORDS) })).filter((p) => p.text.trim());
+    if (!picked.length) return;
+    const { r } = await upload({ kind: "ask", ev: "ask", picks: picked }).catch(() => ({ r: null }));
     end();
-    if (!r || !r.ok) return bar("Couldn't send it: try again in a moment.");
-    bar("Sent to the chat. Ask the agent there to make the change.");
+    bar(r && r.ok ? "Sent to the chat. Ask the agent there to make the change." : "Couldn't send it: try again in a moment.");
   }
+  // What each of the tray's buttons does to picking: on, off, or send.
+  const ACTS = { start: true, back: true, describe: false, cancel: null, send: "send" };
   ui.addEventListener("click", (e) => {
     const a = e.target.closest && e.target.closest("[data-a]");
-    const act = a && a.getAttribute("data-a");
-    if (act === "start") ((picking = true), tray());
-    else if (act === "cancel") end();
-    else if (act === "describe") ((picking = false), tray());
-    else if (act === "back") ((picking = true), tray());
-    else if (act === "send") send();
+    const act = a && ACTS[a.getAttribute("data-a")];
+    if (act === undefined || !a) return;
+    if (act === "send") return send();
+    if (act === null) return end();
+    picking = act;
+    tray();
   });
   ui.addEventListener("input", (e) => { const i = e.target.getAttribute && e.target.getAttribute("data-i"); if (i !== null && picks[i]) picks[i].text = e.target.value; });
   for (const type of ["click", "pointerdown", "mousedown", "mouseup", "pointerup", "submit", "input", "change", "keydown", "touchend"])

@@ -3,7 +3,6 @@
 // call works on the workspace AnythingLLM invoked it from and answers text for the agent, with the
 // app's card in Markdown to put in its reply.
 
-import { workspaceOf } from "#shared/anythingllm";
 import { Told } from "#shared/errors";
 import { card, headline } from "./card.ts";
 import type { HandlerContext } from "./host.ts";
@@ -180,12 +179,10 @@ const ACTIONS: Record<string, Action> = {
       ...cardBlock(made, url),
     ].join("\n");
   },
-  do: async ({ workspace, thread }, p, self) => {
+  do: async ({ workspace, thread, job }, p, self) => {
     const patch = asJson(p.patch, "patch");
     const fields = asJson(p.fields, "fields");
-    if (p.ask !== undefined) askOf(workspace, p);
-    let app = await store.change(workspace, p.name, { patch, ev: p.ev, fields, thread, by: workspaceOf(self) === null ? "job" : undefined });
-    if (p.ask !== undefined) app = await store.clearAsk(workspace, p.name, p.ask);
+    const app = await store.change(workspace, p.name, { patch, ev: p.ev, fields, thread, by: job ? "job" : undefined, ask: p.ask });
     return [`Done: ${app.history[app.history.length - 1].ev} on ${app.name}${p.ask !== undefined ? `; ask ${p.ask} cleared` : ""}.`, ...cardOf(self, app)].join("\n");
   },
   read: ({ workspace }, p, self) => {
@@ -236,9 +233,7 @@ const ACTIONS: Record<string, Action> = {
   },
   edit: async ({ workspace }, p, self) => {
     const whole = p.find === undefined || p.find === "";
-    if (p.ask !== undefined) askOf(workspace, p);
-    let app = whole ? await store.writeFile(workspace, p.name, p.file, p.text) : await store.editFile(workspace, p.name, p.file, p.find, p.text);
-    if (p.ask !== undefined) app = await store.clearAsk(workspace, p.name, p.ask);
+    const app = whole ? await store.writeFile(workspace, p.name, p.file, p.text, p.ask) : await store.editFile(workspace, p.name, p.file, p.find, p.text, p.ask);
     return [`${whole ? "Wrote" : "Changed"} ${app.name}'s ${p.file}${p.ask !== undefined ? `; ask ${p.ask} cleared` : ""}.`, ...advice(app), ...cardOf(self, app)].join("\n");
   },
   delete: async ({ workspace }, p, self) => {
@@ -264,12 +259,6 @@ const ACTIONS: Record<string, Action> = {
   },
 };
 
-/** Refuses an ask the app doesn't have before anything is changed for it. */
-function askOf(workspace: string, p: Args): void {
-  const asks: Json[] = store.read(workspace, p.name).asks || [];
-  if (!asks.some((a) => a.id === p.ask)) throw new AppError(`${p.name} has no ask ${JSON.stringify(p.ask)}${asks.length ? `; its asks are ${asks.map((a) => a.id).join(", ")}` : ""}: nothing was changed`);
-}
-
 /** What a scheduled job may do in a workspace it names: read, and change the data of an app that
  *  takes it. A job's prompt is the user's, but what it reads on the way (a mail, a page) isn't, so
  *  a job can't make, rewrite, take back or delete a workspace's app, or write a page's script. */
@@ -278,18 +267,18 @@ const JOB_IN_A_WORKSPACE = new Set(["list", "read", "do", "guide"]);
 /** The workspace a call works on: AnythingLLM's for a chat; for a scheduled job, which AnythingLLM
  *  gives none, its own (_jobs) or one it names, within JOB_IN_A_WORKSPACE. Throws what it may not do. */
 function scopeFor(self: HandlerContext, action: string, p: Args): Scope {
-  const job = workspaceOf(self) === null;
+  const scope = scopeOf(self);
   const named = typeof p.workspace === "string" && p.workspace.trim() ? p.workspace.trim() : null;
-  if (!job) {
+  if (!scope.job) {
     if (named) throw new AppError("workspace is for a scheduled job: a chat works on its own workspace's apps, so leave it out");
-    return scopeOf(self);
+    return scope;
   }
   if (action === "delete") throw new AppError("a scheduled job can't delete an app: the user deletes one from a chat");
-  if (!named) return scopeOf(self);
+  if (!named) return scope;
   if (!JOB_IN_A_WORKSPACE.has(action)) throw new AppError(`a scheduled job may list, read and do in a workspace it names, not ${action}: ask the user to do that from a chat`);
   if (action === "do" && store.read(named, p.name).jobs !== true)
     throw new AppError(`${p.name} doesn't take changes from scheduled jobs: the user lets it from a chat, where its app.json gets "jobs": true`);
-  return { workspace: named };
+  return { workspace: named, job: true };
 }
 
 /** Actions that change an app named in the call, after which its page is written again. */
@@ -307,13 +296,15 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   // a call takes what's waiting first, so it reads every app as its pages left it.
   keepWatching();
   if (action !== "guide") {
-    await upgrade(key);
+    // What older pages posted, before upgrade gives their apps a secret those pages don't have.
     await caughtUp(key);
+    // A job's process ends within minutes and starts afresh each run: the chat's does this.
+    if (!scope.job) await upgrade(key);
   }
   const reply = await act(scope, params, self);
   if (CHANGES.has(action) && params.name) await refresh(scope.workspace, params.name, key);
   // What pages did is said once, in the workspace's next chat call; a scheduled job is told none.
-  const lines = action === "guide" || workspaceOf(self) === null ? [] : await news(scope.workspace);
+  const lines = action === "guide" || scope.job ? [] : await news(scope.workspace);
   return lines.length ? [...lines, "", reply].join("\n") : reply;
 }
 

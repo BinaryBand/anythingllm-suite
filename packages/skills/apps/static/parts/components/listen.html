@@ -23,7 +23,7 @@ App.mount("listen", ({ root, q }) => {
     u.rate = rates[rate];
     u.lang = document.documentElement.lang || "";
     u.onstart = () => mark(item.block);
-    u.onend = u.onerror = () => queue.length || item.last ? next() : 0;
+    u.onend = u.onerror = next; // a stop empties the queue, so the next call stops too
     speech.speak(u);
   };
   q("play").onclick = () => {
@@ -32,7 +32,6 @@ App.mount("listen", ({ root, q }) => {
     const blocks = (named.length ? named : [...document.querySelectorAll("main h1, main h2, main h3, main p, main li")]).filter((b) => !root.contains(b) && b.offsetParent && b.textContent.trim());
     queue = blocks.flatMap((block) => (block.textContent.match(/[^.!?]+[.!?]*/g) || []).map((s) => ({ block, text: s.trim() }))).filter((s) => s.text);
     if (!queue.length) return;
-    queue.at(-1).last = true;
     q("play").textContent = "Stop";
     next();
   };

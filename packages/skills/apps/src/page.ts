@@ -12,8 +12,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { jobTimeLeft, perProcess } from "#shared/anythingllm";
-import { updateJson } from "#shared/atomic";
-import { embed, inTurn, newSecret, pageKey, publicDir, removePublic, sameSecret, take, watch, writePublic } from "#shared/pages";
+import { readJson, updateJson, writeAtomicIfChanged } from "#shared/atomic";
+import { embed, inTurn, newSecret, pageKey, publicDir, removePublic, sameSecret, takeEvents, watch, writePublic } from "#shared/pages";
 import { HUB_ID, root } from "./dirs.ts";
 import type { Json } from "./patch.ts";
 import { file, libraries, PLACEHOLDER, RUNTIME_TAG, tag } from "./parts.ts";
@@ -29,29 +29,31 @@ export const keyForPages = (): Promise<string> => pageKey(root());
 function logOf(app: Json): Json[] {
   const history: Json[] = app.history || [];
   const last = app.line || history.length;
-  return history.map((h, i) => ({ n: last - (history.length - 1 - i), t: h.t, by: h.by || "agent", ev: h.ev, ...(h.fields || {}), patch: h.patch }));
+  return history.map((h, i) => ({ n: last - (history.length - 1 - i), t: h.t, by: h.by, ev: h.ev, ...(h.fields || {}), patch: h.patch }));
 }
 
 const inlineScript = (source: string): string => "<script>" + source.replace(/<\//g, "<\\/") + "</script>";
 const inlineStyle = (source: string): string => "<style>" + source.replace(/<\//g, "<\\/") + "</style>";
 
-/** What a page is made of besides its data: page.html, the libraries and the runtime as shipped or
- *  tuned. A page whose version isn't this was written by an older skill or from older parts. */
-export function versionOf(app: Json): string {
-  const hash = crypto.createHash("sha256").update(String(app.page ?? "")).update("\0").update(file("runtime-lean.js"));
-  for (const [name, text] of Object.entries(libraries())) hash.update("\0" + name + "\0" + text);
-  return hash.digest("base64url").slice(0, 16);
-}
+const sha = (text: string): string => crypto.createHash("sha256").update(text).digest("base64url");
+let shared: string | null = null;
+/** What every page holds besides its own page.html and data, hashed once per load: the runtime and
+ *  the libraries, as shipped or tuned. */
+const partsDigest = (): string => (shared ??= sha([file("runtime-lean.js"), ...Object.entries(libraries()).flat()].join("\0")));
+
+/** What a page is made of besides its data. A page whose version isn't this was written by an older
+ *  skill or from older parts. */
+export const versionOf = (app: Json): string => sha(partsDigest() + "\0" + String(app.page ?? "")).slice(0, 16);
 
 /** The app's page as a browser gets it, the app in place of the placeholder and each library it
  *  names inline, app.js after this skill's stand-in for a server. The page posts and reads at
  *  addresses relative to the one it's served at, so it needs no address of AnythingLLM's. Null
  *  when the app has no page. */
-export function render(app: Json, workspace: string, key: string): string | null {
+export function render(app: Json, workspace: string, key: string, version = versionOf(app)): string | null {
   if (!app.page) return null;
   const lean = {
-    workspace, app: app.name, secret: app.secret ?? null, title: app.title, card: app.card || {}, key, eventTitle: TITLE,
-    version: versionOf(app), line: app.line || 0, seen: app.seen || [], data: app.data, log: logOf(app),
+    ...stateOf(app, version), workspace, app: app.name, secret: app.secret ?? null, title: app.title, card: app.card || {}, key, eventTitle: TITLE,
+    log: logOf(app), picks: store.PICKS, words: store.ASK_TEXT,
   };
   const libs = libraries();
   const inline: Record<string, string> = {
@@ -69,7 +71,9 @@ export function render(app: Json, workspace: string, key: string): string | null
 const pageFile = (token: string): string => `${HUB_ID}/${token}.html`;
 /** What an open page reads every 2 s to keep up: never the secret, the plan or the history. */
 const stateFile = (token: string): string => `${HUB_ID}/${token}.json`;
-export const stateOf = (app: Json): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], version: versionOf(app), asks: (app.asks || []).length });
+export const stateOf = (app: Json, version = versionOf(app)): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], version });
+/** Writes a file of the public folder, unless it holds that already: an open page polls its state. */
+const putPublic = (rel: string, text: string): boolean => writeAtomicIfChanged(path.join(publicDir(), rel), text, 0o644);
 
 /** The address of a page from its token: under `base`, AnythingLLM's address as the user's browser
  *  reaches it, or relative to AnythingLLM's own pages without it; null when it has no page yet. */
@@ -80,13 +84,13 @@ export const pageUrl = (token: unknown, base: string | null): string | null => (
 export async function publish(app: Json, workspace: string, key: () => Promise<string> = keyForPages): Promise<string | null> {
   if (!app.page) return null;
   const token = app.pageToken || newSecret();
+  const version = versionOf(app);
   try {
-    writePublic(pageFile(token), render(app, workspace, await key())!);
-    writePublic(stateFile(token), JSON.stringify(stateOf(app)));
+    putPublic(pageFile(token), render(app, workspace, await key(), version)!);
+    putPublic(stateFile(token), JSON.stringify(stateOf(app, version)));
   } catch {
     return null;
   }
-  const version = versionOf(app);
   if (app.pageToken !== token || app.version !== version) await store.mark(workspace, app.name, { pageToken: token, version });
   return token;
 }
@@ -110,91 +114,92 @@ export function unpublish(app: Json): void {
   } catch {}
 }
 
-/** What became of one event a page posted. */
+/** What became of one event a page posted. Its workspace and app are said only once its app was
+ *  found and its secret matched: an event's own say of them is believed for nothing. */
 export interface Result {
   workspace?: string;
   app?: string;
-  ev?: string;
+  kind: "change" | "ask";
+  ev: string;
   fields?: Json;
   ok: boolean;
   duplicate?: boolean;
   why?: string;
-  /** Set when the event named no app there is: its workspace is only what the event said. */
-  unknown?: boolean;
   /** The id an ask from the page was kept under. */
   ask?: string;
-}
-
-/** An event as the page posts it, or why it isn't one. */
-function parse(posted: unknown): { event?: Json; why?: string } {
-  const e = posted as Json;
-  if (!e || typeof e !== "object") return { why: "not JSON" };
-  if (e.apps_lean_event !== 1) return { why: "not an apps-lean event" };
-  if (typeof e.workspace !== "string" || typeof e.app !== "string") return { why: "missing workspace or app" };
-  if (e.ev === "ask" ? !Array.isArray(e.picks) : !Array.isArray(e.patch)) return { why: e.ev === "ask" ? "an ask with no picks" : "missing patch" };
-  return { event: e };
 }
 
 /** How many events from one app's page are applied in one pass; the rest are refused, so a flood
  *  can't push the app's changes out of its history. */
 export const MOST_AT_ONCE = 20;
-const NOT_MINE = "it didn't come from this app's page";
+
+const firstLine = (e: unknown): string => (e as Error).message.split("\n")[0];
+
+interface Row {
+  workspace: string;
+  app: string;
+  said: Pick<Result, "kind" | "ev" | "fields">;
+  secret: unknown;
+  change?: store.Change;
+  picks?: Json[];
+  answer?: Result;
+}
 
 /** Applies every waiting event, oldest first, and answers what happened to each. An event is
  *  applied only to the app whose secret it carries, so one page's link changes no other app; an app
- *  from before apps had a secret takes its page's events until it has one. The events for one app
+ *  from before apps had a secret takes its page's events until it has one. A change is a patch on
+ *  the data; an ask (kind "ask") is what the user picked with Change this. The changes for one app
  *  are applied together, so the app is read and written once however many the page sent. */
 export async function collect(): Promise<Result[]> {
-  const rows: { base?: Json; change?: store.Change; picks?: Json[]; secret?: unknown; answer?: Result }[] = [];
-  const byApp = new Map<string, typeof rows>();
-  for (const posted of take(TITLE)) {
-    const { event, why } = parse(posted);
-    if (!event) {
-      rows.push({ answer: { ok: false, why: `an event that couldn't be read (${why})` } });
-      continue;
-    }
-    const fields = event.fields && typeof event.fields === "object" ? event.fields : undefined;
-    const base = { workspace: event.workspace, app: event.app, ev: String(event.ev || "change"), fields };
-    const row = event.ev === "ask"
-      ? { base, secret: event.secret, picks: event.picks as Json[] }
-      : { base, secret: event.secret, change: { patch: event.patch, ev: base.ev, fields, by: "page", id: typeof event.id === "string" ? event.id : undefined } };
-    const key = `${event.workspace}/${event.app}`;
-    byApp.set(key, [...(byApp.get(key) || []), row]);
+  const rows: Row[] = [];
+  const byApp = new Map<string, Row[]>();
+  for (const e of takeEvents(TITLE, "apps_lean_event") as Json[]) {
+    const kind = e.kind === "ask" ? "ask" : "change";
+    // Not one this skill's pages send: dropped, as the shared intake drops what isn't marked.
+    if (typeof e.workspace !== "string" || typeof e.app !== "string" || !Array.isArray(kind === "ask" ? e.picks : e.patch)) continue;
+    const fields = e.fields && typeof e.fields === "object" ? e.fields : undefined;
+    const said = { kind, ev: String(e.ev || kind), fields } as const;
+    const row: Row = { workspace: e.workspace, app: e.app, said, secret: e.secret };
+    if (kind === "ask") row.picks = e.picks;
+    else row.change = { patch: e.patch, ev: said.ev, fields, by: "page", id: typeof e.id === "string" ? e.id : undefined };
+    const key = `${e.workspace}/${e.app}`;
+    (byApp.get(key) ?? byApp.set(key, []).get(key)!).push(row);
     rows.push(row);
   }
   for (const waiting of byApp.values()) {
-    const { workspace, app } = waiting[0].base;
-    const refuse = (row: (typeof rows)[number], why: string) => void (row.answer = { ...row.base, ok: false, why });
+    const { workspace, app } = waiting[0];
+    const mine = (row: Row, more: Partial<Result> & { ok: boolean }) => void (row.answer = { ...row.said, workspace, app, ...more });
     let found: Json;
     try {
       found = store.read(workspace, app);
     } catch (error) {
-      waiting.forEach((row) => void (row.answer = { ...row.base, ok: false, why: (error as Error).message.split("\n")[0], unknown: true }));
+      waiting.forEach((row) => void (row.answer = { ...row.said, ok: false, why: firstLine(error) }));
       continue;
     }
-    const mine = waiting.filter((row) => (found.secret ? sameSecret(row.secret, found.secret) : true));
-    waiting.filter((row) => !mine.includes(row)).forEach((row) => refuse(row, NOT_MINE));
-    for (const row of mine.filter((r) => r.picks))
+    const asks: Row[] = [], changes: Row[] = [];
+    for (const row of waiting)
+      if (found.secret && !sameSecret(row.secret, found.secret)) row.answer = { ...row.said, ok: false, why: "it didn't come from this app's page" };
+      else (row.picks ? asks : changes).push(row);
+    for (const row of asks)
       try {
         const { id, kept } = await store.addAsk(workspace, app, { picks: row.picks });
-        row.answer = { ...row.base, ok: true, ask: id, fields: { text: `${kept} picked` } };
+        mine(row, { ok: true, ask: id, fields: { text: `${kept} picked` } });
       } catch (error) {
-        refuse(row, (error as Error).message.split("\n")[0]);
+        mine(row, { ok: false, why: firstLine(error) });
       }
-    const changes = mine.filter((r) => !r.picks);
+    changes.slice(MOST_AT_ONCE).forEach((row) => mine(row, { ok: false, why: `more than ${MOST_AT_ONCE} changes at once` }));
     const now = changes.slice(0, MOST_AT_ONCE);
-    changes.slice(MOST_AT_ONCE).forEach((row) => refuse(row, `more than ${MOST_AT_ONCE} changes at once`));
     if (!now.length) continue;
     let answers: store.Answer[];
     try {
-      answers = await store.changeMany(workspace, app, now.map((w) => w.change!));
+      answers = await store.changeMany(workspace, app, now.map((row) => row.change!));
       if (!found.secret) await store.withSecret(workspace, app);
     } catch (error) {
       answers = now.map(() => ({ error: error as Error }));
     }
     now.forEach((row, i) => {
       const { error, duplicate } = answers[i];
-      row.answer = error ? { ...row.base, ok: false, why: error.message.split("\n")[0] } : { ...row.base, ok: !duplicate, duplicate: !!duplicate };
+      mine(row, error ? { ok: false, why: firstLine(error) } : { ok: !duplicate, duplicate: !!duplicate });
     });
   }
   return rows.map((row) => row.answer!);
@@ -225,18 +230,18 @@ export async function upgrade(key: () => Promise<string> = keyForPages): Promise
 export const NEWS_KEPT = 20;
 const newsFile = (workspace: string): string => path.join(root(), workspace, ".news.json");
 const words = (r: Result): string =>
-  r.ev === "ask" ? (r.ok ? `ask ${r.ask} on ${r.app}: ${r.fields?.text} (read shows it)` : `an ask on ${r.app}`) : `${r.ev}${r.fields?.text ? ` ${r.fields.text}` : ""} on ${r.app}`;
+  r.kind === "ask" ? (r.ok ? `ask ${r.ask} on ${r.app}: ${r.fields?.text} (read shows it)` : `an ask on ${r.app}`) : `${r.ev}${r.fields?.text ? ` ${r.fields.text}` : ""} on ${r.app}`;
 
 /** Applies what pages posted, writes each changed app's page again, and keeps what happened for each
- *  workspace's next chat call. Only an event of an app there is, from its own page, is kept: one
- *  naming an app or workspace there isn't, or sent by another app's page, is kept for none, so a
- *  link can't write into another workspace's news, or anywhere a made-up workspace would name. */
+ *  workspace's next chat call. Only an event whose app was found and whose secret matched says its
+ *  workspace (Result), so a link can't write into another workspace's news, or anywhere a made-up
+ *  workspace would name. */
 async function drain(key: () => Promise<string>): Promise<void> {
   const results = await collect();
   const byWorkspace = new Map<string, string[]>();
   for (const r of results) {
-    if (!r.workspace || r.unknown || r.duplicate || r.why === NOT_MINE) continue;
-    byWorkspace.set(r.workspace, [...(byWorkspace.get(r.workspace) ?? []), r.ok ? `- ${words(r)}` : `- skipped ${words(r)}: ${r.why}`]);
+    if (!r.workspace || r.duplicate) continue;
+    (byWorkspace.get(r.workspace) ?? byWorkspace.set(r.workspace, []).get(r.workspace)!).push(r.ok ? `- ${words(r)}` : `- skipped ${words(r)}: ${r.why}`);
   }
   for (const [workspace, lines] of byWorkspace)
     try {
@@ -264,6 +269,7 @@ export function keepWatching(): void {
 export async function news(workspace: string): Promise<string[]> {
   let lines: string[] = [];
   try {
+    if (!readJson(newsFile(workspace), (): string[] => []).length) return [];
     await updateJson(newsFile(workspace), (): string[] => [], (kept) => void (lines = kept.splice(0)));
   } catch {
     return [];

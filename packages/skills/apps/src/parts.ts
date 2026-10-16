@@ -8,7 +8,7 @@
 // and page are made from those parts, so a starter follows the parts as they change.
 
 import vm from "node:vm";
-import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
+import { Worker } from "node:worker_threads";
 import { staticFiles, type StaticFiles } from "#shared/static";
 import { overrides } from "./dirs.ts";
 import type { Json } from "./patch.ts";
@@ -305,10 +305,13 @@ export function starter(name: string): ReturnType<typeof recipe> & { page: strin
   return { ...made, page: script ? page.replace(SCRIPTS, () => `<script>\n${script}\n</script>\n${SCRIPTS}`) : page };
 }
 
-/** The libraries a page may name, as a page gets them inline: parts.js with every figure. */
+let libs: Record<string, string> | null = null;
+/** The libraries a page may name, as a page gets them inline: parts.js with every figure. Made once
+ *  per load, as the parts are. */
 export function libraries(): Record<string, string> {
+  if (libs) return libs;
   const figures = Object.values(parts()).filter((p) => p.kind === "figure").map((p) => p.body);
-  return { "app.js": file("app.js"), "app.css": file("app.css"), "parts.js": [file("parts.js"), ...figures].join("\n") };
+  return (libs = { "app.js": file("app.js"), "app.css": file("app.css"), "parts.js": [file("parts.js"), ...figures].join("\n") });
 }
 
 // What a page may use without declaring it: the browser's own globals. A name starting with a
@@ -340,7 +343,7 @@ const CHECK_ALL_MS = 4000;
 const CHECKER = String.raw`
 const { workerData } = require("node:worker_threads");
 const vm = require("node:vm");
-const { scripts, browser, ms, signal, port } = workerData;
+const { scripts, browser, ms } = workerData;
 const found = [];
 try {
   const ctx = vm.createContext({}, { microtaskMode: "afterEvaluate", codeGeneration: { strings: false, wasm: false } });
@@ -384,36 +387,30 @@ try {
   const later = Number(inside("__later.length"));
   for (let i = 0; i < later; i++) run(() => inside("__later[" + i + "]()"), " when it draws");
 } finally {
-  port.postMessage([...new Set(found)]);
-  Atomics.store(signal, 0, 1);
-  Atomics.notify(signal, 0);
+  require("node:worker_threads").parentPort.postMessage([...new Set(found)]);
 }
 `;
 
-/** Each name page.html's scripts (each one that parses, in order) use without declaring, found by
- *  running them once, in order, against a stand-in browser, the way a page loads: each component
- *  is mounted and drawn, and each onchange called. What a stand-in can't decide (a TypeError)
- *  isn't judged, nor a script or draw that runs too long, nor a check that doesn't end in time. */
-function unknownNames(scripts: string[]): string[] {
-  const signal = new Int32Array(new SharedArrayBuffer(4));
-  const { port1, port2 } = new MessageChannel();
+/** Each name page.html's scripts use without declaring, found by running them once, in order,
+ *  against a stand-in browser, the way a page loads: each component is mounted and drawn, and each
+ *  onchange called. What a stand-in can't decide (a TypeError) isn't judged, nor a script or draw
+ *  that runs too long, nor a check that doesn't end in time. The call waits for the worker; the
+ *  process goes on meanwhile. */
+function unknownNames(scripts: string[]): Promise<string[]> {
   const worker = new Worker(CHECKER, {
     eval: true,
-    workerData: { scripts, browser: [...BROWSER], ms: CHECK_MS, signal, port: port2 },
-    transferList: [port2],
+    workerData: { scripts, browser: [...BROWSER], ms: CHECK_MS },
     resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 16 },
     stdout: true,
     stderr: true,
   });
-  try {
-    // The skill's call waits here, as it waited for the check before; the worker can't hold it
-    // longer than CHECK_ALL_MS.
-    Atomics.wait(signal, 0, 0, CHECK_ALL_MS);
-    return (receiveMessageOnPort(port1)?.message as string[] | undefined) ?? [];
-  } finally {
-    port1.close();
-    void worker.terminate();
-  }
+  return new Promise<string[]>((resolve) => {
+    const timer = setTimeout(() => resolve([]), CHECK_ALL_MS);
+    const done = (found: string[]) => (clearTimeout(timer), resolve(found));
+    worker.once("message", done);
+    worker.once("error", () => done([]));
+    worker.once("exit", () => done([]));
+  }).finally(() => void worker.terminate());
 }
 
 /** Advice when page.html sets colours of its own (#fff, rgb(...)) outside a var() fallback: one of
@@ -438,24 +435,24 @@ const idsOf = (page: string): string[] => [...page.replace(/<script[\s\S]*?<\/sc
 /** Why `page` can't be an app's page.html: every problem, empty when it can. With no browser here
  *  to load the page, each inline script is parsed, and each part the markup holds must have its
  *  App.mount, which a script that doesn't parse or a lost script would leave blank. */
-export function pageProblems(page: unknown): string[] {
+export async function pageProblems(page: unknown): Promise<string[]> {
   if (typeof page !== "string") return ["page.html must be HTML text"];
   const out: string[] = [];
   if (Buffer.byteLength(page) > 1 << 20) out.push("page.html is at most 1 MB");
   if (!page.includes(RUNTIME_TAG)) out.push(`page.html must load the runtime: ${RUNTIME_TAG}`);
   if (page.split(PLACEHOLDER).length !== 2) out.push(`page.html must start the app once: App.start(${PLACEHOLDER})`);
   const scripts = scriptsOf(page);
-  const compiled = scripts.map((code, i) => {
+  let parses = true; // a script that doesn't parse can't be run
+  scripts.forEach((code, i) => {
     try {
-      return new vm.Script(code, { filename: `script${i + 1}` });
+      new vm.Script(code, { filename: `script${i + 1}` });
     } catch (e) {
+      parses = false;
       const err = e as Error;
       const line = code.split("\n")[(Number(/script\d+:(\d+)/.exec(err.stack ?? "")?.[1]) || 1) - 1]?.trim();
       out.push(`page.html's script ${i + 1} of ${scripts.length} doesn't parse: ${err.message}${line ? ` at: ${line}` : ""}`);
-      return null;
     }
   });
-  const parsed = !out.length; // a script that doesn't parse can't be run
   const refs = new Set([...page.matchAll(/data-ref="([^"]+)"/g)].map((m) => m[1]));
   const asked = [...new Set(scripts.flatMap((code) => [...code.matchAll(/\bq\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1])))].filter((r) => !refs.has(r));
   if (asked.length)
@@ -471,7 +468,7 @@ export function pageProblems(page: unknown): string[] {
     const lost = [...new Set([...all.matchAll(/\$\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]))].filter((id) => !known.has(id));
     if (lost.length && !/\bid\s*[:=]|setAttribute\(\s*["']id["']/.test(all)) out.push(`page.html's scripts look up ${lost.map((id) => `$("${id}")`).join(", ")}, but no element has ${lost.map((id) => `id="${id}"`).join(", ")}`);
   }
-  if (parsed) out.push(...unknownNames(scripts));
+  if (parses) out.push(...(await unknownNames(scripts)));
   const names = scripts.flatMap((code) => [...code.matchAll(/App\.mount\(\s*["']([^"']+)["']/g)].map((m) => m[1]));
   const twice = repeats(names);
   if (twice.length) out.push(`page.html has the script for ${twice.join(", ")} more than once: each component's script goes in once`);
