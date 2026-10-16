@@ -211,3 +211,10 @@ Repo-wide decisions and their reasons. A part's own notes live beside this file,
 - **Taken out of `main`, kept on the branch `archive/memory-skill`** (its last commit there is the suite as it was with the skill). It wrote into AnythingLLM's own vector database through its server modules, it had not been called by a real agent, and AnythingLLM 1.16 has memory of its own (the default-on `rag-memory` tool, and workspace Memories filled by background extraction), so it overlapped the built-ins and leaned on internals.
 - **If it comes back,** the plan discussed was a skill independent of the built-ins: its facts in its own file as before, its vectors in a file of its own searched directly, embeddings from the developer API's `POST /v1/openai/embeddings` (AnythingLLM's chosen embedder, with a developer key), and keyword search when no key is set.
 - **The live instance** keeps its data (`memory-lean/` in the storage) whatever happens to the skill; `install` doesn't take out a skill it no longer carries.
+
+## A notebook in the memory skill's place, 2026-10-16
+
+- **`packages/skills/notebook`** (hubId `notebook-lean`): short notes the agent writes at its own judgement and every chat and scheduled job reads, in one JSON file (`<storage>/notebook-lean/notebook.json`) changed under `#shared/atomic`'s lock. Four actions: `read` (the newest, or by a query's words), `write`, `edit`, `delete`. About 120 lines.
+- **Leaner than the memory skill on purpose:** no embedder or vectors (a query matches words, so a paraphrase can miss; the agent can try other words), no scopes (one notebook for the instance, so no `invocation` is read), no two-call `apply`, no kinds, tags or revisions. Of AnythingLLM it needs only `STORAGE_DIR`.
+- **Not done:** showing notes in the skill's description, as the library lists its functions. If the evals show agents don't think to read the notebook, that's the first thing to try.
+- **Tried:** the bundle on the 1.16 image's Node 18.20.8 (write, read by words, edit, delete). Not tried: a real agent choosing what to write.
