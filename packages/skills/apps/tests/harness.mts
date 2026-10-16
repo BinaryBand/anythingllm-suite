@@ -143,3 +143,6 @@ export function definitionFor(sample = "list", { title }: { title?: string } = {
   if (!base) throw new Error(`sample is one of ${Object.keys(SAMPLES).join(", ")}`);
   return { ...structuredClone(base), ...(title ? { title } : {}) };
 }
+
+/** Calls the skill as a scheduled job does: AnythingLLM gives it no workspace. */
+export const asJob = (params: Record<string, unknown>): Promise<string> => handler().call({ super: { handlerProps: { invocation: { workspace: null } } }, runtimeArgs: {} }, params);

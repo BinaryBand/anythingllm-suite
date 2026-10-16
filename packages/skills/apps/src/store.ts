@@ -84,6 +84,7 @@ function definitionProblems(app: Json): string[] {
     if (app.card.items !== undefined && (typeof app.card.items !== "string" || !app.card.items.startsWith("/"))) out.push("card.items: a pointer to a list, such as /items");
   }
   if (app.icon !== undefined && typeof app.icon !== "string") out.push("icon: a name");
+  if (app.jobs !== undefined && typeof app.jobs !== "boolean") out.push("jobs: true lets a scheduled job change the data with do");
   if (app.page !== undefined) out.push(...pageProblems(app.page));
   if (unknown && !unknown.length) out.push(...problems(app.data, app.schema).map((p) => `data ${p}`));
   return out;
@@ -354,9 +355,19 @@ export function workspaces(): string[] {
   }
 }
 
+/** How many deleted apps the trash keeps, the newest. */
+export const TRASH_KEPT = 20;
+const trash = (): string => path.join(root(), ".trash");
+
+/** Takes the app out of its workspace into the trash, which keeps the newest TRASH_KEPT: a delete
+ *  the user didn't mean can be put back by hand. */
 export async function remove(workspace: string, name: unknown): Promise<void> {
   return withLock(workspace, name, () => {
     read(workspace, name);
-    fs.rmSync(fileOf(workspace, name));
+    fs.mkdirSync(trash(), { recursive: true });
+    // Named by when it was deleted, to the millisecond, so the trash's names sort oldest first.
+    fs.renameSync(fileOf(workspace, name), path.join(trash(), `${String(Date.now()).padStart(13, "0")}-${workspace}-${name}.json`));
+    const kept = fs.readdirSync(trash()).filter((f) => f.endsWith(".json")).sort();
+    for (const f of kept.slice(0, Math.max(0, kept.length - TRASH_KEPT))) fs.rmSync(path.join(trash(), f), { force: true });
   });
 }

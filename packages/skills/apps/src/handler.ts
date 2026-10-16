@@ -150,7 +150,7 @@ const ACTIONS: Record<string, Action> = {
   do: async ({ workspace, thread }, p, self) => {
     const patch = asJson(p.patch, "patch");
     const fields = asJson(p.fields, "fields");
-    const app = await store.change(workspace, p.name, { patch, ev: p.ev, fields, thread });
+    const app = await store.change(workspace, p.name, { patch, ev: p.ev, fields, thread, by: workspaceOf(self) === null ? "job" : undefined });
     return [`Done: ${app.history[app.history.length - 1].ev} on ${app.name}.`, ...cardOf(self, app)].join("\n");
   },
   read: ({ workspace }, p, self) => {
@@ -213,7 +213,7 @@ const ACTIONS: Record<string, Action> = {
     }
     await store.remove(workspace, app.name);
     unpublish(app);
-    return `Deleted the app ${app.name}, its changes and its page.`;
+    return `Deleted the app ${app.name}, its changes and its page. It's kept in AnythingLLM's storage for now, under apps-lean/.trash, if the user wants it back.`;
   },
   guide: (_scope, p) => {
     const topic = String(p.query || "").trim();
@@ -226,6 +226,28 @@ const ACTIONS: Record<string, Action> = {
   },
 };
 
+/** What a scheduled job may do in a workspace it names: read, and change the data of an app that
+ *  takes it. A job's prompt is the user's, but what it reads on the way (a mail, a page) isn't, so
+ *  a job can't make, rewrite, take back or delete a workspace's app, or write a page's script. */
+const JOB_IN_A_WORKSPACE = new Set(["list", "read", "do", "guide"]);
+
+/** The workspace a call works on: AnythingLLM's for a chat; for a scheduled job, which AnythingLLM
+ *  gives none, its own (_jobs) or one it names, within JOB_IN_A_WORKSPACE. Throws what it may not do. */
+function scopeFor(self: HandlerContext, action: string, p: Args): Scope {
+  const job = workspaceOf(self) === null;
+  const named = typeof p.workspace === "string" && p.workspace.trim() ? p.workspace.trim() : null;
+  if (!job) {
+    if (named) throw new AppError("workspace is for a scheduled job: a chat works on its own workspace's apps, so leave it out");
+    return scopeOf(self);
+  }
+  if (action === "delete") throw new AppError("a scheduled job can't delete an app: the user deletes one from a chat");
+  if (!named) return scopeOf(self);
+  if (!JOB_IN_A_WORKSPACE.has(action)) throw new AppError(`a scheduled job may list, read and do in a workspace it names, not ${action}: ask the user to do that from a chat`);
+  if (action === "do" && store.read(named, p.name).jobs !== true)
+    throw new AppError(`${p.name} doesn't take changes from scheduled jobs: the user lets it from a chat, where its app.json gets "jobs": true`);
+  return { workspace: named };
+}
+
 /** Actions that change an app named in the call, after which its page is written again. */
 const CHANGES = new Set(["do", "undo", "edit"]);
 
@@ -233,7 +255,7 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   const action = params.action || "list";
   const act = Object.hasOwn(ACTIONS, action) ? ACTIONS[action] : undefined;
   if (!act) throw new AppError(`action is one of ${Object.keys(ACTIONS).join(", ")}`);
-  const scope = scopeOf(self);
+  const scope = scopeFor(self, action, params);
   // One key for every page a call writes, asked for when the first needs it.
   let asked: Promise<string> | undefined;
   const key = () => (asked ??= keyForPages());

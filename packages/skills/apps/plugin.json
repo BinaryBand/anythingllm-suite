@@ -37,6 +37,10 @@
         "description": "The app's name, e.g. groceries.",
         "type": "string"
       },
+      "workspace": {
+        "description": "Scheduled job only: the app's workspace.",
+        "type": "string"
+      },
       "title": {
         "description": "For create: the title.",
         "type": "string"
@@ -74,7 +78,7 @@
         "type": "object"
       },
       "file": {
-        "description": "app.json or page.html. read without it gives the data and changes; undo with it takes back that file's newest change.",
+        "description": "app.json or page.html: read gives it; undo takes back its newest change.",
         "type": "string"
       },
       "text": {
@@ -82,7 +86,7 @@
         "type": "string"
       },
       "find": {
-        "description": "For edit: text found exactly once; leave it out to replace the whole file.",
+        "description": "For edit: text found exactly once; none replaces the whole file.",
         "type": "string"
       },
       "query": {

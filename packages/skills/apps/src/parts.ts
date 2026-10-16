@@ -27,7 +27,7 @@ export const tag = (name: string): string => (name.endsWith(".js") ? `<script sr
 export const RUNTIME_TAG = tag("app.js");
 
 /** app.json's keys; the data is changed with do. */
-export const DEFINITION = ["title", "about", "rules", "schema", "card", "icon"];
+export const DEFINITION = ["title", "about", "rules", "schema", "card", "icon", "jobs"];
 /** Topic names that mean another: the libraries by their file names. */
 const ALIASES: Record<string, string> = { "app.js": "runtime", "app.css": "styles", icon: "icons" };
 

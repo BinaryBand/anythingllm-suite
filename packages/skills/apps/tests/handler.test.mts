@@ -63,7 +63,7 @@ test("delete asks for approval through AnythingLLM and keeps the app when refuse
   assert.equal(await handler().call(refusing, { action: "delete", name: "temp" }), "The user kept temp.");
   assert.equal(asked[0].description, "Delete the app List and its changes?");
   const approving = { ...inWorkspace("home"), requestToolApproval: async () => ({ approved: true }) };
-  assert.equal(await handler().call(approving, { action: "delete", name: "temp" }), "Deleted the app temp, its changes and its page.");
+  assert.match(await handler().call(approving, { action: "delete", name: "temp" }), /^Deleted the app temp, its changes and its page\. It's kept/);
   assert.equal((await call("home", { action: "list" })).includes("- temp:"), false);
 });
 

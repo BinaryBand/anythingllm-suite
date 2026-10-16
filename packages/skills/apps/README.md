@@ -11,7 +11,7 @@ Small apps a user keeps in a workspace, such as a shopping list, daily habits or
 | `edit` | `app.json` or `page.html`: replaces text found exactly once (`find`), or with no `find` the whole file |
 | `undo` | takes back the newest change, to the data or a file; with `file`, that file's newest change |
 | `page` | publishes the app's page; the card's title is its link |
-| `delete` | removes the app, after AnythingLLM's approval prompt where it has one |
+| `delete` | moves the app to the trash, after AnythingLLM's approval prompt where it has one; never in a scheduled job |
 | `guide` | this edition's notes, the starters, the parts and design rules; with `query`, each topic or part it names |
 
 ## Where it keeps things
@@ -30,6 +30,8 @@ Small apps a user keeps in a workspace, such as a shopping list, daily habits or
 `anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Apps under Agent Skills. Each app's page is published as it's made; set Apps' ANYTHINGLLM_URL to the address your browser and phone reach AnythingLLM at, so the card's link opens from anywhere rather than only from AnythingLLM's own chat. Where the public folder can't be written (AnythingLLM Desktop), apps work from the chat and have no page.
 
 Taps reach the app as they land: the skill watches where AnythingLLM's collector writes what pages post, from its first call after AnythingLLM starts until AnythingLLM stops (not in a scheduled job, whose process ends within minutes), and each workspace's next chat call is told what its pages did. Until that first call, taps show on the device that made them and reach the app at the call. Where the folder watch doesn't see changes (Docker Desktop's bind mounts on macOS and Windows), a 30 s poll does.
+
+To keep an app up on a schedule, ask the agent ("every morning at 6, put a new puzzle in it"): it lets the app take a job's changes (app.json's `"jobs": true`) and adds an AnythingLLM scheduled job with the tool `@@apps-lean` (guide topic `schedules`). A job has no workspace of its own, so it names the app's; in a workspace it names it can only list, read and change the data of an app that takes it, never make, rewrite, take back or delete one. A deleted app is kept under `apps-lean/.trash/` (the newest 20) in case it was a mistake.
 
 A page posts each change with its app's secret, and the skill applies it to that app alone, so one app's link changes no other. An app from before apps had a secret takes its page's events until it gets one; once per process the skill writes again every page an older skill or older parts made, which also gives those apps their secret.
 
