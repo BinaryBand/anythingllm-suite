@@ -16,7 +16,7 @@
       "answer": {}
     },
     {
-      "say": "Done. Which email am I signed in with?"
+      "say": "Done. Yes, allow it if it asks. Which email am I signed in with?"
     }
   ],
   "expect": {
