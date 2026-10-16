@@ -45,6 +45,14 @@ export interface Grade {
   checks: Check[];
 }
 
+/** Why no later case could do better, from a case that ended as infra, or null: the model's plan has
+ *  run out, or the instance stopped answering. A per-minute rate limit or a slow turn isn't one, since
+ *  the next case may get through. */
+export function stopsRun(g: Grade): string | null {
+  const why = g.status === "infra" ? (g.checks[0]?.detail ?? "") : "";
+  return /limit exhausted|insufficient (balance|funds|credit)|exceeded your current quota|stopped answering/i.test(why) ? why.slice(0, 240) : null;
+}
+
 /** Whether `value` matches `want`: equal, a "/pattern/" against a string, or (objects) every key of want. */
 export function matches(value: unknown, want: unknown): boolean {
   if (typeof want === "string" && /^\/.*\/[a-z]*$/.test(want)) {

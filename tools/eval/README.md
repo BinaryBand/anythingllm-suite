@@ -42,6 +42,12 @@ Needs podman or docker, Node 22.18 or later, the lab running with its public nam
 6. **Results** go to `tools/eval/results/<run>/` (ignored): `records.jsonl` (every turn, call, reply
    and check) and `report.md`. The run's lab accounts are removed and the instance stopped, unless
    `--keep`.
+7. **A run that can't go on stops, and still reports.** Opening a case's workspace is tried three
+   times before the instance counts as gone. When the model's plan has run out (a "Limit Exhausted"
+   answer) or the instance stopped answering, no later case could do better: the run stops (printing
+   the container's last lines when the instance is the cause), writes the report with the cases it
+   didn't run listed, and exits 1. A case whose setup fails is infra, not a crash; a failed build or install
+   shows its error.
 
 ## A case
 

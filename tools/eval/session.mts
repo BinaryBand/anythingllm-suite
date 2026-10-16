@@ -44,6 +44,23 @@ export function parseCall(line: string): Call | null {
 /** A reply without its thinking (<think>…</think>, which the interface folds away). */
 export const visibleText = (text: string): string => text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 
+/** A request that is tried again when the connection drops: a server closing an idle connection as a
+ *  request goes out looks like a server that has gone, and only a second try tells them apart. After
+ *  `tries` the error says the instance stopped answering, which ends the run (grade.mts's stopsRun). */
+export async function request(url: string, init: RequestInit, tries = 3): Promise<Response> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      if (i >= tries) {
+        const cause = e instanceof Error && e.cause instanceof Error ? ` (${e.cause.message})` : "";
+        throw new Error(`the instance stopped answering: ${e instanceof Error ? e.message : String(e)}${cause}, after ${tries} tries`);
+      }
+      await new Promise((r) => setTimeout(r, 1000 * i));
+    }
+  }
+}
+
 /** The last tab's page a reply links, or null. */
 export const tabOf = (text: string): string | null => [...text.matchAll(TAB)].pop()?.[1] ?? null;
 
@@ -72,7 +89,7 @@ export class Session {
   static async open(at: Instance, name: string, turnMs = 300_000): Promise<Session> {
     const v1 = { Authorization: `Bearer ${at.key}`, "Content-Type": "application/json" };
     const post = async (route: string, body: object) => {
-      const r = await fetch(`${at.url}/api/v1${route}`, { method: "POST", headers: v1, body: JSON.stringify(body) });
+      const r = await request(`${at.url}/api/v1${route}`, { method: "POST", headers: v1, body: JSON.stringify(body) });
       if (!r.ok) throw new Error(`tools/eval: POST ${route}: ${r.status}`);
       return r.json();
     };

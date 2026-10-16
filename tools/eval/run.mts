@@ -28,7 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { type CaseRecord, type Expect, grade } from "./grade.mts";
+import { type CaseRecord, type Expect, grade, stopsRun } from "./grade.mts";
 import { type Instance, ROOT, actor, forgetLogins, start, tabOfWorkspace } from "./instance.mts";
 import * as lab from "./lab.mts";
 import { Session } from "./session.mts";
@@ -104,11 +104,12 @@ async function runCase(at: Instance, c: Case, run: string, rep: number, accounts
   if (a) accounts.set(c.name, a);
   const vars: Record<string, string> = { url: lab.urlOf(c.site), email: a?.email ?? "", pass: a?.pass ?? "", name: a?.name ?? "", phone: a?.phone ?? "" };
   for (const m of JSON.stringify(c.steps).matchAll(/\$url_(\w+)/g)) vars[`url_${m[1]}`] = lab.urlOf(m[1]);
-  if (!c.after) await forgetLogins(at, [...new Set([c.site, ...(typeof c.account === "string" && c.account !== "new" ? [c.account] : [])])].map((s) => new URL(lab.urlOf(s)).host));
 
   const record: CaseRecord & { expect: Expect; account?: string } = { name: c.name, turns: [], asked: [], lab: {}, secrets: a ? [a.pass] : [], seconds: 0, account: a?.email, expect: fillAll(c.expect, vars) as Expect };
-  const session = await Session.open(at, `eval ${c.name} ${rep}`);
+  let session: Session | undefined;
   try {
+    if (!c.after) await forgetLogins(at, [...new Set([c.site, ...(typeof c.account === "string" && c.account !== "new" ? [c.account] : [])])].map((s) => new URL(lab.urlOf(s)).host));
+    session = await Session.open(at, `eval ${c.name} ${rep}`);
     for (const step of c.steps.map((s) => fillAll(s, vars) as Record<string, any>)) {
       if (step.say) {
         log(c.name, `> ${step.say}`);
@@ -152,9 +153,9 @@ async function runCase(at: Instance, c: Case, run: string, rep: number, accounts
   } catch (e) {
     record.error = e instanceof Error ? e.message : String(e);
   } finally {
-    session.close();
+    session?.close();
   }
-  record.turns = session.turns;
+  record.turns = session?.turns ?? [];
   record.seconds = Math.round((Date.now() - Date.parse(started)) / 1000);
   if (a && c.expect.signedIn !== undefined) {
     const site = typeof c.expect.signedIn === "object" ? c.expect.signedIn.site : c.site;
@@ -206,20 +207,33 @@ console.log(`tools/eval: run ${run}, ${jobs.flat().length} cases in ${jobs.lengt
 const at = await start();
 console.log(`tools/eval: AnythingLLM at ${at.url} (${at.name})`);
 const results: (CaseRecord & { grade: ReturnType<typeof grade> })[] = [];
+/** Why the run ended early (the model's plan ran out, the instance went away), or null. */
+let stopped = null as string | null;
 try {
   const work = Array.from({ length: Number(opts.repeat) }, (_, rep) =>
     jobs.map((job) => ({ sites: sitesOf(job), run: async () => {
       const accounts = new Map<string, lab.Account>();
       for (const c of job) {
+        if (stopped) return;
         const r = await runCase(at, c, run, rep + 1, accounts);
         const g = grade(r, r.expect);
         results.push({ ...r, grade: g });
         fs.appendFileSync(path.join(out, "records.jsonl"), JSON.stringify({ ...r, repeat: rep + 1, grade: g }) + "\n");
         log(c.name, `${g.status.toUpperCase()}${g.status === "pass" ? "" : ": " + g.checks.filter((k) => !k.ok).map((k) => k.name + (k.detail ? ` (${k.detail})` : "")).join("; ")}`);
+        const why = stopsRun(g);
+        if (why && !stopped) {
+          stopped = why;
+          console.log(`tools/eval: stopping, no later case could do better: ${why}`);
+          if (/stopped answering/.test(why)) console.log(`tools/eval: the container's last lines:\n${at.logs()}`);
+        }
       }
     } })),
   ).flat();
   await pool(work, Number(opts.parallel));
+} catch (e) {
+  // A fault in the harness itself: the report still gets written, with what finished.
+  console.error(e);
+  stopped ??= `the harness failed: ${e instanceof Error ? e.message : String(e)}`;
 } finally {
   at.stop(opts.keep);
   if (opts.keep) console.log(`tools/eval: kept the run's storage (${at.storage}) and its lab accounts (eval-${run}-…)`);
@@ -236,7 +250,9 @@ const rows = [...byCase].sort(([x], [y]) => x.localeCompare(y)).map(([name, rs])
   const calls = Math.round(rs.reduce((n, r) => n + r.turns.flatMap((t) => t.calls).length, 0) / rs.length);
   return `| ${name} | ${pass}/${rs.length - infra}${infra ? ` (+${infra} infra)` : ""} | ${calls} | ${Math.round(rs.reduce((n, r) => n + r.seconds, 0) / rs.length)} s | ${why} |`;
 });
-const report = [`# Eval run ${run}`, "", `${new Date().toISOString()}, AnythingLLM ${at.url}, ${opts.repeat}× each.`, "", "| Case | Passed | Calls | Time | Failed checks |", "| --- | --- | --- | --- | --- |", ...rows, ""].join("\n");
+const notRun = jobs.flat().map((c) => c.name).filter((n) => !byCase.has(n));
+const early = stopped ? ["", `**Stopped early:** ${stopped}`, "", `Not run (${notRun.length}): ${notRun.join(", ") || "none"}`, ""] : [];
+const report = [`# Eval run ${run}`, "", `${new Date().toISOString()}, AnythingLLM ${at.url}, ${opts.repeat}× each.`, "", "| Case | Passed | Calls | Time | Failed checks |", "| --- | --- | --- | --- | --- |", ...rows, ...early, ""].join("\n");
 fs.writeFileSync(path.join(out, "report.md"), report);
 console.log("\n" + report + `\nRecords: ${path.relative(ROOT, out)}/records.jsonl`);
-process.exit(results.every((r) => r.grade.status !== "fail") ? 0 : 1);
+process.exit(!stopped && results.every((r) => r.grade.status !== "fail") ? 0 : 1);

@@ -3,8 +3,9 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { type CaseRecord, grade, matches } from "./grade.mts";
-import { parseCall, tabOf, visibleText } from "./session.mts";
+import http from "node:http";
+import { type CaseRecord, grade, matches, stopsRun } from "./grade.mts";
+import { parseCall, request, tabOf, visibleText } from "./session.mts";
 
 test("a tool call is read from AnythingLLM's status line, as 1.16 words it", () => {
   assert.deepEqual(parseCall('@agent is executing `browser-lean` tool {\n  "action": "login",\n  "pass_ref": "e5"\n}'), { tool: "browser-lean", args: { action: "login", pass_ref: "e5" } });
@@ -44,4 +45,26 @@ test("a secret written, a reply that's only the card, and a call repeated are fa
 test("a rate limit or a turn that timed out is infra, not a failure", () => {
   assert.equal(grade(record({ turns: [turn([], [], "timeout")] }), { signedIn: true }).status, "infra");
   assert.equal(grade(record({ turns: [{ ...turn(["x"]), status: ["Error: 429 Rate limit reached"] }] }), {}).status, "infra");
+});
+
+test("a run goes on after a rate limit, and stops when the plan has run out or the instance is gone", () => {
+  const g = (status: string) => grade(record({ turns: [{ ...turn(["x"]), status: [status] }] }), {});
+  assert.equal(stopsRun(g("Error: 429 Rate limit reached for requests")), null);
+  assert.match(stopsRun(g("The agent model failed to respond: 429 Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-10-19"))!, /Limit Exhausted/);
+  assert.match(stopsRun(grade(record({ error: "the instance stopped answering: fetch failed (other side closed), after 3 tries" }), {}))!, /stopped answering/);
+  assert.equal(stopsRun(grade(record({ turns: [turn(["Signed in as x"])] }), {})), null);
+});
+
+test("a request is tried again when the server drops the connection, and says so when it stays gone", async () => {
+  let hits = 0;
+  const server = http.createServer((req, res) => (++hits === 1 ? req.socket.destroy() : res.end("ok")));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+  try {
+    assert.equal(await (await request(url, {}, 2)).text(), "ok");
+    assert.equal(hits, 2);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+  await assert.rejects(request(url, {}, 2), /the instance stopped answering: .* after 2 tries/);
 });

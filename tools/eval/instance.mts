@@ -4,7 +4,7 @@
 // when the run starts and kept only in the run's folder, which stop() empties. The vault's key is a
 // file both sides share (VAULT_KEY_FILE), so the harness can clear saved logins between cases.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -38,6 +38,8 @@ export interface Instance {
   storage: string;
   /** The vault's key, outside the storage, as VAULT_KEY_FILE names it. */
   keyFile: string;
+  /** The last lines the container wrote (for when the instance stopped answering). */
+  logs(tail?: number): string;
   /** Stops the container and removes the run's folder (the copied settings, the key, the storage);
    *  with `keep`, the folder stays, for looking into. */
   stop(keep?: boolean): void;
@@ -116,6 +118,10 @@ export async function start({ env = "/srv/anythingllm/storage/.env", work = fs.m
     "--env-file", envFile, versions.IMAGE,
   ], { stdio: ["ignore", "ignore", "inherit"] });
   const url = `http://127.0.0.1:${port}`;
+  const logs = (tail = 40) => {
+    const r = spawnSync(run, ["logs", "--tail", String(tail), name], { encoding: "utf8" });
+    return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
+  };
   const stop = (keep = false) => {
     try {
       execFileSync(run, ["stop", "-t", "5", name], { stdio: "ignore" });
@@ -124,12 +130,12 @@ export async function start({ env = "/srv/anythingllm/storage/.env", work = fs.m
   };
   try {
     await waitFor(`${url}/api/ping`, "AnythingLLM");
-    execFileSync("node", ["build.mjs", "bridge"], { cwd: path.join(ROOT, "packages"), stdio: "ignore" });
-    execFileSync("node", [path.join(ROOT, "packages/bridge/dist/anythingllm-suite.cjs"), "install", "--storage", storage, "--roles", "chat,schedule", "--skills", "all"], { env: { ...process.env, ANYTHINGLLM_URL: url }, stdio: "ignore" });
+    execFileSync("node", ["build.mjs", "bridge"], { cwd: path.join(ROOT, "packages"), stdio: ["ignore", "ignore", "pipe"] });
+    execFileSync("node", [path.join(ROOT, "packages/bridge/dist/anythingllm-suite.cjs"), "install", "--storage", storage, "--roles", "chat,schedule", "--skills", "all"], { env: { ...process.env, ANYTHINGLLM_URL: url }, stdio: ["ignore", "ignore", "pipe"] });
     const headers = { "Content-Type": "application/json" };
     const { token } = await json(`${url}/api/request-token`, { method: "POST", headers, body: JSON.stringify({ password }) });
     const { apiKey } = await json(`${url}/api/system/generate-api-key`, { method: "POST", headers: { ...headers, Authorization: `Bearer ${token}` }, body: JSON.stringify({ name: "eval" }) });
-    return { name, url, key: apiKey.secret, token, storage, keyFile, stop };
+    return { name, url, key: apiKey.secret, token, storage, keyFile, logs, stop };
   } catch (e) {
     stop();
     throw e;
