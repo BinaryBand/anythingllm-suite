@@ -76,11 +76,12 @@ export function removeRun(run: string): number {
 }
 
 /** The code the tab's page asks for, by its wording: the authenticator's now, else the latest unused
- *  one the site sent to the account's phone or email. */
+ *  one the site sent to the account's phone or email (either, when the wording doesn't say, as the
+ *  person would look in both). */
 export function codeFor(a: Account, asked: string): string {
   if (/authenticator/i.test(asked)) return a.totp ? authenticator.generate(a.totp) : "";
-  const to = /phone|sms|text/i.test(asked) ? a.phone : a.email;
-  const row = db.prepare("SELECT code FROM outbox WHERE site = ? AND recipient = ? AND used = 0 ORDER BY id DESC LIMIT 1").get(a.site, to) as { code: string } | undefined;
+  const to = /phone|sms|text/i.test(asked) ? [a.phone] : /email/i.test(asked) ? [a.email] : [a.email, a.phone];
+  const row = db.prepare("SELECT code FROM outbox WHERE site = ? AND recipient IN (?, ?) AND used = 0 ORDER BY id DESC LIMIT 1").get(a.site, to[0] ?? "", to[1] ?? to[0] ?? "") as { code: string } | undefined;
   return row?.code ?? "";
 }
 

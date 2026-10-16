@@ -4,7 +4,7 @@
   "account": "idp",
   "steps": [
     {
-      "say": "@agent sign in to $url with my Lumen ID account and tell me who I'm signed in as"
+      "say": "@agent sign in to $url with my Lumen ID account and tell me which email I'm signed in with"
     },
     {
       "answer": {}
@@ -16,7 +16,7 @@
       "answer": {}
     },
     {
-      "say": "Done. Who am I signed in as?"
+      "say": "Done. Which email am I signed in with?"
     }
   ],
   "expect": {

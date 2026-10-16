@@ -1,10 +1,11 @@
 // The page as the agent reads it (view.ts): its visible interactive elements, each tagged with a ref
 // (data-bw-ref) that act targets, then its visible text. A ref stays with its element for the life
 // of the page, so refs from an earlier read still work while the element is there. Open shadow
-// roots are walked; frames aren't. A password field is marked (data-bw-secret) and stays one in
-// every read after, even once "Show password" makes it a text field. It also gives where each field
-// one types into sits in view, for the tab's page to put an input over while the user holds the
-// tab. `snapshot` runs in the page (page.evaluate), so it uses nothing outside itself.
+// roots are walked; frames aren't. An open modal dialog's elements come first, and those behind it
+// say so. A password field is marked (data-bw-secret) and stays one in every read after, even once
+// "Show password" makes it a text field. It also gives where each field one types into sits in
+// view, for the tab's page to put an input over while the user holds the tab. `snapshot` runs in
+// the page (page.evaluate), so it uses nothing outside itself.
 
 import type { Page } from "./host";
 import { firstLine } from "./state";
@@ -65,6 +66,10 @@ function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTy
         "",
       80,
     );
+  // An open modal dialog (a cookie one, say): its elements are listed first, and those behind it
+  // (made inert, or outside a modal) are marked, since a click or typing there doesn't reach them.
+  const modal = [...document.querySelectorAll('dialog[open], [aria-modal="true"]')].find((d: any) => !d.closest("[inert]") && visible(d) && (d.getAttribute("aria-modal") === "true" || d.matches(":modal")));
+  const behind = (el: any) => !!el.closest("[inert]") || (modal && !modal.contains(el));
   // A password field (or one that says it takes a password) is marked, and stays one once read,
   // even after "Show password" makes it a text field: act.ts's isPassword reads the mark.
   const secret = (el: any) => el.getAttribute("data-bw-secret") === "1";
@@ -91,6 +96,7 @@ function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTy
       line += ` options: ${options.join(" | ")}${el.options.length > 12 ? " | …" : ""}`;
     }
     if (el.disabled || el.getAttribute("aria-disabled") === "true") line += " (disabled)";
+    if (behind(el)) line += " (behind a dialog)";
     return line;
   };
   const MAX_FIELDS = 60;
@@ -105,11 +111,13 @@ function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTy
   let next: number = window.__bwNext || 1;
   const lines: string[] = [];
   const fields: Field[] = [];
+  const seen = new Set();
   const walk = (root: any) => {
     for (const el of root.querySelectorAll("*")) {
       if (el.shadowRoot) walk(el.shadowRoot);
       if (lines.length >= maxElements) return;
-      if (!interactive(el) || !visible(el)) continue;
+      if (seen.has(el) || !interactive(el) || !visible(el)) continue;
+      seen.add(el);
       let ref = el.getAttribute("data-bw-ref");
       if (!ref) {
         ref = `e${next++}`;
@@ -121,6 +129,7 @@ function snapshot({ snapshot: maxElements, notTyped }: { snapshot: number; notTy
       if (f && fields.length < MAX_FIELDS) fields.push(f);
     }
   };
+  if (modal) walk(modal);
   walk(document);
   window.__bwNext = next;
   const text = String(document.body ? document.body.innerText : "")
@@ -140,6 +149,16 @@ export const isPasswordLine = (line: string): boolean => line.includes("input[pa
 
 /** Whether the page as read asks for a password. */
 export const asksPassword = (snap: Snap): boolean => snap.elements.some(isPasswordLine);
+
+/** Whether the page as read has a field for a code (a one-time, verification or authenticator code). */
+export const asksCode = (snap: Snap): boolean => snap.elements.some((l) => /^\[e\d+\] input\[(text|tel|number)\] "[^"]*\b(code|one-time|otp|passcode|verification)/i.test(l));
+
+/** The line of a read for `ref`, if it has one. */
+export const lineOf = (snap: Snap, ref: string): string | undefined => snap.elements.find((l) => l.startsWith(`[${ref}] `));
+
+/** What a read's line says the element is, its kind and label, without its ref or value: the same
+ *  field on a page read again, where a ref alone may name another element on a new page. */
+export const fieldOf = (line: string): string => line.match(/^\[e\d+\] (\S+ "[^"]*")/)?.[1] ?? line;
 
 /** The page now: { snap, title, url }, with a snap saying why when it can't be read. */
 export async function readPage(page: Page): Promise<{ snap: Snap; title: string; url: string }> {

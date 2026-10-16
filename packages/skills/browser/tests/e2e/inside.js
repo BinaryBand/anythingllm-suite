@@ -100,6 +100,13 @@ const server = http.createServer((req, res) => {
     if (url.pathname === "/shadow") return res.end(page("Sign in", `<sign-in></sign-in><script>customElements.define("sign-in", class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(loginForm())}; } });</script>`));
     if (url.pathname === "/show") return res.end(page("Sign in", loginForm(`<label><input type="checkbox" onchange="p.type = this.checked ? 'text' : 'password'"> Show password</label>`)));
     if (url.pathname === "/captcha") return res.end(page("Sign in", loginForm('<label>Digits in the image <input name="digits" required></label>')));
+    if (url.pathname === "/consent") return res.end(page("Sign in", `<main inert>${loginForm()}</main><div role="dialog" aria-modal="true" aria-label="Cookies on this site"><p>We use cookies.</p><button onclick="this.parentElement.remove(); document.querySelector('main').inert = false">Reject all</button><button>Accept all</button></div>`));
+    if (url.pathname === "/dob") return res.end(page("Profile", '<form><label>Date of birth <input type="date" name="dob" required></label><button disabled>Next</button></form><script>const f = document.forms[0]; f.oninput = () => (f.querySelector("button").disabled = !f.checkValidity());</script>'));
+    if (url.pathname === "/code" && req.method === "POST") {
+      if (new URLSearchParams(body).get("code") === "123456") return res.end(page("Account", '<a href="/keys">Create API key</a>'));
+      return res.end(page("Two-step", '<p>That code is wrong.</p><form method="post" action="/code"><label>Code <input name="code"></label><button>Verify</button></form>'));
+    }
+    if (url.pathname === "/code") return res.end(page("Two-step", '<p>Check your phone: we sent a code by text message.</p><form method="post" action="/code"><label>Code <input name="code"></label><button>Verify</button></form>'));
     if (url.pathname === "/signup" && req.method === "POST") {
       const form = new URLSearchParams(body);
       const ok = form.get("pass") && form.get("pass") === form.get("confirm");
@@ -233,6 +240,34 @@ const server = http.createServer((req, res) => {
   const tab14 = tabPage(14);
   assert.equal(tab14.state().need.confirm, true);
   assert.match(await tab14.post({ ev: "need-answer", user: "dana", sealed: tab14.seal("e2e-new-789"), save: true }), /Page: Welcome/, "the same password in both fields");
+
+  // ---- A cookie dialog that makes the page behind it inert, a date field, and a code taken on a
+  // new page whose first ref is something else.
+  const consent = await call({ action: "open", url: `${SITE}/consent` }, 15);
+  assert.match(consent, /Elements \(\d+\):\n\[e\d+\] button "Reject all"/, `the dialog's buttons first: ${consent}`);
+  assert.match(consent, /input\[text\] "User" \(behind a dialog\)/);
+  const login15 = { user_ref: refIn(consent, 'input\\[text\\] "User'), pass_ref: refIn(consent, "input\\[password\\]"), submit_ref: refIn(consent, 'button "Sign in"') };
+  assert.match(await call({ action: "login", ...login15 }, 15), /is behind a dialog \("Cookies on this site"; its buttons: e\d+ "Reject all", e\d+ "Accept all"\)/);
+  await call({ action: "act", do: "click", ref: refIn(consent, 'button "Reject all"') }, 15);
+  assert.match(await call({ action: "login", ...login15 }, 15), /Page: Home/, "the saved login, once the dialog is closed");
+
+  const dob = await call({ action: "open", url: `${SITE}/dob` }, 16);
+  const dobRef = refIn(dob, 'input\\[date\\]');
+  assert.match(await call({ action: "act", do: "fill", ref: dobRef, text: "05/01/1990" }, 16), /a date field takes its value as YYYY-MM-DD/);
+  const dated = await call({ action: "act", do: "fill", ref: dobRef, text: "1990-05-01" }, 16);
+  assert.match(dated, /input\[date\] "Date of birth" value="1990-05-01"/, dated);
+  assert.match(dated, /button "Next"\n/, "the page saw it: Next is enabled");
+
+  const code = await call({ action: "open", url: `${SITE}/code` }, 17);
+  const codeRef = refIn(code, 'input\\[text\\] "Code');
+  assert.match(await call({ action: "login", what: "code", ref: codeRef, submit_ref: refIn(code, 'button "Verify"') }, 17), /The code sent to your phone/);
+  const tab17 = tabPage(17);
+  const wrong = await tab17.post({ ev: "need-answer", text: "000000" });
+  assert.match(wrong, /the page still asks for the code/, "the same field after a wrong code: asked again");
+  const taken = await tab17.post({ ev: "need-answer", text: "123456" });
+  assert.match(taken, /Page: Account/, taken);
+  assert.doesNotMatch(taken, /still asks for the code/, `${codeRef} on the new page is a link, not the code field`);
+  assert.equal(tab17.state().need, null);
 
   const found = await call({ action: "search", query: "export" });
   assert.match(found, /1\. Docs for export\n {3}http:\/\/localhost:\d+\/docs/, found);

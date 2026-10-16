@@ -58,11 +58,61 @@ export const notTyped = (target: ElementHandle): Promise<string | null> =>
     return tag === "input" ? `input[${el.type}]` : tag === "a" ? "link" : tag;
   }, NOT_TYPED);
 
+/** The open dialog `target` sits behind, so a click or typing would land on the dialog or nowhere
+ *  (a cookie dialog, say, that makes the rest of the page inert): its title and buttons; else null. */
+const coverOf = (target: ElementHandle): Promise<{ title: string; buttons: string[] } | null> =>
+  target.evaluate((el) => {
+    const doc = el.ownerDocument;
+    if (!doc) return null;
+    const DIALOG = 'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"]';
+    let dialog: any = null;
+    if (el.closest("[inert]")) dialog = [...doc.querySelectorAll(DIALOG)].find((d: any) => !d.closest("[inert]") && d.getClientRects().length) ?? doc.body;
+    else {
+      const r = el.getBoundingClientRect();
+      dialog = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest?.(DIALOG) ?? null;
+      if (dialog?.contains(el)) dialog = null;
+    }
+    if (!dialog) return null;
+    const clip = (s: unknown, n: number) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
+    const labelled = dialog.getAttribute?.("aria-labelledby");
+    const title = clip(dialog.getAttribute?.("aria-label") || (labelled && doc.getElementById(labelled)?.innerText) || dialog.querySelector?.("h1, h2, h3")?.innerText, 60);
+    const buttons = [...(dialog.querySelectorAll?.('button, [role="button"], input[type="submit"], input[type="button"]') ?? [])]
+      .slice(0, 6)
+      .map((b: any) => [b.getAttribute("data-bw-ref"), `"${clip(b.innerText || b.value || b.getAttribute("aria-label"), 40)}"`].filter(Boolean).join(" "));
+    return { title, buttons };
+  });
+
+/** A BrowserError when `target` (`ref`) is behind an open dialog, naming it and its buttons. */
+export async function reachable(target: ElementHandle, ref: string): Promise<void> {
+  const cover = await coverOf(target);
+  if (!cover) return;
+  const named = [cover.title && `"${cover.title}"`, cover.buttons.length && `its buttons: ${cover.buttons.join(", ")}`].filter(Boolean).join("; ");
+  throw new BrowserError(`${ref} is behind a dialog${named ? ` (${named})` : ""}, so nothing reaches it: close the dialog first (a cookie one with the choice that shares least, unless the user said otherwise), read again, then try again`);
+}
+
+/** The input types a value is set into whole, as a picker would, rather than typed: Chrome types
+ *  them by segments, in the user's locale's order. Each with the format its value takes. */
+const SET_WHOLE: Record<string, string> = { date: "YYYY-MM-DD", time: "HH:MM", month: "YYYY-MM", week: "YYYY-Www", "datetime-local": "YYYY-MM-DDTHH:MM" };
+
 /** Replaces what's in a field with `text`, typed as a person would, so the page sees it; never
- *  anything else (filling a link would click it). */
+ *  anything else (filling a link would click it). A date or time field is set whole (SET_WHOLE). */
 export async function fill(target: ElementHandle, text: string): Promise<void> {
   const what = await notTyped(target);
   if (what) throw new BrowserError(`a ${what} isn't a field one types into`);
+  const kind: string = await target.evaluate((el) => (el.tagName === "INPUT" ? String(el.type) : ""));
+  if (SET_WHOLE[kind]) {
+    const took = await target.evaluate((el, value: string) => {
+      // Through the input's own setter, as a picker sets it, so the page's framework sees the change.
+      const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")?.set;
+      if (set) set.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return el.value;
+    }, text);
+    if (!took) throw new BrowserError(`a ${kind} field takes its value as ${SET_WHOLE[kind]}; "${text.slice(0, 40)}" isn't that`);
+    return;
+  }
   await target.click({ clickCount: 3 });
   await target.evaluate((el) => {
     if ("value" in el) el.value = "";
@@ -82,10 +132,26 @@ export async function settle(page: Page, pause = 400): Promise<void> {
 export const settled = (page: Page, action: string): Promise<void> => settle(page, NAVIGATES.has(action) ? 400 : 0);
 
 /** A field that keeps a form from being sent (empty but required, say): its ref, if a read gave it
- *  one, and its label. */
+ *  one, and its label; or, `disabled`, the submit itself, which the page keeps disabled. */
 export interface Missing {
   ref: string | null;
   label: string;
+  disabled?: boolean;
+}
+
+/** How long typeIn waits for a submit the page enables once its fields are filled (some check on a
+ *  timer rather than on input). */
+const ENABLE_MS = 1500;
+
+const isDisabled = (el: ElementHandle): Promise<boolean> => el.evaluate((e) => !!e.disabled || e.getAttribute("aria-disabled") === "true");
+
+/** Waits up to ENABLE_MS for `submit` to be enabled; answers whether it still isn't. */
+async function staysDisabled(submit: ElementHandle): Promise<boolean> {
+  for (const end = Date.now() + ENABLE_MS; await isDisabled(submit); ) {
+    if (Date.now() >= end) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
 }
 
 /** The fields of `submit`'s form that keep it from being sent; none when it has no form or the
@@ -106,6 +172,7 @@ const unsent = (submit: ElementHandle): Promise<Missing[]> =>
 export function submitted(submitRef: string | undefined, missing: Missing[]): string {
   if (!submitRef) return ", but nothing was submitted: submit it with act (press Enter in the field, or click the button)";
   if (!missing.length) return ` and ${submitRef} clicked`;
+  if (missing[0].disabled) return `, but ${submitRef} wasn't clicked: the page keeps it disabled, so it wants something else first. Read the page: fill what's left with act, or for a check only a person passes ("verify you are human", a CAPTCHA), have the user take the tab over and send it`;
   const needs = missing.map((m) => [m.ref, m.label && `"${m.label}"`].filter(Boolean).join(" ") || "a field").join(", ");
   return `, but ${submitRef} wasn't clicked: the page still needs ${needs} first. Fill it with act, or for a check only a person passes (a CAPTCHA), have the user take the tab over and send it`;
 }
@@ -117,14 +184,20 @@ export function submitted(submitRef: string | undefined, missing: Missing[]): st
 export async function typeIn(at: Tab, host: string, { userRef, user, secretRef, confirmRef, secret }: { userRef?: string; user?: string; secretRef: string; confirmRef?: string; secret: string }, submitRef?: string): Promise<Missing[]> {
   const now = hostOf(at.page.url());
   if (now !== host) throw new BrowserError(`the page moved to ${now || "another page"} meanwhile; nothing was typed`);
-  if (userRef && user) await fill(await element(at.page, userRef), user);
+  const into = async (ref: string, text: string) => {
+    const target = await element(at.page, ref);
+    await reachable(target, ref);
+    await fill(target, text);
+  };
+  if (userRef && user) await into(userRef, user);
   at.entry.secrets.add(secret);
-  await fill(await element(at.page, secretRef), secret);
-  if (confirmRef) await fill(await element(at.page, confirmRef), secret);
+  await into(secretRef, secret);
+  if (confirmRef) await into(confirmRef, secret);
   let missing: Missing[] = [];
   if (submitRef) {
     const submit = await element(at.page, submitRef);
     missing = await unsent(submit);
+    if (!missing.length && (await staysDisabled(submit))) missing = [{ ref: submitRef, label: "", disabled: true }];
     if (!missing.length) await submit.click();
   }
   await settle(at.page);
@@ -150,6 +223,9 @@ async function select(target: ElementHandle, text: string): Promise<void> {
   await target.select(value);
 }
 
+/** The actions that reach an element by clicking or typing, which a dialog over it would catch. */
+const REACHES = new Set(["click", "fill", "type", "select", "check", "uncheck"]);
+
 /** Does `action` on `page`; `ref` and `text` as checkAct allows them. */
 export async function act(page: Page, action: string, ref: string, text: string): Promise<unknown> {
   checkAct(action, ref, text);
@@ -158,6 +234,7 @@ export async function act(page: Page, action: string, ref: string, text: string)
   if (typesInto && (await isPassword(typesInto))) {
     throw new BrowserError(`${ref || "the focused field"} is a password field, which act never types into, even with a password the page or the chat shows: use login, which types a saved login or what the user enters on the tab's page`);
   }
+  if (target && REACHES.has(action)) await reachable(target, ref);
   const navigation = { waitUntil: "domcontentloaded", timeout: NAVIGATE_MS };
   switch (action) {
     case "click":

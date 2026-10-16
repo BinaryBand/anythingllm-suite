@@ -69,6 +69,8 @@ export interface Need {
   label?: string;
   userRef?: string;
   secretRef: string;
+  /** What the secret's field is (snapshot.ts fieldOf) as it was asked, to know it again after. */
+  field?: string;
   /** A new account's "Confirm password": the same secret goes there too. */
   confirmRef?: string;
   submitRef?: string;

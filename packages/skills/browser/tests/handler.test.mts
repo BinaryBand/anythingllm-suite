@@ -281,3 +281,74 @@ test("a login typed into a form that still needs something else (a CAPTCHA) isn'
   assert.equal(lastPage().url(), "https://captcha.example/", "not sent");
   assert.equal(tabState("captcha").msg.text, 'Your login is in; the page still needs "Type the digits shown" before it can be sent: take the tab over to fill it');
 });
+
+test("a field behind a dialog isn't typed into or clicked: the dialog and its buttons are named, and login doesn't ask", async () => {
+  const behind = { title: "We value your privacy", buttons: [{ ref: "e5", label: "Accept all" }, { ref: "e6", label: "Reject all" }] };
+  site("https://consent.example/", {
+    title: "Log in",
+    fields: { e1: { ...SIGN_IN.e1, behind }, e2: { ...SIGN_IN.e2, behind }, e3: { ...SIGN_IN.e3, behind }, e5: { kind: "button", name: "Accept all" }, e6: { kind: "button", name: "Reject all" } },
+  });
+  const call = inWorkspace("consent");
+  await call({ action: "open", url: "https://consent.example/" });
+  const filled = await call({ action: "act", do: "fill", ref: "e1", text: "ada@example.com" });
+  assert.match(filled, /e1 is behind a dialog \("We value your privacy"; its buttons: e5 "Accept all", e6 "Reject all"\), so nothing reaches it: close the dialog first/);
+  assert.equal(lastPage().fields.e1.value, undefined);
+  assert.match(await call({ action: "act", do: "click", ref: "e3" }), /e3 is behind a dialog/);
+  assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" }), /e2 is behind a dialog/);
+  assert.equal(tabState("consent").need, null, "nothing asked of the user while the page can't take it");
+});
+
+test("a submit the page keeps disabled isn't clicked, and both the agent and the user are told", async () => {
+  site("https://gate.example/", { title: "Sign in", fields: { ...SIGN_IN, e3: { ...SIGN_IN.e3, disabled: true } }, onclick: { e3: "https://gate.example/home" } });
+  const call = inWorkspace("gate");
+  await call({ action: "open", url: "https://gate.example/" });
+  await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
+  post({ ev: "need-answer", user: "ada@example.com", sealed: seal("pw-gate-1", tabConfig("gate").pub) }, { workspace: "gate" });
+  const after = await call({ action: "read" });
+  assert.match(after, /but e3 wasn't clicked: the page keeps it disabled, so it wants something else first\. .*"verify you are human"/);
+  assert.ok(!lastPage().clicks.includes("e3"), "not sent");
+  assert.equal(tabState("gate").msg.text, "Your login is in; the page still needs something else before it can be sent: take the tab over to finish it");
+});
+
+test("a date field is set whole, as YYYY-MM-DD, and another format is refused", async () => {
+  site("https://wizard.example/", { title: "Profile", fields: { e1: { type: "date", name: "Date of birth" } } });
+  const call = inWorkspace("wizard");
+  await call({ action: "open", url: "https://wizard.example/" });
+  assert.match(await call({ action: "act", do: "fill", ref: "e1", text: "05/01/1990" }), /a date field takes its value as YYYY-MM-DD; "05\/01\/1990" isn't that/);
+  assert.match(await call({ action: "act", do: "fill", ref: "e1", text: "1990-05-01" }), /^Did fill e1\./);
+  assert.equal(lastPage().fields.e1.value, "1990-05-01");
+});
+
+test("a code taken on a new page isn't asked again for the same ref there; one the page still asks for is", async () => {
+  site("https://step.example/code", {
+    title: "Two-step",
+    text: "Check your phone: we sent a code by text message.",
+    fields: { e4: { type: "text", name: "Authentication code" }, e6: { kind: "button", name: "Verify" }, e7: { kind: "button", name: "Resend" } },
+    onclick: { e6: "https://step.example/account" },
+  });
+  site("https://step.example/account", { title: "Account", fields: { e4: { kind: "link", name: "Create API key" } } });
+  const call = inWorkspace("step");
+  await call({ action: "open", url: "https://step.example/code" });
+  const asked = await call({ action: "login", what: "code", ref: "e4", submit_ref: "e6" });
+  assert.match(asked, /The code sent to your phone for step\.example/, "the page's words choose which code");
+  assert.match(asked, /\n\[!\[Two-step\][^\n]*\n[\s\S]*\nPage: Two-step/, "the card before the read while the user is asked");
+  post({ ev: "need-answer", text: "123456" }, { workspace: "step" });
+  const after = await call({ action: "read" });
+  assert.doesNotMatch(after, /may not have been accepted|may have refused/);
+  assert.equal(tabState("step").need, null);
+  // The same field, still there: asked again.
+  await call({ action: "open", url: "https://step.example/code" });
+  await call({ action: "login", what: "sms", ref: "e4", submit_ref: "e7" });
+  post({ ev: "need-answer", text: "654321" }, { workspace: "step" });
+  assert.match(await call({ action: "read" }), /the page still asks for the code: the site may have refused it/);
+  assert.match(tabState("step").need.text, /Check it and enter it again/);
+});
+
+test("a read of a page with a password or a code field points to login", async () => {
+  site("https://sudo.example/", { title: "Confirm it's you", fields: { e1: { type: "password", name: "Password" }, e2: { kind: "button", name: "Confirm" } } });
+  site("https://otp.example/", { title: "Verify", fields: { e1: { type: "text", name: "Verification code" } } });
+  const call = inWorkspace("hint");
+  assert.match(await call({ action: "open", url: "https://sudo.example/" }), /This page has a password field: to sign in or confirm it's you, use login\./);
+  assert.match(await call({ action: "open", url: "https://otp.example/" }), /This page asks for a code: use login with what/);
+  assert.doesNotMatch(await call({ action: "open", url: "https://shop.example/" }), /use login/);
+});

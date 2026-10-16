@@ -15,7 +15,7 @@ import { workspaceOf } from "#shared/anythingllm";
 import { Told } from "#shared/errors";
 import { FENCED, checkUrl, hostOf, onSite } from "#shared/fence";
 import { entryOf } from "#shared/static";
-import { act, checkAct, element, isPassword, notTyped, settle, settled, submitted, typeIn } from "./act";
+import { act, checkAct, element, isPassword, notTyped, reachable, settle, settled, submitted, typeIn } from "./act";
 import { existing, load, tab } from "./browser";
 import { BrowserError } from "./errors";
 import type { HandlerContext } from "./host";
@@ -23,7 +23,7 @@ import * as logins from "./logins";
 import { card, caughtUp } from "./page";
 import * as research from "./research";
 import { type Scope, scopeOf } from "./scope";
-import { readPage } from "./snapshot";
+import { type Snap, asksCode, asksPassword, fieldOf, lineOf, readPage } from "./snapshot";
 import { NEED_MS, type Need, type Tab, firstLine, holder, note, state, statics, takeNotes, threadKey } from "./state";
 import { free } from "./takeover";
 import { render } from "./view";
@@ -49,14 +49,20 @@ const CODES: Record<string, string> = {
 const baseOf = (self: HandlerContext): string | null => clean(self.runtimeArgs?.ANYTHINGLLM_URL).replace(/\/+$/, "") || null;
 
 /** The page as the agent reads it, then its card; `page` false when the tab has no page the user
- *  could answer on. */
-async function reply(self: HandlerContext, at: Tab, lead: string, find = "", from: unknown = 0): Promise<{ text: string; page: boolean }> {
+ *  could answer on. While the user is asked for something there, the card comes first, before the
+ *  read, so it isn't lost at the end of a long one. */
+async function reply(self: HandlerContext, at: Tab, lead: string, find = "", from: unknown = 0): Promise<{ text: string; page: boolean; snap: Snap }> {
   const { snap, title, url } = await readPage(at.page);
   const drawn = await card(at, baseOf(self), { snap, title });
-  const held = holder(at.entry, at.key) ? "The user has taken this tab over on its page: read it, but don't act in it until they hand it back.\n" : "";
+  const held = holder(at.entry, at.key);
+  const asking = at.entry.needs.has(at.key);
   const read = render({ title, url, snap, notes: takeNotes(at.entry, at.key), find, from, secrets: at.entry.secrets });
+  // A sign-in or a code on the page is login's: act never types one, and the user's is theirs to give.
+  const hint = held || asking ? "" : asksPassword(snap) ? "This page has a password field: to sign in or confirm it's you, use login." : asksCode(snap) ? 'This page asks for a code: use login with what ("sms", "email", "authenticator" or "code").' : "";
   const put = "Answer the user in words first, then put the card below in your reply exactly as given, with no label or heading: tapping it opens the tab's page, where the user watches it, gives what you ask them for, or takes it over.";
-  return { text: [held + lead, "", read, "", put, ...drawn.lines].join("\n"), page: drawn.page };
+  const top = (held ? "The user has taken this tab over on its page: read it, but don't act in it until they hand it back.\n" : "") + lead;
+  const text = asking ? [top, "", put, ...drawn.lines, "", read] : [top, "", read, ...(hint ? ["", hint] : []), "", put, ...drawn.lines];
+  return { text: text.join("\n"), page: drawn.page, snap };
 }
 
 const answer = async (self: HandlerContext, at: Tab, lead: string, find = "", from: unknown = 0) => (await reply(self, at, lead, find, from)).text;
@@ -113,20 +119,31 @@ function hostChecked(at: Tab, site: unknown): string {
  *  ends with the tab's card, the user enters it there, and the skill types it into the page (page.ts).
  *  `need.text` is the page's words, to the user; `told` is the agent's. */
 async function askOnPage(self: HandlerContext, at: Tab, need: Omit<Need, "until">, told: string): Promise<string> {
-  at.entry.needs.set(at.key, { ...need, until: Date.now() + NEED_MS });
+  const asking: Need = { ...need, until: Date.now() + NEED_MS };
+  at.entry.needs.set(at.key, asking);
   const asked = await reply(self, at, `The user is asked on the tab's page: ${told}. Tell them to tap the card below and enter it there: it goes into the page without you seeing it. Never ask for it in the chat. When they say they're done, read the page; it says whether it was typed.`);
+  const line = lineOf(asked.snap, need.secretRef);
+  if (line) asking.field = fieldOf(line);
   if (asked.page) return asked.text;
   at.entry.needs.delete(at.key);
   throw new BrowserError(`${told}, and this AnythingLLM can't show the tab's page, where the user would enter it (its public folder can't be written, or no page key can be made)`);
 }
 
+/** Which code a page asks for when the agent said only "code": by where the page says it went. */
+async function codeOnPage(page: Tab["page"]): Promise<string> {
+  const { text } = (await readPage(page)).snap;
+  return /\b(text message|sms|your phone)\b/i.test(text) ? "sms" : /\b(your email|inbox|emailed)\b/i.test(text) ? "email" : "code";
+}
+
 /** Asks the user for a code (`what`) to go into the field `ref`. */
 async function askCode(self: HandlerContext, at: Tab, args: Args): Promise<string> {
-  const label = CODES[clean(args.what).toLowerCase()];
-  if (!label) throw new BrowserError(`login asks for a code with what: ${Object.keys(CODES).join(", ")}`);
+  let what = clean(args.what).toLowerCase();
+  if (!CODES[what]) throw new BrowserError(`login asks for a code with what: ${Object.keys(CODES).join(", ")}`);
   const ref = refOf(args.ref);
   if (!ref) throw new BrowserError("login with what needs ref, the field the code goes into");
-  await element(at.page, ref);
+  await reachable(await element(at.page, ref), ref);
+  if (what === "code") what = await codeOnPage(at.page);
+  const label = CODES[what];
   const host = hostChecked(at, args.site);
   return askOnPage(self, at, { kind: "code", host, label, secretRef: ref, submitRef: refOf(args.submit_ref), text: `For ${host}.` }, `${label} for ${host}`);
 }
@@ -137,7 +154,9 @@ async function signIn(self: HandlerContext, at: Tab, args: Args): Promise<string
   const here = hostOf(at.page.url());
   if (here && !logins.forHost(here) && logins.forHost(here, "passkey")) throw new BrowserError(`no password is saved for ${here}, but a passkey is: click the site's passkey sign-in with act (a "Sign in with a passkey" button, say) and it signs in by itself`);
   if (!passRef) throw new BrowserError("login needs pass_ref, the password field's ref (and user_ref, the username's); or what and ref, for a code");
-  if (!(await isPassword(await element(at.page, passRef)))) throw new BrowserError(`${passRef} isn't a password field`);
+  const pass = await element(at.page, passRef);
+  if (!(await isPassword(pass))) throw new BrowserError(`${passRef} isn't a password field`);
+  await reachable(pass, passRef);
   const what = userRef ? await notTyped(await element(at.page, userRef)) : null;
   if (what) throw new BrowserError(`${userRef} is a ${what}, not a field for the username: give user_ref only where the page asks for the username, and leave it out on a page that asks only for the password`);
   if (confirmRef && !(await isPassword(await element(at.page, confirmRef)))) throw new BrowserError(`${confirmRef} isn't a password field; confirm_ref is a new account's "Confirm password"`);

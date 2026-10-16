@@ -4,7 +4,7 @@
   "after": "browser/basic-login",
   "steps": [
     {
-      "say": "@agent sign in to $url, sign out, then sign in again, and tell me who I'm signed in as"
+      "say": "@agent sign in to $url, sign out, then sign in again, and tell me which email I'm signed in with"
     }
   ],
   "expect": {

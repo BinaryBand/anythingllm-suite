@@ -21,7 +21,7 @@ import * as vault from "#shared/vault";
 import { submitted, typeIn } from "./act";
 import * as logins from "./logins";
 import * as passkey from "./passkey";
-import { type Snap, asksPassword, isPasswordLine, readPage } from "./snapshot";
+import { type Snap, asksPassword, fieldOf, isPasswordLine, lineOf, readPage } from "./snapshot";
 import { type Entry, NEED_MS, type Need, OFFER_MS, type Tab, VIEWPORT, clip, holder, live, note, say, skillDir, state, statics, workspaceDir } from "./state";
 import * as takeover from "./takeover";
 
@@ -196,8 +196,8 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   const hidden = "it stays hidden from you. Read the page to see whether it worked";
   if (missing.length) {
     // Not sent, so nothing was refused: the form needs something else first (a CAPTCHA, say).
-    const needs = missing.map((m) => (m.label ? `"${m.label}"` : "another field")).join(", ");
-    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${needs} before it can be sent: take the tab over to fill it`);
+    const needs = missing[0].disabled ? "something else" : missing.map((m) => (m.label ? `"${m.label}"` : "another field")).join(", ");
+    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${needs} before it can be sent: take the tab over to ${missing[0].disabled ? "finish" : "fill"} it`);
   }
   const asking = need.submitRef && !missing.length ? await stillAsks(at, need) : null;
   if (!asking) return note(at.entry, at.key, `${sent}; ${hidden}`), true;
@@ -218,14 +218,15 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
 }
 
 /** After a login or a code was typed and submitted: whether its site still asks for it, "same" when
- *  the field it went into is still there (a login: still a password field), "other" when a login's
- *  page shows another password field, else null. A guess, not proof: a site that refuses a login
- *  usually keeps asking, and one that takes it moves on. */
+ *  the field it went into is still there (the same kind and label under its ref: a new page numbers
+ *  its refs again; a login: still a password field), "other" when a login's page shows another
+ *  password field, else null. A guess, not proof: a site that refuses a login usually keeps asking,
+ *  and one that takes it moves on. */
 async function stillAsks(at: Tab, need: Need): Promise<"same" | "other" | null> {
   if (hostOf(at.page.url()) !== need.host) return null;
   const { snap } = await readPage(at.page);
-  const line = snap.elements.find((l) => l.startsWith(`[${need.secretRef}] `));
-  if (line && (need.kind === "code" || isPasswordLine(line))) return "same";
+  const line = lineOf(snap, need.secretRef);
+  if (line && (!need.field || fieldOf(line) === need.field) && (need.kind === "code" || isPasswordLine(line))) return "same";
   return need.kind === "login" && asksPassword(snap) ? "other" : null;
 }
 

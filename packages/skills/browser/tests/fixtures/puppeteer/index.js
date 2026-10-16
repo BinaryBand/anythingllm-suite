@@ -99,11 +99,28 @@ class Page {
     this.fields = JSON.parse(JSON.stringify(s.fields));
     // Each field as the skill's evaluate functions read it: its tag (an input when it has a type),
     // its attributes (`attrs`), and for a button whose form may not be sent while the fields
-    // `blockedBy` (refs) are unmet, that form.
+    // `blockedBy` (refs) are unmet, that form. A field `behind` a dialog ({ title, buttons: [{ ref,
+    // label }] }) is inert under it, as a cookie dialog leaves the page; a date field takes only an
+    // ISO date, as Chrome's does.
     for (const f of Object.values(this.fields)) {
       f.tagName = f.type ? "INPUT" : f.kind === "link" ? "A" : "BUTTON";
       f.getAttribute = (name) => f.attrs?.[name] ?? null;
-      f.closest = () => null;
+      f.closest = (selector) => (f.behind && selector === "[inert]" ? {} : null);
+      f.dispatchEvent = () => true;
+      if (f.behind) {
+        const { title, buttons } = f.behind;
+        const dialog = {
+          closest: () => null,
+          getClientRects: () => [{}],
+          getAttribute: (name) => (name === "aria-label" ? title : null),
+          querySelectorAll: () => buttons.map((b) => ({ innerText: b.label, getAttribute: (name) => (name === "data-bw-ref" ? b.ref : null) })),
+        };
+        f.ownerDocument = { querySelectorAll: () => [dialog] };
+      }
+      if (f.type === "date") {
+        let value = f.value || "";
+        Object.defineProperty(f, "value", { get: () => value, set: (v) => (value = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ""), enumerable: true });
+      }
       if (f.blockedBy) {
         const blocking = f.blockedBy.map((ref) => ({ willValidate: true, checkValidity: () => false, labels: [{ innerText: this.fields[ref].name }], getAttribute: (n) => (n === "data-bw-ref" ? ref : null) }));
         f.form = { checkValidity: () => false, elements: blocking };

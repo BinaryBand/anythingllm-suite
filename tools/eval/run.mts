@@ -136,6 +136,11 @@ async function runCase(at: Instance, c: Case, run: string, rep: number, accounts
           continue;
         }
         const code = need.kind === "code" ? lab.codeFor(a!, String(need.label ?? need.text)) : undefined;
+        if (code === "") {
+          // Nothing sent to look up (the agent never had it sent, say): a person would have nothing to enter.
+          log(c.name, `~ the tab's page asks for ${need.label ?? "a code"}, and none was sent`);
+          continue;
+        }
         if (code) record.secrets.push(code);
         log(c.name, `~ the tab's page asks: ${need.kind}${need.confirm ? " (new password)" : ""}: ${need.text}`);
         actor(at, [tab, JSON.stringify([{ answer: { user: step.answer.user ?? a?.email, pass: step.answer.pass ?? a?.pass, code, save: step.answer.save } }])]);

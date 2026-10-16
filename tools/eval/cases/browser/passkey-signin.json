@@ -4,7 +4,7 @@
   "after": "browser/passkey-add",
   "steps": [
     {
-      "say": "@agent sign in to $url with my passkey and tell me who I'm signed in as"
+      "say": "@agent sign in to $url with my passkey and tell me which email I'm signed in with"
     }
   ],
   "expect": {
