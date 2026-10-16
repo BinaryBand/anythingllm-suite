@@ -246,3 +246,12 @@ Repo-wide decisions and their reasons. A part's own notes live beside this file,
 - **One JSON reader** (`#shared/atomic` `readJson`): `updateJson` took a file it couldn't parse for an empty one and wrote over it, so a damaged notebook would have been emptied by the next note. Now only a missing file is empty; the notebook and the vault read through it.
 - **Saving cookies after a step, not on keep-alive:** `entry.changed()` is called at the end of a step on a tab and after a page's events; `touch()` only keeps the browser open.
 - **Kept as it is:** dropping a refused login's save offer in `apply()`, though deciding "did it take" once at submit time would own it in one place; that changes when logins are saved, so it waits.
+
+## The browser eval's first fix round, 2026-10-16
+
+- **The eval drives the agent as the web interface does.** `tools/eval` (one throwaway AnythingLLM per run; the lab's records are what's graded) replaced the prototype harness. A run comes from a worktree (`../anythingllm-suite-eval`), so the suite can change on `main` during a run. The runs, the causes and the fixes: [.scratch/eval-run-2026-10-16.md](../.scratch/eval-run-2026-10-16.md).
+- **The skill decides what the model can't see.** A field behind a dialog, a date field's format, a submit the page keeps disabled, and a code field that moved after a wrong code are all handled in code, not left to the prompt. The model's job is to choose; the skill refuses what wouldn't work and says why.
+- **A check that a person is at the browser is the user's** (the user's choice): act refuses to click or tick one by its own name, and the guides send it to a takeover after `login`. Real reCAPTCHA, hCaptcha and Turnstile sit in cross-origin frames that a read never sees, so this guard covers a same-document widget only; the guide covers the rest.
+- **An identity provider's Allow for the asked sign-in is the agent's to press** (the user's choice); sharing name and email with that site is part of signing in. DeepSeek still often asks first, which isn't counted against it: the federated cases have the user say yes.
+- **Grade by what happened, and ask what's checkable:** the cases ask which email the user is signed in with, not "who am I", which a name answers.
+- **Nothing else connects to the skill's Chrome during a passkey case:** even one DevTools message to the tab's page leaves the skill's virtual authenticator unanswered. The stand-in user taps the picture at fractions.

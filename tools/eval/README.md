@@ -15,6 +15,23 @@ Needs podman or docker, Node 22.18 or later, the lab running with its public nam
 (`LAB_PUBLIC_URL`, read from `tools/lab/.env`), and the live instance's `.env` to read the model from
 (`/srv/anythingllm/storage/.env`).
 
+## From a worktree, while the suite changes
+
+A run builds and installs the suite from its own checkout (`instance.mts` `ROOT`), so changing `main`
+during a run changes what the next case gets. Run it from a worktree instead:
+
+```sh
+git worktree add --detach ../anythingllm-suite-eval HEAD
+cp -a packages/node_modules ../anythingllm-suite-eval/packages/   # a copy: a symlink fails the build's "bundles files outside" check
+cd ../anythingllm-suite-eval
+LAB_DIR=$OLDPWD/tools/lab node --disable-warning=ExperimentalWarning tools/eval/run.mts --cases 'browser/*' --parallel 2 --repeat 1
+git checkout --detach <commit>   # later: move it to what's on main now
+```
+
+`LAB_DIR` points at the main checkout's lab, whose `.env`, `data/` and `node_modules` aren't in git.
+Don't restart `test-lab.service` while a run is going. Results stay in the worktree's
+`tools/eval/results/` (ignored); copy them over before removing the worktree.
+
 ## What a run does
 
 1. **A throwaway AnythingLLM** (`instance.mts`): the pinned image on a free port, its storage in a
@@ -72,6 +89,10 @@ A JSON file under `cases/`, named by its path there. The fields are described at
   }
 }
 ```
+
+A `user` step's `tap` is at fractions of the tab's picture, measured from a picture of the page
+(the actor's `shot` step and `--keep` give one). Don't find a target through the skill's Chrome: even
+one DevTools message to the tab's page leaves its passkey authenticator unanswered.
 
 `{ "answer": {} }` answers whatever the tab's page asks at that point, from the case's account; when
 the page asks nothing, it's recorded and the case goes on (the agent may have chosen another way).
