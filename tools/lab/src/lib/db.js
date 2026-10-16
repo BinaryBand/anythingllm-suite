@@ -40,6 +40,7 @@ db.exec(`
     used INTEGER NOT NULL DEFAULT 0,
     created TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE INDEX IF NOT EXISTS outbox_lookup ON outbox (site, recipient, purpose);
   CREATE TABLE IF NOT EXISTS pushes (
     id INTEGER PRIMARY KEY,
     site TEXT NOT NULL,

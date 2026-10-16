@@ -6,6 +6,7 @@
 import { error, field, html, raw } from "../lib/html.js";
 import { passwordAuth } from "../lib/site.js";
 import * as users from "../lib/users.js";
+import { OFFSETS } from "../lib/ports.js";
 
 const SITE = "consent";
 const WORDS = {
@@ -37,7 +38,7 @@ const dialog = (req) => {
 
 export default {
   name: SITE,
-  offset: 15,
+  offset: OFFSETS.consent,
   title: "Acorn Market",
   color: "#c2410c",
   tagline: "Everyday things, delivered.",

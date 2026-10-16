@@ -7,6 +7,7 @@ import { error, html } from "../lib/html.js";
 import { byToken, issueToken, revokeToken, updateToken } from "../lib/session.js";
 import { passwordAuth } from "../lib/site.js";
 import * as users from "../lib/users.js";
+import { OFFSETS } from "../lib/ports.js";
 
 const SITE = "gate";
 const TOKEN_MS = 120_000;
@@ -14,7 +15,7 @@ const minMs = () => Math.max(0, Number(process.env.LAB_GATE_MIN_MS ?? 1000));
 
 export default {
   name: SITE,
-  offset: 16,
+  offset: OFFSETS.gate,
   title: "Fortress Bank",
   color: "#334155",
   tagline: "Security you can feel.",

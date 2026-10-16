@@ -8,13 +8,14 @@ import * as pushes from "../lib/push.js";
 import { passwordAuth } from "../lib/site.js";
 import * as users from "../lib/users.js";
 import { ALICE_SECRET } from "./totp.js";
+import { OFFSETS } from "../lib/ports.js";
 
 const SITE = "push";
 const { authenticator } = otplib;
 
 export default {
   name: SITE,
-  offset: 13,
+  offset: OFFSETS.push,
   title: "Meridian Wallet",
   color: "#be185d",
   tagline: "Money that asks twice.",

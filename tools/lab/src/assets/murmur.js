@@ -52,7 +52,7 @@
   if (qr) {
     const refresh = async () => (qr.src = (await (await fetch("/login/qr/code")).json()).image);
     refresh();
-    setInterval(refresh, 5000);
+    setInterval(refresh, Number(qr.dataset.every) * 1000);
   }
 
   const waiting = document.querySelector("[data-wait-link]");

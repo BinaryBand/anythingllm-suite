@@ -25,6 +25,12 @@ const watch = (p) => {
 };
 watch(page);
 
+const openTab = async () => {
+  const tab = await browser.newPage();
+  watch(tab);
+  return tab;
+};
+
 let failed = 0;
 const ok = (cond, msg) => {
   if (!cond) failed++;
@@ -62,6 +68,14 @@ const signInOn = async (snap, email, pass, submitRe = /button "Sign in"/, p = pa
   await (await act(snap, /input\[(email|text)\]/, p)).type(email);
   await (await act(snap, /input\[password\]/, p)).type(pass);
   await Promise.all([p.waitForNavigation(), (await act(snap, submitRe, p)).click()]);
+};
+
+// Lumen ID's pages after the app sent the browser there: sign in, or pick Alice if this browser already has her; then Allow.
+const throughLumen = async (p = page) => {
+  const s = await read("idp", p);
+  if (has(s, /input\[email\]/)) await signInOn(s, "alice@lab.test", "Alice-pass-1", /button "Sign in"/, p);
+  else await Promise.all([p.waitForNavigation(), (await act(s, /Alice Example/, p)).click()]);
+  await (await act(await read("idp consent", p), /button "Allow"/, p)).click();
 };
 
 await step("basic", async () => {
@@ -143,7 +157,7 @@ await step("wizard", async () => {
   s = await read("wizard filled");
   ok(has(s, /button "Next"$/), "wizard: Next enables once the profile is valid");
   await Promise.all([page.waitForNavigation(), (await act(s, /button "Next"/)).click()]);
-  const code = (await (await dashboard(`/api/outbox?site=wizard&to=${encodeURIComponent(email)}`)).json())[0].code;
+  const code = await lab.lastCode("wizard", email);
   s = await read("wizard verify");
   await (await act(s, /Verification code/)).type(code);
   await Promise.all([page.waitForNavigation(), (await act(s, /Create my account/)).click()]);
@@ -309,10 +323,7 @@ await step("federated fragment and auto", async () => {
   await go(U(12, "/login?social=fragment"));
   let s = await read("federated fragment");
   await Promise.all([page.waitForNavigation(), (await act(s, /link "Continue with Lumen ID"/)).click()]);
-  s = await read("idp chooser fragment");
-  await Promise.all([page.waitForNavigation(), (await act(s, /Alice Example/)).click()]);
-  s = await read("idp consent fragment");
-  await (await act(s, /button "Allow"/)).click();
+  await throughLumen();
   await page.waitForFunction(() => location.pathname === "/account", { timeout: 10000 });
   ok(new URL(page.url()).port === String(lab.port(12)) && (await signedIn()), "federated: the answer after a # is picked up by the page's script and signs in");
   await go(U(12, "/logout"));
@@ -329,8 +340,7 @@ await step("stepup device in a new tab", async () => {
   s = await read("stepup wait");
   ok(has(s, /link "Open the confirmation page"/), "stepup: removing a device asks to confirm in a new tab");
   const href = await page.$eval("#open-confirm", (a) => a.href);
-  const tab = await browser.newPage();
-  watch(tab);
+  const tab = await openTab();
   await go(href, tab);
   const t = await read("stepup confirm tab", tab);
   await (await act(t, /input\[password\]/, tab)).type("Alice-pass-1");
@@ -358,15 +368,7 @@ await step("murmur", async () => {
   await (await act(await read("murmur picker again"), /button "Continue"/)).click();
   await page.waitForFunction((p) => location.port === p, { timeout: 8000 }, String(lab.port(11)));
   ok(true, "murmur: a single-sign-on server sends the page straight to the provider");
-  s = await read("murmur idp");
-  if (has(s, /input\[email\]/)) {
-    await signInOn(s, "alice@lab.test", "Alice-pass-1", /button "Sign in"/);
-    s = await read("murmur idp consent");
-  } else {
-    await Promise.all([page.waitForNavigation(), (await act(s, /Alice Example/)).click()]);
-    s = await read("murmur idp consent");
-  }
-  await (await act(s, /button "Allow"/)).click();
+  await throughLumen();
   await page.waitForFunction(() => location.pathname === "/verify", { timeout: 10000 });
   s = await read("murmur verify");
   ok(has(s, /Use another device/) && has(s, /Enter recovery key/) && has(s, /Can't confirm\?/) && has(s, /button "Skip for now"/), "murmur: Verify this session offers another device, a recovery key, a reset and Skip");
@@ -406,7 +408,7 @@ await step("murmur", async () => {
   await go(U(17, "/login/qr"));
   await pause(500);
   const first = await page.$eval("#qr", (i) => i.src);
-  await pause(5600);
+  await pause(1600);
   ok(first.startsWith("data:image/png") && first !== (await page.$eval("#qr", (i) => i.src)), "murmur: the QR code changes every few seconds");
 
   // sign-up: the notice, the stages, and the emailed link opened in another tab
@@ -428,8 +430,8 @@ await step("murmur", async () => {
   await (await act(s, /input\[email\]/)).type(email);
   await Promise.all([page.waitForNavigation(), (await act(s, /button "Send a link"/)).click()]);
   ok(/Waiting for you to open the link/.test(await text()), "murmur: the sign-up waits for an emailed link");
-  const code = (await (await dashboard(`/api/outbox?site=murmur&to=${encodeURIComponent(email)}`)).json())[0].code;
-  const tab = await browser.newPage();
+  const code = await lab.lastCode("murmur", email);
+  const tab = await openTab();
   await go(U(17, `/register/confirm?code=${code}&email=${encodeURIComponent(email)}`), tab);
   ok(/Email confirmed/.test(await text(tab)), "murmur: the link, opened in another tab, confirms the email");
   await tab.close();

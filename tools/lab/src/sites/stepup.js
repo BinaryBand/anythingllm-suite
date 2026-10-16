@@ -9,21 +9,20 @@ import { cookies, sign, unsign } from "../lib/session.js";
 import { localPath, passwordAuth } from "../lib/site.js";
 import * as users from "../lib/users.js";
 import { ALICE_SECRET } from "./totp.js";
+import { OFFSETS } from "../lib/ports.js";
 
 const SITE = "stepup";
 const TRUST = "lab_stepup_trust";
 const TRUST_MS = 30 * 24 * 60 * 60 * 1000;
 const { authenticator } = otplib;
 const windowMs = () => Math.max(1, Number(process.env.LAB_SUDO_SECONDS) || 120) * 1000;
-const profileOf = (user) => JSON.parse(user.profile || "{}");
-const keysOf = (user) => profileOf(user).keys ?? [];
+const keysOf = (user) => users.profileOf(user).keys ?? [];
 const DEVICES = [{ id: "d1", name: "Chrome on Linux (this device)" }, { id: "d2", name: "Firefox on macOS" }, { id: "d3", name: "Phone" }];
-const devicesOf = (user) => profileOf(user).devices ?? DEVICES;
-const saveProfile = (user, patch) => users.update(user.id, { profile: JSON.stringify({ ...profileOf(user), ...patch }) });
+const devicesOf = (user) => users.profileOf(user).devices ?? DEVICES;
 
 export default {
   name: SITE,
-  offset: 14,
+  offset: OFFSETS.stepup,
   title: "Stratus Console",
   color: "#4d7c0f",
   tagline: "Cloud keys, kept close.",
@@ -64,9 +63,10 @@ export default {
 
     // Confirmation before a sensitive step.
     const active = (req) => (req.session.data.sudoUntil ?? 0) > Date.now();
+    const extend = (req) => req.session.save({ sudoUntil: Date.now() + windowMs() });
     const needSudo = (back) => (req, res, next) => {
       if (!active(req)) return res.redirect(303, `/sudo?return_to=${encodeURIComponent(back ?? req.originalUrl)}`);
-      req.session.save({ sudoUntil: Date.now() + windowMs() });
+      extend(req);
       next();
     };
     const sudoPage = (req, res, problem, status = 200) => {
@@ -88,7 +88,7 @@ export default {
     app.post("/sudo", ctx.requireUser, (req, res) => {
       const ok = req.body.method === "code" ? req.user.totp && authenticator.check(String(req.body.code ?? "").replace(/\s/g, ""), req.user.totp) : users.check(SITE, req.user.email, req.body.password);
       if (!ok) return sudoPage(req, res, req.body.method === "code" ? "That code didn't work." : "That password isn't right.", 401);
-      req.session.save({ sudoUntil: Date.now() + windowMs() });
+      extend(req);
       res.redirect(303, localPath(req.body.return_to) ?? "/account");
     });
 
@@ -97,7 +97,7 @@ export default {
         ${field({ label: "Key name", name: "name", required: true, autofocus: true })}<button type="submit">Create key</button><p class="muted"><a href="/account">Cancel</a></p></form>`));
     app.post("/account/keys/new", ctx.requireUser, needSudo("/account/keys/new"), (req, res) => {
       const key = { name: String(req.body.name ?? "").trim() || "Untitled", secret: `lab_sk_${crypto.randomBytes(12).toString("hex")}`, created: new Date().toISOString().slice(0, 16).replace("T", " ") };
-      saveProfile(req.user, { keys: [...keysOf(req.user), key] });
+      users.saveProfile(req.user, { keys: [...keysOf(req.user), key] });
       render(req, res, "API key created", html`<div class="card"><h1>API key created</h1><p>Copy it now; it won't be shown again.</p><p class="secret" id="new-key">${key.secret}</p><a class="button" href="/account">Done</a></div>`);
     });
     app.get("/account/email", ctx.requireUser, needSudo(), (req, res) =>
@@ -111,7 +111,7 @@ export default {
     });
     // Removing a device: with a recent confirmation it just happens; without one, the confirmation is a separate
     // page opened in a new tab (as when a provider has to approve it) while this tab waits and carries on by itself.
-    const removeDevice = (user, id) => saveProfile(user, { devices: devicesOf(user).filter((d) => d.id !== id) });
+    const removeDevice = (user, id) => users.saveProfile(user, { devices: devicesOf(user).filter((d) => d.id !== id) });
     app.get("/account/devices", ctx.requireUser, (req, res) =>
       render(req, res, "Devices", html`<div class="card wide"><h1>Your devices</h1>${notice(req.query.msg)}
         <table>${devicesOf(req.user).map((d) => html`<tr><td>${d.name}</td><td><form method="post" action="/account/devices/remove"><input type="hidden" name="id" value="${d.id}"><button class="ghost small" type="submit">Remove</button></form></td></tr>`)}</table>
@@ -121,7 +121,7 @@ export default {
       if (!device) return res.redirect(303, "/account/devices");
       if (active(req)) {
         removeDevice(req.user, device.id);
-        req.session.save({ sudoUntil: Date.now() + windowMs() });
+        extend(req);
         return res.redirect(303, "/account/devices?msg=" + encodeURIComponent(`Removed ${device.name}.`));
       }
       const token = crypto.randomBytes(8).toString("hex");
@@ -147,7 +147,10 @@ export default {
         ${field({ label: "Password", name: "password", type: "password", autocomplete: "current-password", required: true, autofocus: true })}
         <button type="submit">Confirm</button><p class="muted">You can close this tab afterwards.</p></form>`, { status });
     };
-    const validToken = (req, token) => req.session.data.confirm && req.session.data.confirm.token === token && !req.session.data.confirm.done;
+    const validToken = (req, token) => {
+      const pending = req.session.data.confirm;
+      return pending?.token === token && !pending.done;
+    };
     app.get("/confirm", ctx.requireUser, (req, res) =>
       validToken(req, req.query.token) ? confirmPage(req, res) : render(req, res, "Nothing to confirm", html`<div class="card"><h1>Nothing to confirm</h1><p>This confirmation has expired or was already used.</p></div>`, { status: 400 }));
     app.post("/confirm", ctx.requireUser, (req, res) => {

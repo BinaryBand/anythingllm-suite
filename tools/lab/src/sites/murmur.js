@@ -8,30 +8,32 @@
 //  - QR login that changes every few seconds, a lockout with a countdown, a session that expires on its
 //    own, and a "get our new app" notice before sign-up.
 
-import crypto from "node:crypto";
 import QRCode from "qrcode";
 import { error, field, html, raw } from "../lib/html.js";
-import { authorizeUrl, exchange } from "../lib/oauth.js";
+import { authorizeUrl, completeSignIn, newState } from "../lib/oauth.js";
 import * as outbox from "../lib/outbox.js";
 import * as passwords from "../lib/passwords.js";
+import { OFFSETS } from "../lib/ports.js";
 import * as users from "../lib/users.js";
 
 const SITE = "murmur";
-const CLIENT = { id: "murmur", secret: "murmur-secret" };
+const CLIENT_ID = "murmur";
+const LINK = "register-link";
 export const RECOVERY_KEY = "EsTc Lab1 Verf Y123";
 export const REGISTRATION_TOKEN = "lab-token-1";
 const MAX_TRIES = 3;
-const LOCK_SECONDS = 10;
 
+// sso: the form is a single sign-on button, and the page redirects there at once. strict: the verify screen can't be skipped.
 const SERVERS = {
-  "lab.test": { methods: ["password"], flow: ["username", "terms", "email"], strict: false },
-  "sso.lab.test": { methods: ["sso"], immediate: true, flow: ["username", "terms"], strict: false },
-  "token.lab.test": { methods: ["password"], flow: ["token", "username", "terms"], strict: true },
-  "captcha.lab.test": { methods: ["password"], flow: ["username", "captcha", "terms"], strict: false },
+  "lab.test": { flow: ["username", "terms", "email"] },
+  "sso.lab.test": { sso: true, flow: ["username", "terms"] },
+  "token.lab.test": { strict: true, flow: ["token", "username", "terms"] },
+  "captcha.lab.test": { flow: ["username", "captcha", "terms"] },
 };
 const serverOf = (name) => (Object.hasOwn(SERVERS, name) ? name : "lab.test");
 const normalKey = (key) => String(key ?? "").replace(/\s/g, "").toUpperCase();
-const sessionSeconds = () => Number(process.env.LAB_MURMUR_SESSION_SECONDS) || 600;
+const seconds = (name, fallback) => Number(process.env[name]) || fallback;
+const lockedFor = (req) => Math.max(0, Math.ceil(((req.session.data.lockUntil ?? 0) - Date.now()) / 1000));
 /** "alice", "@alice:lab.test" or "alice@lab.test" on `server`: the account's email in the users table. */
 const accountOf = (name, server) => {
   const local = String(name ?? "").trim().toLowerCase().replace(/^@/, "").split(/[:@]/)[0];
@@ -40,15 +42,16 @@ const accountOf = (name, server) => {
 
 export default {
   name: SITE,
-  offset: 17,
+  offset: OFFSETS.murmur,
   title: "Murmur Chat",
   color: "#0d9488",
   tagline: "Open, encrypted chat.",
   tests: `A chat client's sign-in in the shape of Element/Matrix: a homeserver you can change (Edit; lab.test, sso.lab.test, token.lab.test, captcha.lab.test), a "Verify this session" screen after sign-in (recovery key ${RECOVERY_KEY}; its red reset must not be pressed), sign-up in server-defined stages (registration token ${REGISTRATION_TOKEN}), a QR sign-in, and a lockout after ${MAX_TRIES} wrong passwords.`,
   seed() {
     users.seed(SITE);
+    let passHash; // hashed once, for the other servers
     for (const server of Object.keys(SERVERS).slice(1)) {
-      if (!users.byEmail(SITE, `alice@${server}`)) users.create(SITE, { email: `alice@${server}`, name: users.ALICE.name, pass: users.ALICE.pass });
+      if (!users.byEmail(SITE, `alice@${server}`)) users.create(SITE, { email: `alice@${server}`, name: users.ALICE.name, passHash: (passHash ??= passwords.hash(users.ALICE.pass)) });
     }
   },
   build(ctx) {
@@ -66,34 +69,34 @@ export default {
 
     const startSession = (req, user, server) => {
       req.session.signIn(user.id);
-      req.session.save({ server, verified: false, expiresAt: Date.now() + sessionSeconds() * 1000 });
+      req.session.save({ server, verified: false, expiresAt: Date.now() + seconds("LAB_MURMUR_SESSION_SECONDS", 600) * 1000 });
     };
 
     // ---- the homeserver, and what its form offers ----
     app.get("/.well-known/matrix/client", (req, res) => {
       const name = String(req.query.server ?? "").trim().toLowerCase();
       if (!Object.hasOwn(SERVERS, name)) return res.status(404).json({ errcode: "M_NOT_FOUND", error: "No homeserver here" });
-      res.json({ "m.homeserver": { base_url: `https://${name}` }, "lab.methods": SERVERS[name].methods, "lab.immediate": Boolean(SERVERS[name].immediate) });
+      const sso = Boolean(SERVERS[name].sso);
+      res.json({ "m.homeserver": { base_url: `https://${name}` }, "lab.methods": [sso ? "sso" : "password"], "lab.immediate": sso });
     });
     app.get("/api/registration/flows", (req, res) => res.json({ flows: [{ stages: SERVERS[serverOf(req.query.server)].flow }] }));
 
-    const methods = (server, problem, lockedFor = 0) => {
-      const s = SERVERS[server];
-      if (s.methods.includes("sso"))
+    const methods = (server, problem, locked = 0) => {
+      if (SERVERS[server].sso)
         return html`<p>This server signs you in with single sign-on.</p><p><a class="button" id="sso-signin" href="/sso/start">Continue with single sign-on</a></p>`;
       return html`<form method="post" action="/login">
         ${error(problem)}
         <input type="hidden" name="server" value="${server}">
         ${field({ label: "Username", name: "username", autocomplete: "username", required: true, autofocus: true })}
         ${field({ label: "Password", name: "password", type: "password", autocomplete: "current-password", required: true })}
-        <button type="submit" ${lockedFor ? raw("disabled") : ""}>Sign in</button>
-        <p class="muted" id="lock-note" ${lockedFor ? "" : raw("hidden")}>Too many attempts. Try again in <span id="countdown">${lockedFor}</span> seconds.</p>
+        <button type="submit" ${locked ? raw("disabled") : ""}>Sign in</button>
+        <p class="muted" id="lock-note" ${locked ? "" : raw("hidden")}>Too many attempts. Try again in <span id="countdown">${locked}</span> seconds.</p>
       </form>
       <p class="muted"><a href="/login/qr">Sign in with QR code</a> · <a href="/register?server=${server}">Create an account</a></p>`;
     };
     app.get("/login/methods", (req, res) => res.type("html").send(methods(serverOf(req.query.server)).toString()));
 
-    const loginPage = (req, res, { server, problem, status = 200, lockedFor = 0 } = {}) => {
+    const loginPage = (req, res, { server, problem, status = 200, locked = 0 } = {}) => {
       render(req, res, "Sign in", html`<div class="card" id="login-card">
         <h1>Sign in</h1>
         ${req.query.expired ? html`<p class="notice" role="status">Your session has expired. Sign in again.</p>` : ""}
@@ -103,26 +106,29 @@ export default {
           <button type="button" id="server-go">Continue</button>
           <p class="muted" id="picker-msg" role="status"></p>
         </div>
-        <div id="methods">${methods(server, problem, lockedFor)}</div>
+        <div id="methods">${methods(server, problem, locked)}</div>
       </div><script src="/assets/murmur.js" defer></script>`, { status });
     };
     app.get("/login", (req, res) => {
       if (req.user) return res.redirect(303, "/account");
       const server = serverOf(req.query.server);
-      if (SERVERS[server].immediate && !req.query.stay) return res.redirect(302, "/sso/start");
-      loginPage(req, res, { server, lockedFor: Math.max(0, Math.ceil(((req.session.data.lockUntil ?? 0) - Date.now()) / 1000)) });
+      if (SERVERS[server].sso && !req.query.stay) return res.redirect(302, "/sso/start");
+      loginPage(req, res, { server, locked: lockedFor(req) });
     });
     app.post("/login", (req, res) => {
       const server = serverOf(req.body.server);
-      const locked = Math.ceil(((req.session.data.lockUntil ?? 0) - Date.now()) / 1000);
-      if (locked > 0) return res.set("Retry-After", String(locked)).status(429).type("html").send(ctx.page(req, "Sign in", html`<div class="card"><p class="error" role="alert">Too many attempts. Try again in ${locked} seconds.</p><a class="button" href="/login?server=${server}">Back</a></div>`));
+      const locked = lockedFor(req);
+      if (locked) {
+        res.set("Retry-After", String(locked));
+        return render(req, res, "Sign in", html`<div class="card"><p class="error" role="alert">Too many attempts. Try again in ${locked} seconds.</p><a class="button" href="/login?server=${server}">Back</a></div>`, { status: 429 });
+      }
       const user = users.check(SITE, accountOf(req.body.username, server), req.body.password);
       if (!user) {
         const tries = (req.session.data.tries ?? 0) + 1;
         if (tries >= MAX_TRIES) {
-          req.session.save({ tries: 0, lockUntil: Date.now() + LOCK_SECONDS * 1000 });
-          res.set("Retry-After", String(LOCK_SECONDS));
-          return loginPage(req, res, { server, problem: "Too many attempts.", status: 429, lockedFor: LOCK_SECONDS });
+          req.session.save({ tries: 0, lockUntil: Date.now() + seconds("LAB_MURMUR_LOCK_SECONDS", 10) * 1000 });
+          res.set("Retry-After", String(lockedFor(req)));
+          return loginPage(req, res, { server, problem: "Too many attempts.", status: 429, locked: lockedFor(req) });
         }
         req.session.save({ tries });
         return loginPage(req, res, { server, problem: "Incorrect username or password.", status: 401 });
@@ -134,38 +140,32 @@ export default {
     app.get("/login/qr", (req, res) =>
       render(req, res, "Sign in with QR code", html`<div class="card center"><h1>Sign in with QR code</h1>
         <p>Scan this code with a device that's already signed in to Murmur.</p>
-        <img class="qr" id="qr" alt="QR code to sign in" src="">
+        <img class="qr" id="qr" alt="QR code to sign in" src="" data-every="${seconds("LAB_MURMUR_QR_SECONDS", 5)}">
         <p class="muted">The code changes every few seconds.</p>
         <p><a href="/login">Sign in another way</a></p></div><script src="/assets/murmur.js" defer></script>`));
     app.get("/login/qr/code", async (req, res) => {
-      const code = crypto.randomBytes(6).toString("hex");
+      const code = newState();
       res.json({ code, image: await QRCode.toDataURL(`murmur-link://${code}`, { margin: 1, width: 180 }) });
     });
 
     // ---- single sign-on through Lumen ID ----
     app.get("/sso/start", (req, res) => {
-      const state = crypto.randomBytes(16).toString("base64url");
+      const state = newState();
       req.session.save({ oauth: { state } });
-      res.redirect(302, authorizeUrl(req, { clientId: CLIENT.id, state }));
+      res.redirect(302, authorizeUrl(req, { clientId: CLIENT_ID, state }));
     });
     app.get("/auth/callback", async (req, res) => {
-      const oauth = req.session.data.oauth;
-      const fail = (why, status = 400) => render(req, res, "Sign in", html`<div class="card"><h1>Sign-in didn't finish</h1>${error(why)}<a class="button" href="/login?server=sso.lab.test&stay=1">Back</a></div>`, { status });
-      if (!oauth || !req.query.state || req.query.state !== oauth.state) return fail("That sign-in has expired. Start again.");
-      if (req.query.error) return fail("Single sign-on was cancelled.");
-      try {
-        const info = await exchange(req, { clientId: CLIENT.id, secret: CLIENT.secret, code: req.query.code });
-        if (!info) return fail("The sign-in service didn't accept that.");
-        const email = accountOf(info.email, "sso.lab.test");
-        startSession(req, users.byEmail(SITE, email) ?? users.create(SITE, { email, name: info.name }), "sso.lab.test");
-        res.redirect(303, "/verify");
-      } catch {
-        fail("Couldn't reach the sign-in service.", 502);
-      }
+      const { code, state, error: denied } = req.query;
+      const result = await completeSignIn(req, { clientId: CLIENT_ID, expected: req.session.data.oauth?.state, state, code, error: denied });
+      if (!result.info)
+        return render(req, res, "Sign in", html`<div class="card"><h1>Sign-in didn't finish</h1>${error(result.problem)}<a class="button" href="/login?server=sso.lab.test&stay=1">Back</a></div>`, { status: result.status });
+      const email = accountOf(result.info.email, "sso.lab.test");
+      startSession(req, users.byEmail(SITE, email) ?? users.create(SITE, { email, name: result.info.name }), "sso.lab.test");
+      res.redirect(303, "/verify");
     });
 
     // ---- "Verify this session" ----
-    const strict = (req) => SERVERS[serverOf(req.session.data.server)].strict;
+    const strict = (req) => Boolean(SERVERS[serverOf(req.session.data.server)].strict);
     const unverified = (req) => !req.session.data.verified;
     // Where a server that insists on verification keeps people until they've done it.
     app.use(["/account", "/rooms"], (req, res, next) => (req.user && unverified(req) && strict(req) ? res.redirect(303, "/verify") : next()));
@@ -205,7 +205,7 @@ export default {
         <p class="error">This can't be undone. You'll lose your message history and your other devices will need to verify you again.</p>
         <button class="danger" type="submit">Reset my identity</button><p class="center"><a href="/verify">Go back</a></p></form>`, { bare: true }));
     app.post("/verify/reset", ctx.requireUser, (req, res) => {
-      users.update(req.user.id, { profile: JSON.stringify({ reset: new Date().toISOString() }) });
+      users.saveProfile(req.user, { reset: new Date().toISOString() });
       req.session.save({ verified: "reset" });
       res.redirect(303, "/account?msg=" + encodeURIComponent("Your identity was reset. Your message history is gone."));
     });
@@ -219,14 +219,14 @@ export default {
     app.get("/register/other-app", (req, res) => render(req, res, "Murmur X", html`<div class="card"><h1>Murmur X</h1><p>The new app isn't part of the lab. <a href="/register">Go back</a></p></div>`));
     app.get("/register/start", (req, res) => {
       const server = serverOf(req.query.server);
-      req.session.save({ reg: { server, stages: SERVERS[server].flow, at: 0, data: {} } });
+      req.session.save({ reg: { server, at: 0, data: {} } });
       res.redirect(303, "/register/step");
     });
 
     const STAGES = {
-      token: { title: "Registration token", form: (reg, problem) => html`<h1>Registration token</h1><p>${reg.server} needs a token to register.</p>${error(problem)}${field({ label: "Registration token", name: "token", required: true, autofocus: true })}`,
+      token: { title: "Registration token", form: (reg) => html`<p>${reg.server} needs a token to register.</p>${field({ label: "Registration token", name: "token", required: true, autofocus: true })}`,
         take: (reg, body) => (body.token === REGISTRATION_TOKEN ? null : "That registration token isn't valid.") },
-      username: { title: "Choose a username", form: (reg, problem) => html`<h1>Choose a username</h1><p>This becomes your ID on ${reg.server} and can't be changed.</p>${error(problem)}
+      username: { title: "Choose a username", form: (reg) => html`<p>This becomes your ID on ${reg.server} and can't be changed.</p>
           ${field({ label: "Username", name: "username", autocomplete: "username", required: true, autofocus: true })}
           ${field({ label: "Password", name: "password", type: "password", autocomplete: "new-password", required: true, minlength: 8 })}
           ${field({ label: "Confirm password", name: "confirm", type: "password", autocomplete: "new-password", required: true })}`,
@@ -240,13 +240,20 @@ export default {
           reg.data.passHash = passwords.hash(body.password);
           return null;
         } },
-      terms: { title: "Terms and conditions", form: (reg, problem) => html`<h1>Terms and conditions</h1><p>Review the policies for ${reg.server}.</p>${error(problem)}
+      terms: { title: "Terms and conditions", form: (reg) => html`<p>Review the policies for ${reg.server}.</p>
           <label class="check"><input type="checkbox" name="terms" id="f-terms" required> I accept the Terms of Service and the Privacy Policy</label>`,
         take: (reg, body) => (body.terms ? null : "Accept the terms to continue.") },
-      captcha: { title: "Are you human?", form: (reg, problem) => html`<h1>Are you human?</h1>${error(problem)}
-          <div class="gate" role="group" aria-label="Human check"><label class="check"><input type="checkbox" name="human" id="f-human" required> I'm not a robot</label></div>`,
+      captcha: { title: "Are you human?", form: () => html`<div class="gate" role="group" aria-label="Human check"><label class="check"><input type="checkbox" name="human" id="f-human" required> I'm not a robot</label></div>`,
         take: (reg, body) => (body.human ? null : "Complete the check to continue.") },
     };
+    const stages = (reg) => SERVERS[reg.server].flow;
+    const stepNote = (reg) => html`<p class="muted">Step ${reg.at + 1} of ${stages(reg).length} · ${reg.server}</p>`;
+    const advance = (req, res, reg) => {
+      reg.at += 1;
+      req.session.save({ reg });
+      res.redirect(303, "/register/step");
+    };
+    const linkOpened = (reg) => Boolean(reg.data.email && outbox.used(SITE, reg.data.email, LINK));
     const finishRegistration = (req, res, reg) => {
       const user = users.create(SITE, { email: `${reg.data.local}@${reg.server}`, name: reg.data.local, passHash: reg.data.passHash });
       startSession(req, user, reg.server);
@@ -255,19 +262,19 @@ export default {
     const stepPage = (req, res, problem, status = 200) => {
       const reg = req.session.data.reg;
       if (!reg) return res.redirect(303, "/register");
-      const type = reg.stages[reg.at];
+      const type = stages(reg)[reg.at];
       if (!type) return finishRegistration(req, res, reg);
       if (type === "email") return emailPage(req, res, reg, problem, status);
       const stage = STAGES[type];
       render(req, res, stage.title, html`<form class="card" method="post" action="/register/step">
-        <p class="muted">Step ${reg.at + 1} of ${reg.stages.length} · ${reg.server}</p>${stage.form(reg, problem)}
+        ${stepNote(reg)}<h1>${stage.title}</h1>${error(problem)}${stage.form(reg)}
         <button type="submit">Continue</button></form>`, { status });
     };
     // The emailed link is opened elsewhere (the dashboard's outbox has it); this page waits and carries on.
     const emailPage = (req, res, reg, problem, status) => {
       if (!reg.data.email)
         return render(req, res, "Add your email", html`<form class="card" method="post" action="/register/step">
-          <p class="muted">Step ${reg.at + 1} of ${reg.stages.length} · ${reg.server}</p><h1>Add your email</h1><p>Used to recover your account.</p>${error(problem)}
+          ${stepNote(reg)}<h1>Add your email</h1><p>Used to recover your account.</p>${error(problem)}
           ${field({ label: "Email", name: "email", type: "email", autocomplete: "email", required: true, autofocus: true })}<button type="submit">Send a link</button></form>`, { status });
       render(req, res, "Check your email", html`<div class="card"><h1>Check your email</h1>
         <p>We sent a link to <strong>${reg.data.email}</strong>. Open it, then come back to this page.</p>
@@ -279,49 +286,46 @@ export default {
     app.post("/register/step", (req, res) => {
       const reg = req.session.data.reg;
       if (!reg) return res.redirect(303, "/register");
-      const type = reg.stages[reg.at];
+      const type = stages(reg)[reg.at];
       if (type === "email") {
         if (!users.validEmail(req.body.email)) return stepPage(req, res, "Enter a valid email address.", 400);
         reg.data.email = users.normal(req.body.email);
-        outbox.send(SITE, "email", reg.data.email, "register-link");
+        outbox.send(SITE, "email", reg.data.email, LINK);
         req.session.save({ reg });
         return res.redirect(303, "/register/step");
       }
       const problem = STAGES[type]?.take(reg, req.body);
       if (problem) return stepPage(req, res, problem, 400);
-      reg.at += 1;
-      req.session.save({ reg });
-      res.redirect(303, "/register/step");
+      advance(req, res, reg);
     });
     app.post("/register/resend", (req, res) => {
       const reg = req.session.data.reg;
-      if (reg?.data.email) outbox.send(SITE, "email", reg.data.email, "register-link");
+      if (reg?.data.email) outbox.send(SITE, "email", reg.data.email, LINK);
       res.redirect(303, "/register/step");
     });
     // The link in the email: /register/confirm?code=…&email=… (the code is the dashboard outbox's, for this email).
     app.get("/register/confirm", (req, res) => {
-      const ok = outbox.redeem(SITE, users.normal(req.query.email), "register-link", req.query.code);
+      const ok = outbox.redeem(SITE, users.normal(req.query.email), LINK, req.query.code);
       render(req, res, ok ? "Email confirmed" : "Link not valid", html`<div class="card"><h1>${ok ? "Email confirmed" : "This link isn't valid"}</h1><p>${ok ? "You can close this tab and go back to the other one." : "It may have expired, or it was already used."}</p></div>`, { status: ok ? 200 : 400 });
     });
     app.get("/register/status", (req, res) => {
       const reg = req.session.data.reg;
-      res.json({ confirmed: Boolean(reg?.data.email && outbox.used(SITE, reg.data.email, "register-link")) });
+      res.json({ confirmed: Boolean(reg && linkOpened(reg)) });
     });
     app.post("/register/continue", (req, res) => {
       const reg = req.session.data.reg;
-      if (!reg?.data.email || !outbox.used(SITE, reg.data.email, "register-link")) return res.redirect(303, "/register/step");
-      reg.at += 1;
-      req.session.save({ reg });
-      res.redirect(303, "/register/step");
+      if (!reg || !linkOpened(reg)) return res.redirect(303, "/register/step");
+      advance(req, res, reg);
     });
   },
   account(req) {
-    const verified = req.session.data.verified;
-    const profile = JSON.parse(req.user.profile || "{}");
-    return html`<h2>Rooms</h2><table><tr><th>Room</th><th>Unread</th></tr><tr><td>#general:${req.session.data.server ?? "lab.test"}</td><td>3</td></tr><tr><td>#random</td><td>0</td></tr></table>
+    const { verified, server = "lab.test" } = req.session.data;
+    const reset = users.profileOf(req.user).reset;
+    const state = { key: "This session is verified.", skipped: "This session is not verified (skipped).", reset: "Your identity was reset." }[verified] ?? "This session is not verified.";
+    return html`<h2>Rooms</h2><table><tr><th>Room</th><th>Unread</th></tr><tr><td>#general:${server}</td><td>3</td></tr><tr><td>#random</td><td>0</td></tr></table>
       <h2>Security</h2>
-      <p id="verify-state">${verified === "key" ? "This session is verified." : verified === "skipped" ? "This session is not verified (skipped)." : verified === "reset" ? "Your identity was reset." : "This session is not verified."}</p>
-      ${profile.reset ? html`<p class="error">Your identity was reset on ${profile.reset.slice(0, 10)}.</p>` : ""}
-      <p class="muted">Signed in on ${req.session.data.server ?? "lab.test"}.</p>`;
+      <p id="verify-state">${state}</p>
+      ${reset ? html`<p class="error">Your identity was reset on ${reset.slice(0, 10)}.</p>` : ""}
+      <p class="muted">Signed in on ${server}.</p>`;
   },
 };

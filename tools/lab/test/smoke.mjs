@@ -49,12 +49,11 @@ class Visitor {
   }
 }
 
-const dashboard = (q) => fetch(`http://localhost:${BASE}/api/outbox?${new URLSearchParams(q)}`).then((r) => r.json());
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SECRET = "JBSWY3DPEHPK3PXP";
 const totpNow = () => otplib.authenticator.generate(SECRET);
 const phone = (action, number) => fetch(`http://localhost:${BASE}/api/push/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ number }) });
-const lastCode = async (site, to) => (await dashboard({ site, to }))[0]?.code;
+const lastCode = (site, to) => lab.lastCode(site, to);
 
 function redirects(r, to, why = "") {
   assert.equal(r.status, 303, `${why} expected a redirect to ${to}, got ${r.status}: ${r.text.slice(0, 200)}`);
@@ -405,7 +404,7 @@ const checks = {
     assert.equal((await login(v, "lab.test", "alice", "x")).status, 401);
     const locked = await login(v, "lab.test", "alice", "x");
     assert.equal(locked.status, 429);
-    assert.match(locked.text, /Try again in <span id="countdown">10<\/span> seconds/);
+    assert.match(locked.text, /Try again in <span id="countdown">\d+<\/span> seconds/);
     assert.equal((await login(v, "lab.test", "alice")).status, 429);
     // a good sign-in goes to the verify screen, which can be skipped on lab.test
     const w = new Visitor(17);

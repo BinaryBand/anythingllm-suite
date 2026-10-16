@@ -5,18 +5,18 @@
 //   /login?social=fragment  the same, but the provider answers after a # that only the page's script can read
 //   /login?social=auto      no form at all: the page redirects to the provider at once
 
-import crypto from "node:crypto";
 import { error, html, raw } from "../lib/html.js";
-import { authorizeUrl, exchange } from "../lib/oauth.js";
+import { authorizeUrl, completeSignIn, newState } from "../lib/oauth.js";
 import { passwordAuth } from "../lib/site.js";
 import * as users from "../lib/users.js";
+import { OFFSETS } from "../lib/ports.js";
 
 const SITE = "federated";
-const CLIENT = { id: "cirrus-docs", secret: "cirrus-secret" };
+const CLIENT_ID = "cirrus-docs";
 
 export default {
   name: SITE,
-  offset: 12,
+  offset: OFFSETS.federated,
   title: "Cirrus Docs",
   color: "#0369a1",
   tagline: "Documents, shared.",
@@ -41,33 +41,26 @@ export default {
     app.get("/auth/lumen", (req, res) => {
       const mode = req.query.mode === "redirect" ? "redirect" : "popup";
       const fragment = mode === "redirect" && req.query.response === "fragment";
-      const state = crypto.randomBytes(16).toString("base64url");
+      const state = newState();
       req.session.save({ oauth: { state, mode, fragment } });
-      res.redirect(302, authorizeUrl(req, { clientId: CLIENT.id, state, fragment }));
+      res.redirect(302, authorizeUrl(req, { clientId: CLIENT_ID, state, fragment }));
     });
 
-    /** Checks the answer and swaps the code for who signed in; signs them in. { ok } or { problem, status }. */
+    /** Checks the answer and signs in whoever Lumen ID says it was. { ok: true }, or { ok: false, problem, status }. */
     const complete = async (req, { code, state, error: denied }) => {
-      const oauth = req.session.data.oauth;
-      if (!oauth || !state || state !== oauth.state) return { problem: "That sign-in has expired. Start again.", status: 400 };
-      if (denied) return { problem: "Lumen ID sign-in was cancelled.", status: 400 };
-      try {
-        const info = await exchange(req, { clientId: CLIENT.id, secret: CLIENT.secret, code });
-        if (!info) return { problem: "Lumen ID didn't accept that sign-in.", status: 400 };
-        req.session.signIn((users.byEmail(SITE, info.email) ?? users.create(SITE, { email: info.email, name: info.name })).id);
-        return { ok: true };
-      } catch {
-        return { problem: "Couldn't reach Lumen ID.", status: 502 };
-      }
+      const result = await completeSignIn(req, { clientId: CLIENT_ID, expected: req.session.data.oauth?.state, state, code, error: denied });
+      if (!result.info) return result;
+      req.session.signIn((users.byEmail(SITE, result.info.email) ?? users.create(SITE, { email: result.info.email, name: result.info.name })).id);
+      return { ok: true };
     };
 
     const finish = (req, res, { popup, ok, problem, status = 200 }) => {
       req.session.save({ oauth: null });
       if (!popup) return ok ? res.redirect(303, "/account") : render(req, res, "Sign in", html`<div class="card"><h1>Sign-in didn't finish</h1>${error(problem)}<a class="button" href="/login">Back to sign in</a></div>`, { status });
-      const message = JSON.stringify({ type: "lumen-auth", ok: Boolean(ok), next: "/account" }).replace(/</g, "\\u003c");
+      const message = JSON.stringify({ type: "lumen-auth", ok, next: "/account" }).replace(/</g, "\\u003c");
       render(req, res, ok ? "Signed in" : "Not signed in", html`<div class="card"><h1>${ok ? "You're signed in" : "Sign-in didn't finish"}</h1>${error(problem)}<p>${ok ? "You can close this window." : "Close this window and try again."}</p></div>
         ${raw(`<script>(function () { var m = ${message}; try { if (window.opener) { window.opener.postMessage(m, location.origin); window.close(); return; } } catch (e) {} if (m.ok) location.href = m.next; })();</script>`)}`,
-      { bare: true, status: ok ? 200 : status });
+      { bare: true, status });
     };
 
     app.get("/auth/callback", async (req, res) => {
@@ -82,7 +75,7 @@ export default {
     app.post("/auth/callback/complete", async (req, res) => {
       const result = await complete(req, req.body);
       req.session.save({ oauth: null });
-      res.status(result.ok ? 200 : result.status).json(result.ok ? { ok: true, redirect: "/account" } : { ok: false, problem: result.problem });
+      res.status(result.status ?? 200).json(result.ok ? { ok: true, redirect: "/account" } : { ok: false, problem: result.problem });
     });
   },
   account: () => html`<h2>Your documents</h2><table><tr><th>Name</th><th>Edited</th></tr><tr><td>Quarterly plan</td><td>Today</td></tr><tr><td>Meeting notes</td><td>Yesterday</td></tr></table>`,

@@ -26,6 +26,10 @@ export const update = (id, fields) => {
   db.prepare(`UPDATE users SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => fields[k]), id);
 };
 
+/** The user's profile (what a site keeps about them besides the columns), and a way to add to it. */
+export const profileOf = (user) => JSON.parse(user.profile || "{}");
+export const saveProfile = (user, patch) => update(user.id, { profile: JSON.stringify({ ...profileOf(user), ...patch }) });
+
 export const remove = (id) => db.prepare("DELETE FROM users WHERE id = ?").run(id);
 
 /** The user with this email and password on `site`, or null. */

@@ -4,21 +4,18 @@
 
 import { error, html } from "../lib/html.js";
 import { siblingOrigin } from "../lib/origin.js";
+import { CLIENTS } from "../lib/oauth.js";
 import { byToken, issueToken, revokeToken } from "../lib/session.js";
 import { loginForm, signupForm } from "../lib/site.js";
 import * as users from "../lib/users.js";
+import { OFFSETS } from "../lib/ports.js";
 
 const SITE = "idp";
-// The apps that may ask: each one's callback is /auth/callback on its own site.
-const CLIENTS = {
-  "cirrus-docs": { name: "Cirrus Docs", secret: "cirrus-secret", site: "federated" },
-  murmur: { name: "Murmur Chat", secret: "murmur-secret", site: "murmur" },
-};
 const CODE_MS = 60_000;
 
 export default {
   name: SITE,
-  offset: 11,
+  offset: OFFSETS.idp,
   title: "Lumen ID",
   color: "#7c3aed",
   tagline: "One account for the apps you use.",
