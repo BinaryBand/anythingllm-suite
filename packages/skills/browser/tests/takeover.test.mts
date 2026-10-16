@@ -32,6 +32,9 @@ test("the user takes the tab over, types a login sealed, is offered to save it, 
   assert.match(await call({ action: "act", do: "click", ref: "e3" }), /^Browser: the user has taken the tab over on its page: you can read it, but not act/);
   assert.match(await call({ action: "read" }), /^The user has taken this tab over on its page: read it, but don't act in it until they hand it back\./);
 
+  post({ ev: "type", ref: "e99", text: "gone" }, opts);
+  await call({ action: "guide" });
+  assert.equal(tabState("take").msg.text, "That field changed on the page: tap it again", "said in the user's words, not the agent's");
   post({ ev: "type", ref: "e1", text: "ada" }, opts);
   post({ ev: "type", ref: "e2", text: "in the clear" }, opts);
   await call({ action: "guide" });

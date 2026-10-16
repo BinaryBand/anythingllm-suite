@@ -1,9 +1,10 @@
 // The page as the agent reads it (view.ts): its visible interactive elements, each tagged with a ref
 // (data-bw-ref) that act targets, then its visible text. A ref stays with its element for the life
 // of the page, so refs from an earlier read still work while the element is there. Open shadow
-// roots are walked; frames aren't. It also gives where each field one types into sits in view, for
-// the tab's page to put an input over while the user holds the tab. `snapshot` runs in the page
-// (page.evaluate), so it uses nothing outside itself.
+// roots are walked; frames aren't. A password field is marked (data-bw-secret) and stays one in
+// every read after, even once "Show password" makes it a text field. It also gives where each field
+// one types into sits in view, for the tab's page to put an input over while the user holds the
+// tab. `snapshot` runs in the page (page.evaluate), so it uses nothing outside itself.
 
 import type { Page } from "./host";
 import { firstLine } from "./state";
@@ -64,14 +65,17 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
   const describe = (el: any) => {
     const tag = el.tagName.toLowerCase();
     let kind = el.getAttribute("role") || (tag === "a" ? "link" : tag === "summary" ? "button" : tag);
-    if (tag === "input") kind = `input[${el.type}]`;
+    // A password field stays one once read, even after "Show password" makes it a text field.
+    if (tag === "input" && el.type === "password") el.setAttribute("data-bw-secret", "1");
+    const secret = tag === "input" && el.getAttribute("data-bw-secret") === "1";
+    if (tag === "input") kind = secret ? "input[password]" : `input[${el.type}]`;
     let line = `${kind} "${name(el)}"`;
     if (tag === "a") {
       const href = el.getAttribute("href") || "";
       if (href && !href.startsWith("javascript:")) line += ` -> ${clip(href, 100)}`;
     }
     if (tag === "input" && (el.type === "checkbox" || el.type === "radio")) line += el.checked ? " (checked)" : " (unchecked)";
-    else if (tag === "input" && el.type === "password") {
+    else if (secret) {
       if (el.value) line += " (filled)";
     } else if (tag === "input" || tag === "textarea") {
       if (el.value) line += ` value="${clip(el.value, 80)}"`;
@@ -90,7 +94,7 @@ function snapshot({ snapshot: maxElements }: { snapshot: number }): Snap {
     if (!typed || el.disabled || el.readOnly) return null;
     const r = el.getBoundingClientRect();
     if (r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) return null;
-    const kind = el.tagName === "INPUT" ? el.type || "text" : el.tagName === "TEXTAREA" ? "textarea" : "text";
+    const kind = el.getAttribute("data-bw-secret") === "1" ? "password" : el.tagName === "INPUT" ? el.type || "text" : el.tagName === "TEXTAREA" ? "textarea" : "text";
     return { ref, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), kind, filled: !!("value" in el ? el.value : el.textContent) };
   };
   let next: number = window.__bwNext || 1;

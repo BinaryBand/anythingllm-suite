@@ -95,7 +95,9 @@ async function step(e: Record<string, unknown>, at: Tab): Promise<boolean> {
 /** Types what the user typed into a field: a password only sealed. It's hidden from the agent's
  *  reads from then on, and kept (with the username typed before it) for the offer to save. */
 async function typed(at: Tab, hold: Hold, e: Record<string, unknown>): Promise<void> {
-  const target = await element(at.page, clip(e.ref, 20));
+  const target = await element(at.page, clip(e.ref, 20)).catch(() => {
+    throw new BrowserError("That field changed on the page: tap it again");
+  });
   const password = await isPassword(target);
   if (password && !e.sealed) throw new BrowserError("A password has to come sealed: reload the page");
   const value = e.sealed ? vault.openSealed(clip(e.sealed, 20000)) : clip(e.text, MAX_TEXT);

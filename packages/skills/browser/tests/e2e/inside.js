@@ -75,6 +75,7 @@ function passkeyRoute(url, body, res) {
   passkeys.log.push(ok ? "signed in" : "refused");
   res.end(ok ? `Signed in with a passkey, count ${count}` : "Refused");
 }
+const LOGIN_FORM = '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><button>Sign in</button></form>';
 const server = http.createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
@@ -94,7 +95,16 @@ const server = http.createServer((req, res) => {
       const sid = /(?:^|; )sid=(\w+)/.exec(req.headers.cookie || "");
       return res.end(page("Me", sid ? "<p>Signed in.</p>" : "<p>Not signed in.</p>"));
     }
-    if (url.pathname === "/login") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><button>Sign in</button></form>'));
+    if (url.pathname === "/login") return res.end(page("Sign in", LOGIN_FORM));
+    if (url.pathname === "/shadow") return res.end(page("Sign in", `<sign-in></sign-in><script>customElements.define("sign-in", class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(LOGIN_FORM)}; } });</script>`));
+    if (url.pathname === "/show") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input id="p" name="pass" type="password"></label><label><input type="checkbox" onchange="p.type = this.checked ? \'text\' : \'password\'"> Show password</label><button>Sign in</button></form>'));
+    if (url.pathname === "/captcha") return res.end(page("Sign in", '<form method="post" action="/login"><label>User <input name="user"></label><label>Password <input name="pass" type="password"></label><label>Digits in the image <input name="digits" required></label><button>Sign in</button></form>'));
+    if (url.pathname === "/signup" && req.method === "POST") {
+      const form = new URLSearchParams(body);
+      const ok = form.get("pass") && form.get("pass") === form.get("confirm");
+      return res.end(ok ? page("Welcome", `<p>Account made for ${form.get("user")}.</p>`) : page("Create account", "<p>The passwords don't match.</p>"));
+    }
+    if (url.pathname === "/signup") return res.end(page("Create account", '<form method="post" action="/signup"><label>Email <input name="user"></label><label>Password <input name="pass" type="password"></label><label>Confirm password <input name="confirm" type="password"></label><button>Next</button></form>'));
     if (url.pathname.startsWith("/pk")) return passkeyRoute(url, body, res);
     if (url.pathname === "/search") return res.end(page("Search", `<div><a href="${SITE}/go?u=${encodeURIComponent(DOCS)}">Docs for ${url.searchParams.get("q")}</a> The docs</div>`));
     if (url.pathname === "/docs") return res.end(page("Docs", "<h1>Docs</h1><p>The export button is under Settings.</p>"));
@@ -197,6 +207,31 @@ const server = http.createServer((req, res) => {
   await tab10.post({ ev: "login-delete", id: tab10.state().logins.find((l) => l.kind === "passkey").id });
   assert.match(await read10(), /Passkey refused: NotAllowedError/, "deleted, it signs in no more");
   assert.deepEqual(passkeys.log, ["registered", "registered", "signed in", "signed in"]);
+
+  // ---- Fields in a shadow root, "Show password", a form that needs more than the login, and a new
+  // account's "Confirm password".
+  const refIn = (text, label) => text.match(new RegExp(`\\[(e\\d+)\\] ${label}`))[1];
+  const shadow = await call({ action: "open", url: `${SITE}/shadow` }, 11);
+  const inShadow = await call({ action: "login", user_ref: refIn(shadow, 'input\\[text\\] "User'), pass_ref: refIn(shadow, 'input\\[password\\]'), submit_ref: refIn(shadow, 'button "Sign in"') }, 11);
+  assert.match(inShadow, /Page: Home/, `a saved login typed into a shadow root's fields: ${inShadow}`);
+
+  const show = await call({ action: "open", url: `${SITE}/show` }, 12);
+  const shownPass = refIn(show, 'input\\[password\\]');
+  await call({ action: "act", do: "check", ref: refIn(show, 'input\\[checkbox\\]') }, 12);
+  const shown = await call({ action: "read" }, 12);
+  assert.match(shown, new RegExp(`\\[${shownPass}\\] input\\[password\\]`), "still read as a password field once shown");
+  assert.match(await call({ action: "act", do: "fill", ref: shownPass, text: "e2e-pass-123" }, 12), /password field, which act never types into/);
+
+  const captcha = await call({ action: "open", url: `${SITE}/captcha` }, 13);
+  const unsent = await call({ action: "login", user_ref: refIn(captcha, 'input\\[text\\] "User'), pass_ref: refIn(captcha, 'input\\[password\\]'), submit_ref: refIn(captcha, 'button "Sign in"') }, 13);
+  assert.match(unsent, /but didn't click e\d+: the page still needs e\d+ "Digits in the image" first/, unsent);
+  assert.match(unsent, /Page: Sign in/, "not sent");
+
+  const signup = await call({ action: "open", url: `${SITE}/signup` }, 14);
+  assert.match(await call({ action: "login", user_ref: refIn(signup, 'input\\[text\\] "Email'), pass_ref: refIn(signup, 'input\\[password\\] "Password'), confirm_ref: refIn(signup, 'input\\[password\\] "Confirm'), submit_ref: refIn(signup, 'button "Next"') }, 14), /needs a password for the new account/);
+  const tab14 = tabPage(14);
+  assert.equal(tab14.state().need.confirm, true);
+  assert.match(await tab14.post({ ev: "need-answer", user: "dana", sealed: tab14.seal("e2e-new-789"), save: true }), /Page: Welcome/, "the same password in both fields");
 
   const found = await call({ action: "search", query: "export" });
   assert.match(found, /1\. Docs for export\n {3}http:\/\/localhost:\d+\/docs/, found);

@@ -69,7 +69,7 @@ test("a login with none saved is asked for on the tab's page, sealed, typed in, 
   const asked = await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
   assert.match(asked, /^The user is asked on the tab's page: login\.example needs the user to sign in, and no login is saved for it\. Tell them to tap the card below/);
   assert.match(asked, /Never ask for it in the chat/);
-  assert.deepEqual(tabState().need, { kind: "login", host: "login.example", text: "login.example needs the user to sign in, and no login is saved for it", label: null, hasUser: true, until: tabState().need.until });
+  assert.deepEqual(tabState().need, { kind: "login", host: "login.example", text: "login.example needs the user to sign in, and no login is saved for it", label: null, hasUser: true, confirm: false, until: tabState().need.until });
 
   post({ ev: "need-answer", user: "ada@example.com", sealed: seal("pw-s3cret-1"), save: true });
   const after = await call({ action: "read" });
@@ -230,4 +230,53 @@ test("a login the site seems to refuse is said on the tab's page and asked again
   assert.match(after.msg.text, /Take the tab over to try again, or ask the agent to\./, "kept past the agent's own read");
   assert.ok(after.msg.id > 0, "with an id the page shows it once by");
   assert.equal(after.need, null);
+});
+
+test("a field read as a password stays one after Show password, and login takes only a field for the username", async () => {
+  site("https://shown.example/", {
+    title: "Enter your password",
+    fields: { e1: { kind: "link", name: "Not you?" }, e2: { type: "text", name: "Password", attrs: { "data-bw-secret": "1" } }, e3: { type: "text", name: "Password", attrs: { autocomplete: "current-password" } }, e4: { kind: "button", name: "Sign in" } },
+  });
+  const call = (args: Record<string, unknown>) => called(args, { workspace: "shown" });
+  await call({ action: "open", url: "https://shown.example/" });
+  assert.match(await call({ action: "act", steps: [{ do: "fill", ref: "e2", text: "pw-shown-1" }] }), /e2 is a password field, which act never types into/);
+  assert.match(await call({ action: "act", do: "fill", ref: "e3", text: "pw-shown-1" }), /e3 is a password field/);
+  assert.equal(lastPage().fields.e2.value, undefined);
+  assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e4" }), /e1 is a link, not a field for the username: .* leave it out on a page that asks only for the password/);
+  assert.match(await call({ action: "login", pass_ref: "e2", submit_ref: "e4" }), /asked on the tab's page/);
+  assert.equal(tabState("shown").need.hasUser, false);
+});
+
+test("a new account's password is asked for with confirm_ref and typed into both fields", async () => {
+  site("https://signup.example/", {
+    title: "Create account",
+    fields: { e1: { type: "email", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { type: "password", name: "Confirm password" }, e4: { kind: "button", name: "Next" }, e5: { kind: "button", name: "Back" } },
+  });
+  const call = (args: Record<string, unknown>) => called(args, { workspace: "signup" });
+  await call({ action: "open", url: "https://signup.example/" });
+  assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", confirm_ref: "e5", submit_ref: "e4" }), /e5 isn't a password field; confirm_ref is a new account's "Confirm password"/);
+  assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", confirm_ref: "e3", submit_ref: "e4" }), /^The user is asked on the tab's page: signup\.example needs a password for the new account, which the user chooses\./);
+  assert.equal(tabState("signup").need.confirm, true);
+  const page = lastPage();
+  post({ ev: "need-answer", user: "dana@example.com", sealed: seal("pw-new-1", tabConfig("signup").pub), save: true }, { workspace: "signup" });
+  assert.match(await call({ action: "read" }), /it was typed into the page and e4 clicked/);
+  assert.deepEqual([page.fields.e1.value, page.fields.e2.value, page.fields.e3.value], ["dana@example.com", "pw-new-1", "pw-new-1"]);
+  assert.deepEqual(page.clicks.slice(-1), ["e4"]);
+});
+
+test("a login typed into a form that still needs something else (a CAPTCHA) isn't sent, and the page says what's missing", async () => {
+  site("https://captcha.example/", {
+    title: "Sign in",
+    fields: { e1: { type: "email", name: "Email" }, e2: { type: "password", name: "Password" }, e3: { kind: "button", name: "Sign in", blockedBy: [{ ref: "e4", label: "Type the digits shown" }] }, e4: { type: "text", name: "Type the digits shown" } },
+    onclick: { e3: "https://captcha.example/home" },
+  });
+  const call = (args: Record<string, unknown>) => called(args, { workspace: "captcha" });
+  await call({ action: "open", url: "https://captcha.example/" });
+  await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
+  post({ ev: "need-answer", user: "ada@example.com", sealed: seal("pw-cap-1", tabConfig("captcha").pub) }, { workspace: "captcha" });
+  const after = await call({ action: "read" });
+  assert.match(after, /but e3 wasn't clicked: the page still needs e4 "Type the digits shown" first/);
+  assert.doesNotMatch(after, /may have refused/);
+  assert.equal(lastPage().url(), "https://captcha.example/", "not sent");
+  assert.equal(tabState("captcha").msg.text, 'Your login is in; the page still needs "Type the digits shown" before it can be sent: take the tab over to fill it');
 });

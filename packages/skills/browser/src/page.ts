@@ -101,7 +101,7 @@ function tabState(at: Tab, title: string, url: string, snap: Snap) {
     size: { w: screen.width, h: screen.height },
     who: held ? "user" : "agent",
     fields: held ? snap.fields : [],
-    need: need ? { kind: need.kind, host: need.host, text: need.text, label: need.label ?? null, hasUser: !!need.userRef, until: need.until } : null,
+    need: need ? { kind: need.kind, host: need.host, text: need.text, label: need.label ?? null, hasUser: !!need.userRef, confirm: !!need.confirmRef, until: need.until } : null,
     offer: takeover.shownOffer(at.entry, at.key),
     msg: msg && { text: msg.text, id: msg.id },
     logins: logins.list().map((l) => ({ ...l, here: onSite(host, l.site) })),
@@ -190,11 +190,16 @@ async function apply(e: Record<string, unknown>, at: Tab | null): Promise<boolea
   const user = login ? text(e.user).trim() : "";
   if (!secret || (need.userRef && !user)) return false;
   at.entry.needs.delete(at.key);
-  await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, secret }, need.submitRef);
+  const unsent = await typeIn(at, need.host, { userRef: need.userRef, user, secretRef: need.secretRef, confirmRef: need.confirmRef, secret }, need.submitRef);
   if (login && need.userRef && e.save === true) at.entry.offers.set(at.key, { kind: "password", site: need.host, user, pass: secret, agreed: true, until: Date.now() + OFFER_MS });
   const typed = `the user entered ${login ? "the login" : "the code"} you asked for on the tab's page and it was typed into the page`;
   const hidden = "it stays hidden from you. Read the page to see whether it worked";
   if (!need.submitRef) return note(at.entry, at.key, `${typed}, but nothing was submitted: submit it with act (press Enter in the field, or click the button); ${hidden}`), true;
+  if (unsent.length) {
+    // Not sent, so nothing was refused: the form needs something else first (a CAPTCHA, say).
+    say(at.entry, at.key, `${login ? "Your login is" : "The code is"} in; the page still needs ${unsent.map((f) => (f.includes('"') ? f.slice(f.indexOf('"')) : "another field")).join(", ")} before it can be sent: take the tab over to fill it`);
+    return note(at.entry, at.key, `${typed}, but ${need.submitRef} wasn't clicked: the page still needs ${unsent.join(", ")} first. Fill it with act, or for a check only a person passes, the user takes the tab over; ${hidden}`), true;
+  }
   const sent = `${typed} and ${need.submitRef} clicked`;
   const asking = await stillAsks(at, need);
   if (!asking) return note(at.entry, at.key, `${sent}; ${hidden}`), true;

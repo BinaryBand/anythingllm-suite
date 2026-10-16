@@ -10,7 +10,7 @@ Tasks on the web, as one AnythingLLM agent skill: research (search the web, look
 | `open` | an address in this chat's tab |
 | `read` | the tab as text, with refs (`find`, `from` for long pages) |
 | `act` | click, fill, type, press, select… by ref; or several `steps` |
-| `login` | types the saved login; with none, the user enters it on the tab's page; `what` asks them for a code the same way |
+| `login` | types the saved login; with none, the user enters it on the tab's page; `confirm_ref` asks them to choose a new account's password; `what` asks them for a code the same way |
 | `call` | one request from the tab, with its signed-in session (`auth` "session") |
 
 Each answer about the tab ends with its card, a picture of the tab that opens its page. There the user sees the tab, enters what the agent asks for (sealed on their device; the model never sees it) and deletes a saved login. Every request Chrome makes goes through the fence: the public web only, and the hosts in `FENCE_ALLOW`.
@@ -31,5 +31,7 @@ Each answer about the tab ends with its card, a picture of the tab that opens it
 `anythingllm-suite install` puts it in, over the lean `browser-lean` (its old files go; its logins, passkeys and keys are imported into the shared vault on the first call). Switch on Browser under Agent Skills, and set its ANYTHINGLLM_URL to the address you open AnythingLLM at, so the card opens anywhere. It needs AnythingLLM's Docker image (Chrome comes with its collector); elsewhere, set `BROWSER_LEAN_PUPPETEER` to a Puppeteer.
 
 On the tab's page the user can also take the tab over: tap, swipe to scroll, type into a field with their own keyboard (a password sealed on their device), go back or reload, then hand it back. The agent reads but doesn't act meanwhile, and a hold with no step for 10 minutes lapses. After the user signs in that way, the page offers to save the login.
+
+Pages: fields inside open shadow roots work like any other. A password field stays one after "Show password" turns it into a text field, so `act` still won't type into it. A login isn't sent while its form still needs something else (a CAPTCHA, say): the agent and the user are told what. Fields inside iframes aren't read yet; there the user takes the tab over, and can't type into them either.
 
 Passkeys: every tab has Chrome's virtual authenticator holding the saved passkeys, so a site's passkey sign-in works by itself. A passkey a site makes while the user holds the tab is offered for saving; one made while the agent has it is taken out again. The lean browser's passkeys are imported.

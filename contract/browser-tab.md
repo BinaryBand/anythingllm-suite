@@ -56,9 +56,10 @@ A closed tab's state is `{"closed": true}`, and its other files are gone.
 | `text` | string | the request, in the skill's own words, never the model's |
 | `label` | string or null | for a code: "The verification code", "The code from your authenticator app", "The code sent to your phone" or "The code sent to your email" |
 | `hasUser` | boolean | for a login: whether a username is asked for too |
+| `confirm` | boolean | for a login: a new account's password, which the user chooses; it's typed into the "Confirm password" field too |
 | `until` | number | when the request lapses, ms since 1970 (10 minutes after it was made) |
 
-`need` goes back to null once the answer is typed, the user cancels, or it lapses. When the site still shows the same field after an answer was submitted (a login or code it likely refused), the request is made again with a `text` that says so.
+`need` goes back to null once the answer is typed, the user cancels, or it lapses. When the form can't be sent yet because it needs something else first (a CAPTCHA, say), the answer is typed but not submitted, and `msg` says what's still needed. When the site still shows the same field after an answer was submitted (a login or code it likely refused), the request is made again with a `text` that says so.
 
 ## Answering, as the page does
 
