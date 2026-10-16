@@ -9,28 +9,20 @@
 </div>
 <script>
 App.mount("table", ({ at, q }) => {
-  // How the rows are sorted and filtered is this page's own, never the data's.
-  let sortKey = null, up = true, filter = "";
-  const cellOf = (col, v) => (v === undefined || v === null ? "" : col.type === "number" && typeof v === "number" ? v.toLocaleString() : String(v));
-  const valueOf = (col, text) => {
-    const t = text.trim();
-    if (col.type === "number") return t === "" ? null : Number(t.replace(/[^0-9.+-]/g, ""));
-    return t;
-  };
-  q("filter").oninput = () => ((filter = q("filter").value.trim().toLowerCase()), draw());
-  q("add").onclick = () => {
-    const cols = App.get(at + "/columns");
-    App.patch([{ op: "add", path: at + "/rows/-", value: Object.fromEntries(cols.map((c) => [c.key, c.type === "number" ? 0 : ""])) }], { ev: "add-row" });
-  };
-  function edit(i, row, col, td) {
-    const input = el("input", { value: row[col.key] ?? "", ariaLabel: col.label, inputMode: col.type === "number" ? "decimal" : "text", type: col.type === "date" ? "date" : "text" });
+  let key = null, up = true, find = ""; // the page's own view, never saved
+  const show = (c, v) => (v ?? "") === "" ? "" : c.type === "number" ? Number(v).toLocaleString() : String(v);
+  const btn = (text, label, fn) => el("button", { type: "button", className: "quiet", textContent: text, ariaLabel: label, onclick: fn });
+  const guard = (i, row) => ({ op: "test", path: `${at}/rows/${i}`, value: row });
+  q("filter").oninput = () => ((find = q("filter").value.trim().toLowerCase()), draw());
+  q("add").onclick = () => App.patch([{ op: "add", path: at + "/rows/-", value: Object.fromEntries(App.get(at + "/columns").map((c) => [c.key, c.type === "number" ? 0 : ""])) }], { ev: "add-row" });
+  function edit(td, i, row, c) {
+    const input = el("input", { value: row[c.key] ?? "", ariaLabel: c.label, type: c.type === "date" ? "date" : "text", inputMode: c.type === "number" ? "decimal" : "text" });
     const done = (save) => {
-      const v = valueOf(col, input.value);
-      if (save && v !== row[col.key] && !(col.type === "number" && Number.isNaN(v)))
-        App.patch([{ op: "test", path: `${at}/rows/${i}`, value: row }, { op: "add", path: `${at}/rows/${i}/${col.key}`, value: v }], { ev: "edit", column: col.key });
+      const v = c.type === "number" ? Number(input.value.replace(/[^0-9.+-]/g, "")) : input.value.trim();
+      if (save && v !== row[c.key] && !Number.isNaN(v)) App.patch([guard(i, row), { op: "add", path: `${at}/rows/${i}/${c.key}`, value: v }], { ev: "edit", column: c.key });
       else draw();
     };
-    input.onkeydown = (e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); };
+    input.onkeydown = (e) => (e.key === "Enter" ? done(true) : e.key === "Escape" ? done(false) : 0);
     input.onblur = () => done(true);
     td.replaceChildren(input);
     input.focus();
@@ -38,38 +30,24 @@ App.mount("table", ({ at, q }) => {
   function draw() {
     const { columns, rows } = App.get(at);
     q("head").replaceChildren(...columns.map((c) => {
-      const b = el("button", { type: "button", textContent: c.label + (sortKey === c.key ? (up ? " ↑" : " ↓") : "") });
-      b.onclick = () => ((up = sortKey === c.key ? !up : c.type !== "number"), (sortKey = c.key), draw());
       const th = el("th", { scope: "col" });
-      th.setAttribute("aria-sort", sortKey === c.key ? (up ? "ascending" : "descending") : "none");
-      th.append(b);
+      th.setAttribute("aria-sort", key === c.key ? (up ? "ascending" : "descending") : "none");
+      th.append(btn(c.label + (key === c.key ? (up ? " ↑" : " ↓") : ""), "Sort by " + c.label, () => ((up = key === c.key ? !up : c.type !== "number"), (key = c.key), draw())));
       return th;
-    }), el("th", { scope: "col", textContent: "" }));
-    let shown = rows.map((row, i) => ({ row, i }));
-    if (filter) shown = shown.filter(({ row }) => columns.some((c) => cellOf(c, row[c.key]).toLowerCase().includes(filter)));
-    if (sortKey) {
-      const col = columns.find((c) => c.key === sortKey);
-      shown.sort((a, b) => {
-        const x = a.row[sortKey], y = b.row[sortKey];
-        const d = col && col.type === "number" ? (Number(x) || 0) - (Number(y) || 0) : String(x ?? "").localeCompare(String(y ?? ""));
-        return up ? d : -d;
-      });
-    }
+    }), el("th"));
+    const sorter = columns.find((c) => c.key === key);
+    const shown = rows.map((row, i) => ({ row, i }))
+      .filter(({ row }) => !find || columns.some((c) => show(c, row[c.key]).toLowerCase().includes(find)))
+      .sort((a, b) => !sorter ? 0 : (up ? 1 : -1) * (sorter.type === "number" ? (+a.row[key] || 0) - (+b.row[key] || 0) : String(a.row[key] ?? "").localeCompare(String(b.row[key] ?? ""))));
     q("none").hidden = rows.length > 0;
     q("rows").replaceChildren(...shown.map(({ row, i }) => {
       const tr = el("tr");
-      for (const col of columns) {
+      for (const c of columns) {
         const td = el("td");
-        const b = el("button", { type: "button", className: "quiet", textContent: cellOf(col, row[col.key]) || "—", ariaLabel: `${col.label}: ${cellOf(col, row[col.key]) || "empty"}, edit` });
-        b.onclick = () => edit(i, row, col, td);
-        td.append(b);
+        td.append(btn(show(c, row[c.key]) || "—", `${c.label}: ${show(c, row[c.key]) || "empty"}, edit`, () => edit(td, i, row, c)));
         tr.append(td);
       }
-      const gone = el("button", { type: "button", className: "quiet", textContent: "✕", ariaLabel: "Remove this row" });
-      gone.onclick = () => App.patch([{ op: "test", path: `${at}/rows/${i}`, value: row }, { op: "remove", path: `${at}/rows/${i}` }], { ev: "remove-row" });
-      const td = el("td");
-      td.append(gone);
-      tr.append(td);
+      tr.append(el("td").appendChild(btn("✕", "Remove this row", () => App.patch([guard(i, row), { op: "remove", path: `${at}/rows/${i}` }], { ev: "remove-row" }))).parentNode);
       return tr;
     }));
   }
