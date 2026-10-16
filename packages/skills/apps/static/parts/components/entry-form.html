@@ -1,0 +1,22 @@
+<!--part
+{"name":"entry-form","line":"a form adding dated entries","schema":{"type":"object","required":["entries"],"properties":{"entries":{"type":"array","maxItems":2000,"items":{"type":"object","required":["text","at"],"properties":{"text":{"type":"string","maxLength":500},"at":{"type":"string","maxLength":40}}}}}},"data":{"entries":[]},"events":["add"]}
+-->
+<div class="stack" data-part="entry-form">
+<form class="stack" data-ref="form"><label class="field">Note<textarea data-ref="text" maxlength="500" required></textarea></label><button type="submit">Add</button></form>
+<ul class="items" data-ref="entries"></ul>
+</div>
+<script>
+App.mount("entry-form", ({ at, q }) => {
+  q("form").onsubmit = (e) => {
+    e.preventDefault();
+    const text = q("text").value.trim();
+    if (text) App.patch([{ op: "add", path: at + "/entries/-", value: { text, at: new Date().toISOString() } }], { ev: "add", text });
+    q("text").value = "";
+  };
+  return () => q("entries").replaceChildren(...App.get(at + "/entries").slice(-20).reverse().map((e) => {
+    const li = el("li");
+    li.append(el("span", { textContent: e.text }), el("small", { textContent: e.at.slice(0, 10) }));
+    return li;
+  }));
+});
+</script>

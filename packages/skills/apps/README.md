@@ -1,0 +1,37 @@
+# apps-lean
+
+Small apps a user keeps in a workspace, such as a shopping list, daily habits or a focus timer, as one AnythingLLM agent skill with no server of its own. Each app is a JSON file of its data and its page; the page is built from the shipped parts (templates, components, figures), published into AnythingLLM's public folder, and saves taps back as event documents the skill applies at its next call. Ported from the lean edition (`anythingllm-lean/skills/apps`, 0.17); the in-chat form, the file-card fallback and the bundled font were left behind.
+
+| Action | Does |
+| --- | --- |
+| `list` | this workspace's apps, each with its card's first line, then how to make a new one |
+| `create` | an app from a starter, or from a template with `parts` (components composed in, their schemas merged) and `text` (app.json); without a starter it needs a `plan` |
+| `do` | a JSON Patch (RFC 6902) on the data, with `ev` naming what happened |
+| `read` | with `file`, `app.json` or `page.html`; without, app.json, the data and the newest changes |
+| `edit` | `app.json` or `page.html`: replaces text found exactly once (`find`), or with no `find` the whole file |
+| `undo` | takes back the newest change, to the data or a file; with `file`, that file's newest change |
+| `page` | publishes the app's page; the card's title is its link |
+| `delete` | removes the app, after AnythingLLM's approval prompt where it has one |
+| `guide` | this edition's notes, the starters, the parts and design rules; with `query`, each topic or part it names |
+
+## Where it keeps things
+
+| What | Where |
+| --- | --- |
+| Each app: app.json's keys, page.html, data, its newest 20 changes and 10 earlier files | `apps-lean/<workspace>/<name>.json` in AnythingLLM's storage, changed under its lock |
+| The key every page posts with (a browser-extension key: it can store documents, never read them) | `apps-lean/.page-key.json` |
+| Each app's page, at a random address | `public/apps-lean/<token>.html` beside AnythingLLM's server (`ANYTHINGLLM_PUBLIC_DIR` to move it) |
+| What a page posts, until the skill applies it | `documents/custom-documents/raw-apps-lean-event-*.json`, as AnythingLLM's collector writes it |
+| Your own versions of the parts, topics and runtime | `apps-lean/.static/`, at the same paths as `static/`: they win over the shipped ones |
+
+## Using it
+
+`anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Apps under Agent Skills and set its ANYTHINGLLM_URL to the address your browser and phone reach AnythingLLM at: pages are published only once it's set. Where the public folder can't be written (AnythingLLM Desktop), apps work from the chat and have no page.
+
+## What it needs of AnythingLLM
+
+The storage folder; the public folder, which AnythingLLM serves without a sign-in; `models/browserExtensionApiKey` to make the pages' key, and the browser-extension upload its pages post to (`#shared/pages`); the invocation's workspace and thread; and `requestToolApproval` for `delete`. Each is listed in `docs/.scratch/TODO.md`.
+
+## Check
+
+`tests/*.test.mts` (`npm run skills:test` in `packages/`): the store, patch, schema and card from `src`, the parts read from `static/` as the build inlines them, and the handler through the built bundle.

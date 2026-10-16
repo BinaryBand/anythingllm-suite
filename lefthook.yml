@@ -25,7 +25,7 @@ pre-push:
       glob: ["packages/control/**/*.{ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**"]
       run: tools/check control
     skills:
-      glob: ["packages/skills/**/*.{js,ts,mts,mjs,json}", "packages/*.{json,mjs,mts}", "packages/shared/**"]
+      glob: ["packages/skills/**/*.{js,ts,mts,mjs,json,html,css,md}", "packages/*.{json,mjs,mts}", "packages/shared/**"]
       run: tools/check skills
     app:
       glob: "app/**/*.dart"
