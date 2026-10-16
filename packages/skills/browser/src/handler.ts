@@ -58,7 +58,7 @@ async function reply(self: HandlerContext, at: Tab, lead: string, find = "", fro
   const asking = at.entry.needs.has(at.key);
   const read = render({ title, url, snap, notes: takeNotes(at.entry, at.key), find, from, secrets: at.entry.secrets });
   // A sign-in or a code on the page is login's: act never types one, and the user's is theirs to give.
-  const hint = held || asking ? "" : asksPassword(snap) ? "This page has a password field: to sign in or confirm it's you, use login." : asksCode(snap) ? 'This page asks for a code: use login with what ("sms", "email", "authenticator" or "code").' : "";
+  const hint = held || asking ? "" : asksPassword(snap) ? "This page has a password field: to sign in or confirm it's you, use login." : asksCode(snap) ? 'This page asks for a code: use login with what ("sms", "email", "authenticator" or "code") and ref. Telling the user isn\'t enough: the tab\'s page asks them for it only once login has.' : "";
   const put = "Answer the user in words first, then put the card below in your reply exactly as given, with no label or heading: tapping it opens the tab's page, where the user watches it, gives what you ask them for, or takes it over.";
   const top = (held ? "The user has taken this tab over on its page: read it, but don't act in it until they hand it back.\n" : "") + lead;
   const text = asking ? [top, "", put, ...drawn.lines, "", read] : [top, "", read, ...(hint ? ["", hint] : []), "", put, ...drawn.lines];
