@@ -22,11 +22,14 @@ Small apps a user keeps in a workspace, such as a shopping list, daily habits or
 | The key every page posts with (a browser-extension key: it can store documents, never read them) | `apps-lean/.page-key.json` |
 | Each app's page, at a random address | `public/apps-lean/<token>.html` beside AnythingLLM's server (`ANYTHINGLLM_PUBLIC_DIR` to move it) |
 | What a page posts, until the skill applies it | `documents/custom-documents/raw-apps-lean-event-*.json`, as AnythingLLM's collector writes it |
+| What pages did since a workspace's last chat call (20 lines) | `apps-lean/<workspace>/.news.json` |
 | Your own versions of the parts, topics and runtime | `apps-lean/.static/`, at the same paths as `static/`: they win over the shipped ones |
 
 ## Using it
 
 `anythingllm-suite install` puts it in (see the [README](../../../README.md)); then switch on Apps under Agent Skills. Each app's page is published as it's made; set Apps' ANYTHINGLLM_URL to the address your browser and phone reach AnythingLLM at, so the card's link opens from anywhere rather than only from AnythingLLM's own chat. Where the public folder can't be written (AnythingLLM Desktop), apps work from the chat and have no page.
+
+Taps reach the app as they land: the skill watches where AnythingLLM's collector writes what pages post, from its first call after AnythingLLM starts until AnythingLLM stops (not in a scheduled job, whose process ends within minutes), and each workspace's next chat call is told what its pages did. Until that first call, taps show on the device that made them and reach the app at the call. Where the folder watch doesn't see changes (Docker Desktop's bind mounts on macOS and Windows), a 30 s poll does.
 
 A page posts each change with its app's secret, and the skill applies it to that app alone, so one app's link changes no other. An app from before apps had a secret takes its page's events until it gets one; once per process the skill writes again every page an older skill or older parts made, which also gives those apps their secret.
 

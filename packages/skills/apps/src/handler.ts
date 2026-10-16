@@ -3,10 +3,11 @@
 // call works on the workspace AnythingLLM invoked it from and answers text for the agent, with the
 // app's card in Markdown to put in its reply.
 
+import { workspaceOf } from "#shared/anythingllm";
 import { Told } from "#shared/errors";
 import { card, headline } from "./card.ts";
 import type { HandlerContext } from "./host.ts";
-import { collect, described, keyForPages, pageUrl, publish, refresh, unpublish, upgrade } from "./page.ts";
+import { caughtUp, keepWatching, keyForPages, news, pageUrl, publish, refresh, unpublish, upgrade } from "./page.ts";
 import type { Json } from "./patch.ts";
 import * as parts from "./parts.ts";
 import { withDefaults } from "./schema.ts";
@@ -236,14 +237,17 @@ async function run(self: HandlerContext, params: Args): Promise<string> {
   // One key for every page a call writes, asked for when the first needs it.
   let asked: Promise<string> | undefined;
   const key = () => (asked ??= keyForPages());
-  if (action !== "guide") await upgrade(key);
-  // Changes made on app pages wait as event documents until the skill next runs.
-  const fromPages = action === "guide" ? [] : await collect();
+  // Pages' changes are applied as they land, by a watch that lasts as long as AnythingLLM's process;
+  // a call takes what's waiting first, so it reads every app as its pages left it.
+  keepWatching();
+  if (action !== "guide") {
+    await upgrade(key);
+    await caughtUp(key);
+  }
   const reply = await act(scope, params, self);
-  const touched = new Map(fromPages.filter((r) => r.ok).map((r) => [`${r.workspace}/${r.app}`, { workspace: r.workspace!, app: r.app! }]));
-  if (CHANGES.has(action) && params.name) touched.set(`${scope.workspace}/${params.name}`, { workspace: scope.workspace, app: params.name });
-  for (const { workspace, app } of touched.values()) await refresh(workspace, app, key);
-  const lines = described(fromPages, scope.workspace);
+  if (CHANGES.has(action) && params.name) await refresh(scope.workspace, params.name, key);
+  // What pages did is said once, in the workspace's next chat call; a scheduled job is told none.
+  const lines = action === "guide" || workspaceOf(self) === null ? [] : await news(scope.workspace);
   return lines.length ? [...lines, "", reply].join("\n") : reply;
 }
 
