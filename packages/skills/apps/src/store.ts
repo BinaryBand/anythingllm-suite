@@ -336,6 +336,45 @@ export async function mark(workspace: string, name: unknown, fields: Json): Prom
 }
 
 /** The app with a secret for its page's events, made now for an app from before apps had one. */
+/** How many asks from an app's page wait for the chat, how many picks one holds, and how long its
+ *  words may be. */
+export const ASKS_WAITING = 10;
+export const PICKS = 5;
+export const ASK_TEXT = 500;
+
+/** An ask from the app's page: what the user picked on it ("Change this") and what they want of
+ *  each, kept apart from the data and its history until the agent clears it. Refused when it's
+ *  malformed, or when ASKS_WAITING already wait. */
+export async function addAsk(workspace: string, name: unknown, ask: { id?: string; picks: Json }): Promise<Json> {
+  const picks = Array.isArray(ask.picks) ? ask.picks.slice(0, PICKS) : [];
+  const clip = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : undefined);
+  const clean = picks
+    .map((p: Json) => ({ id: clip(p?.id, 80), ref: clip(p?.ref, 80), part: clip(p?.part, 80), at: clip(p?.at, 200), figure: clip(p?.figure, 40), tag: clip(p?.tag, 20), cls: clip(p?.cls, 60), shown: clip(p?.shown, 80), text: clip(p?.text, ASK_TEXT) }))
+    .filter((p: Json) => p.text);
+  if (!clean.length) throw new AppError("an ask says what should change of something picked on the page");
+  return withLock(workspace, name, () => {
+    const app = read(workspace, name);
+    const asks: Json[] = app.asks || [];
+    if (asks.length >= ASKS_WAITING) throw new AppError(`${ASKS_WAITING} asks are waiting already: the chat has to catch up first`);
+    const id = `a${(app.askSeq || 0) + 1}`;
+    const next = { ...app, askSeq: (app.askSeq || 0) + 1, asks: [...asks, { id, t: now(), picks: clean }] };
+    save(workspace, next);
+    return { app: next, id, kept: clean.length };
+  });
+}
+
+/** The app with the ask `id` cleared, once the agent has done it; throws naming the asks there are. */
+export async function clearAsk(workspace: string, name: unknown, id: unknown): Promise<Json> {
+  return withLock(workspace, name, () => {
+    const app = read(workspace, name);
+    const asks: Json[] = app.asks || [];
+    if (!asks.some((a) => a.id === id)) throw new AppError(`${name} has no ask ${JSON.stringify(id)}${asks.length ? `; its asks are ${asks.map((a) => a.id).join(", ")}` : ""}`);
+    const next = { ...app, asks: asks.filter((a) => a.id !== id) };
+    save(workspace, next);
+    return next;
+  });
+}
+
 export async function withSecret(workspace: string, name: unknown): Promise<Json> {
   return withLock(workspace, name, () => {
     const app = read(workspace, name);

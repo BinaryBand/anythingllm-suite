@@ -69,7 +69,7 @@ export function render(app: Json, workspace: string, key: string): string | null
 const pageFile = (token: string): string => `${HUB_ID}/${token}.html`;
 /** What an open page reads every 2 s to keep up: never the secret, the plan or the history. */
 const stateFile = (token: string): string => `${HUB_ID}/${token}.json`;
-export const stateOf = (app: Json): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], version: versionOf(app) });
+export const stateOf = (app: Json): Json => ({ line: app.line || 0, data: app.data, seen: app.seen || [], version: versionOf(app), asks: (app.asks || []).length });
 
 /** The address of a page from its token: under `base`, AnythingLLM's address as the user's browser
  *  reaches it, or relative to AnythingLLM's own pages without it; null when it has no page yet. */
@@ -121,6 +121,8 @@ export interface Result {
   why?: string;
   /** Set when the event named no app there is: its workspace is only what the event said. */
   unknown?: boolean;
+  /** The id an ask from the page was kept under. */
+  ask?: string;
 }
 
 /** An event as the page posts it, or why it isn't one. */
@@ -128,7 +130,8 @@ function parse(posted: unknown): { event?: Json; why?: string } {
   const e = posted as Json;
   if (!e || typeof e !== "object") return { why: "not JSON" };
   if (e.apps_lean_event !== 1) return { why: "not an apps-lean event" };
-  if (typeof e.workspace !== "string" || typeof e.app !== "string" || !Array.isArray(e.patch)) return { why: "missing workspace, app or patch" };
+  if (typeof e.workspace !== "string" || typeof e.app !== "string") return { why: "missing workspace or app" };
+  if (e.ev === "ask" ? !Array.isArray(e.picks) : !Array.isArray(e.patch)) return { why: e.ev === "ask" ? "an ask with no picks" : "missing patch" };
   return { event: e };
 }
 
@@ -142,7 +145,7 @@ const NOT_MINE = "it didn't come from this app's page";
  *  from before apps had a secret takes its page's events until it has one. The events for one app
  *  are applied together, so the app is read and written once however many the page sent. */
 export async function collect(): Promise<Result[]> {
-  const rows: { base?: Json; change?: store.Change; secret?: unknown; answer?: Result }[] = [];
+  const rows: { base?: Json; change?: store.Change; picks?: Json[]; secret?: unknown; answer?: Result }[] = [];
   const byApp = new Map<string, typeof rows>();
   for (const posted of take(TITLE)) {
     const { event, why } = parse(posted);
@@ -152,7 +155,9 @@ export async function collect(): Promise<Result[]> {
     }
     const fields = event.fields && typeof event.fields === "object" ? event.fields : undefined;
     const base = { workspace: event.workspace, app: event.app, ev: String(event.ev || "change"), fields };
-    const row = { base, secret: event.secret, change: { patch: event.patch, ev: base.ev, fields, by: "page", id: typeof event.id === "string" ? event.id : undefined } };
+    const row = event.ev === "ask"
+      ? { base, secret: event.secret, picks: event.picks as Json[] }
+      : { base, secret: event.secret, change: { patch: event.patch, ev: base.ev, fields, by: "page", id: typeof event.id === "string" ? event.id : undefined } };
     const key = `${event.workspace}/${event.app}`;
     byApp.set(key, [...(byApp.get(key) || []), row]);
     rows.push(row);
@@ -169,8 +174,16 @@ export async function collect(): Promise<Result[]> {
     }
     const mine = waiting.filter((row) => (found.secret ? sameSecret(row.secret, found.secret) : true));
     waiting.filter((row) => !mine.includes(row)).forEach((row) => refuse(row, NOT_MINE));
-    const now = mine.slice(0, MOST_AT_ONCE);
-    mine.slice(MOST_AT_ONCE).forEach((row) => refuse(row, `more than ${MOST_AT_ONCE} changes at once`));
+    for (const row of mine.filter((r) => r.picks))
+      try {
+        const { id, kept } = await store.addAsk(workspace, app, { picks: row.picks });
+        row.answer = { ...row.base, ok: true, ask: id, fields: { text: `${kept} picked` } };
+      } catch (error) {
+        refuse(row, (error as Error).message.split("\n")[0]);
+      }
+    const changes = mine.filter((r) => !r.picks);
+    const now = changes.slice(0, MOST_AT_ONCE);
+    changes.slice(MOST_AT_ONCE).forEach((row) => refuse(row, `more than ${MOST_AT_ONCE} changes at once`));
     if (!now.length) continue;
     let answers: store.Answer[];
     try {
@@ -211,7 +224,8 @@ export async function upgrade(key: () => Promise<string> = keyForPages): Promise
 /** How many lines of what pages did a workspace keeps for its next chat call. */
 export const NEWS_KEPT = 20;
 const newsFile = (workspace: string): string => path.join(root(), workspace, ".news.json");
-const words = (r: Result): string => `${r.ev}${r.fields?.text ? ` ${r.fields.text}` : ""} on ${r.app}`;
+const words = (r: Result): string =>
+  r.ev === "ask" ? (r.ok ? `ask ${r.ask} on ${r.app}: ${r.fields?.text} (read shows it)` : `an ask on ${r.app}`) : `${r.ev}${r.fields?.text ? ` ${r.fields.text}` : ""} on ${r.app}`;
 
 /** Applies what pages posted, writes each changed app's page again, and keeps what happened for each
  *  workspace's next chat call. Only an event of an app there is, from its own page, is kept: one

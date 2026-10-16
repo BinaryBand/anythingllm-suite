@@ -113,6 +113,90 @@ var AppsLean = (() => {
     }
   }
 
+  // --- Change this: the user picks up to 5 things on the page and says what should change; it goes
+  // to the chat as an ask, which the agent acts on only when the user asks it to there. While
+  // picking, taps pick instead of pressing: these listeners, on the window and added before any
+  // part's, see each tap first and keep it from the page; scrolling still works.
+  const PICKS = 5, WORDS = 500;
+  let picking = false, picks = [];
+  const host = document.createElement("div");
+  const ui = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
+  const ours = (e) => (e.composedPath ? e.composedPath().includes(host) : host.contains(e.target));
+  /** What marks the picked element in page.html and in the data, and what it showed. */
+  function locate(el) {
+    const near = (sel) => (el.closest ? el.closest(sel) : null);
+    const part = near("[data-part]"), ref = near("[data-ref]"), id = near("[id]"), fig = near("[data-figure]"), item = near("[data-at]");
+    let figure;
+    try { figure = fig ? JSON.parse(fig.getAttribute("data-figure")).kind : undefined; } catch (e) {}
+    const shown = String(el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80);
+    const key = el.getAttribute && el.getAttribute("data-text");
+    return {
+      id: id && id.id || undefined, ref: ref && ref.getAttribute("data-ref") || undefined, part: part && part.getAttribute("data-part") || undefined,
+      at: item ? item.getAttribute("data-at") + (key ? "/" + key : "") : undefined, figure, tag: String(el.tagName || "").toLowerCase(), cls: el.classList && el.classList[0] || undefined, shown: shown || undefined,
+    };
+  }
+  const outline = (el, on) => { el.style.outline = on ? "3px solid var(--accent, #6a5cff)" : ""; el.style.outlineOffset = on ? "2px" : ""; };
+  function tray() {
+    const open = picking || picks.length;
+    ui.innerHTML = `<style>
+      :host{all:initial}
+      .b{position:fixed;right:14px;bottom:14px;z-index:2147483646;min-height:44px;padding:0 16px;border-radius:14px;border:1px solid var(--line,#ccc);background:var(--panel,#fff);color:var(--ink,#222);font:600 15px system-ui,sans-serif}
+      .t{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;max-height:70vh;overflow:auto;padding:14px 16px 18px;border-radius:18px 18px 0 0;background:var(--panel,#fff);color:var(--ink,#222);box-shadow:0 -8px 28px rgba(0,0,0,.18);font:15px/1.45 system-ui,sans-serif;display:flex;flex-direction:column;gap:10px}
+      .r{display:flex;gap:8px;justify-content:space-between;align-items:center}
+      button{min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line,#ccc);background:var(--panel,#fff);color:inherit;font:inherit;font-weight:600}
+      .p{background:var(--accent,#6a5cff);color:var(--on-accent,#fff);border:0}
+      textarea{width:100%;box-sizing:border-box;min-height:64px;padding:10px;border-radius:12px;border:1px solid var(--line,#ccc);font:inherit;color:inherit;background:var(--bg,#fff)}
+      small{color:var(--muted,#666)}
+    </style>` + (!open ? `<button class="b" data-a="start" type="button">Change this</button>` : picking
+      ? `<div class="t" role="dialog" aria-label="Pick what should change"><div class="r"><b>Tap what should change</b><small>${picks.length} of ${PICKS}</small></div><div class="r"><button data-a="cancel" type="button">Cancel</button><button class="p" data-a="describe" type="button"${picks.length ? "" : " disabled"}>Describe ${picks.length || ""}</button></div></div>`
+      : `<div class="t" role="dialog" aria-label="Describe your changes"><b>${picks.length} to change</b>${picks.map((p, i) => `<label><small>${i + 1}. ${esc(p.where.part || p.where.ref || p.where.tag)}${p.where.shown ? ": " + esc(p.where.shown) : ""}</small><textarea data-i="${i}" maxlength="${WORDS}" placeholder="What should change?">${esc(p.text || "")}</textarea></label>`).join("")}<small>Nothing changes until you ask in the chat.</small><div class="r"><button data-a="back" type="button">Back</button><button class="p" data-a="send" type="button">Send to the chat</button></div></div>`);
+  }
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  function end() {
+    for (const p of picks) outline(p.el, false);
+    picks = [];
+    picking = false;
+    tray();
+  }
+  async function send() {
+    const id = uuid();
+    const event = { apps_lean_event: 1, workspace: cfg.workspace, app: cfg.app, secret: cfg.secret, id, ev: "ask", picks: picks.map((p) => ({ ...p.where, text: String(p.text || "").slice(0, WORDS) })).filter((p) => p.text.trim()), t: new Date().toISOString() };
+    if (!event.picks.length) return;
+    const r = await native("/api/browser-extension/upload-content", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.key },
+      body: JSON.stringify({ textContent: JSON.stringify(event), metadata: { title: cfg.eventTitle, docSource: "apps-lean page" } }),
+    }).catch(() => null);
+    end();
+    if (!r || !r.ok) return bar("Couldn't send it: try again in a moment.");
+    bar("Sent to the chat. Ask the agent there to make the change.");
+  }
+  ui.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest("[data-a]");
+    const act = a && a.getAttribute("data-a");
+    if (act === "start") ((picking = true), tray());
+    else if (act === "cancel") end();
+    else if (act === "describe") ((picking = false), tray());
+    else if (act === "back") ((picking = true), tray());
+    else if (act === "send") send();
+  });
+  ui.addEventListener("input", (e) => { const i = e.target.getAttribute && e.target.getAttribute("data-i"); if (i !== null && picks[i]) picks[i].text = e.target.value; });
+  for (const type of ["click", "pointerdown", "mousedown", "mouseup", "pointerup", "submit", "input", "change", "keydown", "touchend"])
+    window.addEventListener(type, (e) => {
+      if (!picking || ours(e)) return;
+      if (type === "keydown" && e.key === "Escape") end();
+      if (type !== "touchend") e.preventDefault();
+      e.stopImmediatePropagation();
+      if (type !== "click" || !e.target || e.target === document.body || e.target === document.documentElement) return;
+      const at = picks.findIndex((p) => p.el === e.target || p.el.contains(e.target));
+      if (at >= 0) ((outline(picks[at].el, false)), picks.splice(at, 1));
+      else if (picks.length < PICKS) (outline(e.target, true), picks.push({ el: e.target, where: locate(e.target), text: "" }));
+      tray();
+    }, { capture: true });
+  const mountTray = () => { if (!host.isConnected && document.body) { document.body.append(host); tray(); } };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountTray);
+  else mountTray();
+
   window.fetch = (url, opts) => {
     if (url === "lean:append") return append(JSON.parse(opts.body));
     if (url === "lean:sync") return sync(JSON.parse(opts.body));

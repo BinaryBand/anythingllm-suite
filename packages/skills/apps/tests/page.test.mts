@@ -98,9 +98,9 @@ function browser(html: string, { stored = null, served = () => "{}", typing = fa
     location: { protocol: "https:", href: "https://x/apps-lean/p.html", pathname: "/apps-lean/p.html", search: "", reload: () => void seen.reloads++ },
     document: {
       getElementById: (id: string) => (id === "apps-lean" ? { textContent: lean } : null), addEventListener() {}, removeEventListener() {}, visibilityState: "visible", hidden: false,
-      activeElement: typing ? { tagName: "INPUT" } : null, createElement: element, body: { append: (el: any) => void seen.bars.push(el.textContent) },
+      activeElement: typing ? { tagName: "INPUT" } : null, createElement: element, readyState: "complete", body: { append: (el: any) => void (el.textContent && seen.bars.push(el.textContent)) },
     },
-    fetch,
+    fetch, addEventListener() {},
   };
   ctx.window = ctx;
   ctx.self = ctx;
@@ -171,7 +171,7 @@ test("publishing writes the page's state beside it, and deleting leaves a note t
   await store.create("home", "stated", { ...definitionFor("list", { title: "Stated" }), page: listPage() });
   const token = (await publish(store.read("home", "stated"), "home", key))!;
   const state = JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8"));
-  assert.deepEqual(Object.keys(state).sort(), ["data", "line", "seen", "version"], "never the secret, the plan or the history");
+  assert.deepEqual(Object.keys(state).sort(), ["asks", "data", "line", "seen", "version"], "never the secret, the plan or the history");
   unpublish(store.read("home", "stated"));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(publicDir, "apps-lean", `${token}.json`), "utf8")), { gone: true });
 });

@@ -3,8 +3,9 @@
 // agent would, and drives it against the real server: a page published into AnythingLLM's public
 // folder and served by AnythingLLM itself, with its state file; a tap posted to the real
 // browser-extension upload, written by the real collector and applied by the skill's folder watch
-// with no call; an event without the app's secret refused; the page check in its worker on the
-// image's own Node; a delete that leaves its page saying so. Prints "ok" or throws.
+// with no call; an event without the app's secret refused; Change this picking in the collector's
+// real Chrome and its ask reaching the app; the page check in its worker on the image's own Node; a
+// delete that leaves its page saying so. Prints "ok" or throws.
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
@@ -51,7 +52,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.ok(cfg.key.startsWith("brx-"), "the pages' key is a browser-extension key AnythingLLM made");
   assert.ok(cfg.secret && !("base" in cfg), "the page has its app's secret, and no address of AnythingLLM's");
   const state = async () => (await fetch(stateUrl, { cache: "no-store" })).json();
-  assert.deepEqual(Object.keys(await state()).sort(), ["data", "line", "seen", "version"]);
+  assert.deepEqual(Object.keys(await state()).sort(), ["asks", "data", "line", "seen", "version"]);
 
   assert.match(await call("home", { action: "do", name: "groceries", ev: "add", patch: [{ op: "add", path: "/items/-", value: { text: "Bread", done: false } }] }), /\| ☐ \| Bread \|/);
   assert.match(await call("work", { action: "list" }), /^This workspace has no apps yet\./);
@@ -77,6 +78,44 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.match(listed, /0 of 1 left/, "the untick without the app's secret was refused");
   const saved = JSON.parse(fs.readFileSync(path.join(STORAGE_DIR, HUB_ID, "home", "groceries.json"), "utf8"));
   assert.equal(saved.history.filter((h) => h.by === "page").length, 1, "the tap sent twice applies once");
+
+  // Change this, in a real Chrome (the collector's): a tap while picking picks, never presses; the
+  // picks go to the app as an ask, apart from its data.
+  const habits = await call("home", { action: "create", name: "reading", title: "Reading", starter: "tracker" });
+  const readingUrl = habits.match(linkTo("Reading"))[1];
+  const puppeteer = require("/app/collector/node_modules/puppeteer");
+  const chrome = await puppeteer.launch({ headless: "new", args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+  try {
+    const tab = await chrome.newPage();
+    await tab.goto(readingUrl, { waitUntil: "load" });
+    const inTray = (sel) =>
+      tab.evaluate((s) => {
+        const el = [...document.querySelectorAll("body > div")].find((d) => d.shadowRoot)?.shadowRoot.querySelector(s);
+        return el ? (el.click(), "ok") : "missing";
+      }, sel);
+    assert.notEqual(await inTray('[data-a="start"]'), "missing", "the page has Change this");
+    const count = await tab.evaluate(() => App.data.count);
+    await tab.click('[data-ref="more"]');
+    await sleep(300);
+    assert.equal(await tab.evaluate(() => App.data.count), count, "the tap picked the button and didn't press it");
+    await inTray('[data-a="describe"]');
+    await tab.evaluate(() => {
+      const t = [...document.querySelectorAll("body > div")].find((d) => d.shadowRoot).shadowRoot.querySelector("textarea");
+      t.value = "Make the plus bigger";
+      t.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    });
+    await inTray('[data-a="send"]');
+    const askUntil = Date.now() + 40_000;
+    const asks = () => JSON.parse(fs.readFileSync(path.join(STORAGE_DIR, HUB_ID, "home", "reading.json"), "utf8")).asks || [];
+    while (Date.now() < askUntil && !asks().length) await sleep(200);
+    assert.deepEqual(asks().map((a) => a.picks.map((p) => [p.part, p.ref, p.text])), [[["counter", "more", "Make the plus bigger"]]]);
+    await tab.click('[data-ref="more"]');
+    await sleep(300);
+    assert.equal(await tab.evaluate(() => App.data.count), count + 1, "once sent, taps press again");
+  } finally {
+    await chrome.close();
+  }
+  assert.match(await call("home", { action: "read", name: "reading" }), /1\. counter more button[^\n]*"Make the plus bigger"; find "<button type=\\"button\\" class=\\"primary\\" data-ref=\\"more\\"/);
 
   // The page check, in its worker on this Node.
   const refused = await call("home", { action: "edit", name: "groceries", file: "page.html", find: "<!--scripts-->", text: "<script>App.onchange(draw);</script>\n<!--scripts-->" });

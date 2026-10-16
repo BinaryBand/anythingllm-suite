@@ -46,19 +46,19 @@
         "type": "string"
       },
       "starter": {
-        "description": "For create: a starter, which makes the app and its page whole.",
+        "description": "For create: a starter, a whole app and page.",
         "type": "string"
       },
       "template": {
-        "description": "For create without a starter: a guide template; column if none.",
+        "description": "For create without a starter: a template; column by default.",
         "type": "string"
       },
       "parts": {
-        "description": "For create with a template: components to compose in; {\"each\": \"habits\", \"parts\": [...]} repeats some per item.",
+        "description": "For create: components to compose in; {\"each\": \"habits\", \"parts\": [...]} repeats per item.",
         "type": "array"
       },
       "plan": {
-        "description": "For create without a starter: a short plan: what it keeps, needs from outside, time, what can't be tested.",
+        "description": "For create without a starter: what it keeps, needs from outside, time, what can't be tested.",
         "type": "string"
       },
       "data": {
@@ -89,8 +89,12 @@
         "description": "For edit: text found exactly once; none replaces the whole file.",
         "type": "string"
       },
+      "ask": {
+        "description": "edit or do: the page's ask it does; cleared once done.",
+        "type": "string"
+      },
       "query": {
-        "description": "guide: topics, several at once (\"timer, entry-form\").",
+        "description": "guide: topics by name, several at once.",
         "type": "string"
       }
     }
