@@ -4,9 +4,11 @@
 // 127.0.0.1 (FENCE_ALLOW lets it through): the key is asked for on the Library page and given there
 // (posted as AnythingLLM's collector writes it), never on a question card; a function is saved and
 // tested in QuickJS on the image's own Node, a flow runs another, and a run with no workspace (as a
-// scheduled job's) is recorded as one.
+// scheduled job's) is recorded as one; a job's run in a forked child, as AnythingLLM forks one, and
+// one whose child is killed mid-run, which the next chat is shown as interrupted.
 // Prints "ok" or throws.
 const assert = require("assert");
+const { fork } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
@@ -17,6 +19,19 @@ const PORT = 18083;
 const KEY = "e2e-key-0123456789";
 
 const ImportedPlugin = require(`${APP}/utils/agents/imported.js`);
+
+// A scheduled job's process, as run-scheduled-job.js is: forked, the skill loaded afresh, no workspace.
+if (process.argv[2] === "job") {
+  const plugin = ImportedPlugin.loadPluginByHubId(HUB_ID).plugin({});
+  let fn;
+  plugin.setup({ handlerProps: { invocation: { workspace: null, workspace_id: null }, log: () => {} }, function: (def) => (fn = def) });
+  return void fn.handler.call(fn, JSON.parse(process.argv[3])).then((answer) => (process.send({ answer }), process.exit(0)));
+}
+/** Runs `args` in a forked job process: its answer, and the process. */
+const inJob = (args) => {
+  const child = fork(__filename, ["job", JSON.stringify(args)]);
+  return { child, answer: new Promise((resolve, reject) => (child.on("message", (m) => resolve(m.answer)), child.on("exit", (code) => code && reject(new Error(`the job's process exited ${code}`))))) };
+};
 
 const server = http.createServer((req, res) => {
   res.setHeader("Content-Type", "application/json");
@@ -73,6 +88,24 @@ const server = http.createServer((req, res) => {
   assert.match(job, /: ok, /);
   assert.match(await call({ action: "library" }), /- tasks\.open: ok, \d+ s ago, from a scheduled job/);
   assert.ok(!(await call({ action: "call", url: `http://127.0.0.1:${PORT}/tasks`, auth: "bearer" })).includes(KEY));
+
+  const forked = await inJob({ action: "run", name: "digest.count" }).answer;
+  assert.match(forked, /^Ran digest\.count \(r-[\w-]+\): ok, /);
+  const runs = `${storage}/library-lean/runs`;
+  const forkedId = forked.match(/\((r-[\w-]+)\)/)[1];
+  assert.equal(JSON.parse(fs.readFileSync(`${runs}/${forkedId}.digest.count.json`, "utf8")).trigger, "job");
+  await call({ action: "save", service: "digest", function: { name: "nap", description: "Naps.", source: "async function main(i, kit) { for (let n = 0; n < 30; n++) await kit.sleep(500); return 1; }" } });
+  const killed = inJob({ action: "run", name: "digest.nap" });
+  killed.answer.catch(() => {});
+  let napping;
+  for (let i = 0; i < 100 && !napping; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    napping = fs.readdirSync(runs).find((f) => f.endsWith(".digest.nap.json"));
+  }
+  assert.ok(napping, "the job's run was recorded as it started");
+  killed.child.kill("SIGKILL");
+  await new Promise((r) => killed.child.once("exit", r));
+  assert.match(await call({ action: "library" }), /^Finished since last shown [^\n]*\n- digest\.nap: interrupted \(Interrupted: [^\n]*from a scheduled job/);
 
   server.close();
   console.log("ok");

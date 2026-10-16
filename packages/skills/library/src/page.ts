@@ -23,6 +23,7 @@ import { LibraryError } from "./errors";
 import * as listing from "./listing";
 import { OAUTH_PAGE, PENDING_MS, finish, redirectFor, waiting } from "./oauth";
 import * as secrets from "./secrets";
+import { recentRuns } from "./runs";
 import * as store from "./store";
 
 export const TITLE = "library-lean-event";
@@ -83,9 +84,11 @@ function state(p: PageFile, base: string | null) {
       const kit = store.toolkit(service)!;
       return { service, title: kit.title, base_urls: kit.base_urls, hosts: store.hostsOf(kit), secrets: kit.secrets.map((s) => s.label), functions: store.functions(service).map((f) => ({ name: f.name, description: f.description, version: f.version, source: f.source })) };
     }),
-    runs: store.recentRuns(20).map((r) => ({ id: r.id, fn: r.fn, status: r.status, ended: r.ended, error: r.error ? `${r.error.name}: ${r.error.message}` : null, result: r.status === "ok" ? (JSON.stringify(r.result) ?? "null").slice(0, 500) : null })),
+    runs: recentRuns(20).map((r) => ({ id: r.id, fn: r.fn, status: r.status, trigger: r.trigger, ended: r.ended, ms: r.ms, error: r.error ? `${r.error.name}: ${r.error.message}` : null, result: r.status === "ok" ? (JSON.stringify(r.result) ?? "null").slice(0, 500) : null })),
   };
 }
+
+const writeState = (p: PageFile, base: string | null) => putPublic(`${p.token}.json`, JSON.stringify(state(p, base)));
 
 /** Writes the page and its state into AnythingLLM's public folder, watches for its events for a
  *  while, and answers its address (absolute when AnythingLLM's address, `base`, is known). */
@@ -94,9 +97,15 @@ export async function show(base: string | null): Promise<string> {
   const p = kept && kept.watchUntil - Date.now() > WATCH_MS / 2 ? kept : await change((p) => ((p.watchUntil = Date.now() + WATCH_MS), p));
   const cfg = { token: p.token, secret: p.secret, key: await pageKey(store.libraryDir()), pub: await vault.publicKey(), title: TITLE };
   putPublic(`${p.token}.html`, template("library").replace("/*CONFIG*/null", embed(cfg)));
-  putPublic(`${p.token}.json`, JSON.stringify(state(p, base)));
+  writeState(p, base);
   watch(TITLE, () => drain(base), () => read()?.watchUntil ?? 0);
   return `${base ?? ""}/${pub(`${p.token}.html`)}`;
+}
+
+/** Writes the page's state again, when there's a page, as a run ends. */
+export function refresh(base: string | null): void {
+  const p = read();
+  if (p) writeState(p, base);
 }
 
 /** Writes the oauth page, where a provider sends the user back, and the file it posts with for
@@ -186,5 +195,5 @@ export async function drain(base: string | null): Promise<void> {
     removePublic(pub(`${page.token}.html`));
     removePublic(pub(`${page.token}.json`));
     await show(base);
-  } else putPublic(`${now.token}.json`, JSON.stringify(state(now, base)));
+  } else writeState(now, base);
 }

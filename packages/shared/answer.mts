@@ -58,6 +58,9 @@ export function mask(text: string, secrets: string[] = []): string {
 }
 
 /** `value` as a plain object: given as one or as JSON; {} when left out. */
+/** Whether the agent asked for something: true, or the text "true", "yes" or "1". */
+export const flag = (value: unknown): boolean => value === true || /^(true|yes|1)$/i.test(String(value ?? "").trim());
+
 export function objectOf(value: unknown, what: string): Record<string, unknown> {
   if (value === undefined || value === null || value === "") return {};
   let given = value;

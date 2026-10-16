@@ -153,7 +153,7 @@ export async function run({ source, input, kit, prelude = {}, deadline, stop = n
     }
 
     function settle(deferred: QuickJSDeferredPromise, make: () => QuickJSHandle, how: "resolve" | "reject") {
-      if (finished) return; // the run ended meanwhile; its runtime is gone
+      if (finished) return; // the run's outcome is decided: its script runs no further
       pending.delete(deferred);
       const handle = make();
       deferred[how](handle);
@@ -194,7 +194,7 @@ export async function run({ source, input, kit, prelude = {}, deadline, stop = n
         return answered(value);
       }),
       new Promise<Outcome>((resolve) => {
-        const ended = () => resolve({ ok: false, error: timedOut() });
+        const ended = () => ((finished = true), resolve({ ok: false, error: timedOut() }));
         timer = setTimeout(ended, Math.max(0, deadline - Date.now()));
         stop.signal.addEventListener("abort", ended, { once: true });
       }),

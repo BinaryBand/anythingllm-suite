@@ -27,7 +27,7 @@ QuickJS runs in WebAssembly inside AnythingLLM's process with no container. A sc
 
 ## Limits
 
-Each run has its own runtime: 32 MB of memory, 1 MB of stack, a deadline (a loop is interrupted; a script waiting on the host is stopped by a timer, which also aborts the host's request through the run's `AbortController`), an answer of at most 64 KB as JSON, and a source of at most 32 KB. An error the host means to be seen (`Told`, `#shared/errors`, which every part's refusals extend) reaches the script with its name and message, so `kit.retry` tells a server that didn't answer (`Unreachable`) from a refusal; any other says only `kit.<name> failed`, so a host detail doesn't leak into the script or the answer.
+Each run has its own runtime: 32 MB of memory, 1 MB of stack, a deadline (10 minutes, or a scheduled job's time left; a loop is interrupted; a script waiting on the host is stopped by a timer, which also aborts the host's request through the run's `AbortController`), an answer of at most 64 KB as JSON, and a source of at most 32 KB. An error the host means to be seen (`Told`, `#shared/errors`, which every part's refusals extend) reaches the script with its name and message, so `kit.retry` tells a server that didn't answer (`Unreachable`) from a refusal; any other says only `kit.<name> failed`, so a host detail doesn't leak into the script or the answer.
 
 A memory bomb dies of "out of memory" after about 9.5 s near the limit (QuickJS collects hard there); the deadline stops it sooner, so the deadline is the bound.
 

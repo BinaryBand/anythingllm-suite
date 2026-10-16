@@ -15,4 +15,5 @@ Topics (guide with topic):
 - `secrets`: asking the user for a key or an OAuth sign-in, which you never see.
 - `toolkits`: what a toolkit keeps, and saving one.
 - `functions`: how a function is written: main, its input, and what kit offers it.
+- `schedules`: running a function on a schedule, as AnythingLLM's scheduled job.
 - `snippets`: worked examples to adapt (guide with snippet).

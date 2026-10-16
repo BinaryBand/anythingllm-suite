@@ -11,13 +11,13 @@ Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process:
 | `secret` | asks the user for a key (`site`, `label`), given on the Library page, or sets up and starts an OAuth sign-in (`kind` oauth, `definition`) |
 | `call` | one request to an API, with a key (`auth`), to read its docs, spec or answers |
 | `save` | a toolkit, a function (compiled first) or both; `test` runs what was saved; `remove` |
-| `run` | a function (`name`, `inputs`), or a run again (`run_id`) |
+| `run` | a function (`name`, `inputs`); a run again, or one going on in the background (`run_id`, `stop`) |
 
 ## Where it keeps things
 
 | What | Where |
 | --- | --- |
-| Toolkits, functions (and their last 5 versions), what each keeps between runs, runs | `library-lean/` in AnythingLLM's storage |
+| Toolkits, functions (and their last 5 versions), what each keeps between runs, runs, the runs not shown yet (`unseen/`) | `library-lean/` in AnythingLLM's storage |
 | Keys and sign-ins (OAuth clients and tokens) | `vault-lean/vault.json`, encrypted, shared with the browser skill |
 | The Library page | `public/library-lean/` beside AnythingLLM's server: the page, its state (nothing secret), `oauth.html`; `library-lean/page.json` holds its token and secret |
 | Your own versions of the guide, snippets and prelude | `library-lean/static/`, at the same paths as `static/`: they win over the shipped ones |
@@ -28,4 +28,4 @@ Functions run in QuickJS, compiled to WebAssembly, inside AnythingLLM's process:
 
 For an OAuth sign-in (Google, Microsoft, Slack...), the agent tells you what client to make at the provider and the redirect address to register; you give the client's ID and secret on the Library page, open the link it gives, and agree.
 
-Not yet: runs that outlast the chat, and scheduling.
+A run the chat waited 40 s for goes on in the background: its end is pushed to you (once you switch on AnythingLLM's notifications), shown on the Library page, and at the top of the agent's next `library` or `run` answer. To run a function on a schedule, ask the agent ("every morning at 7, …"): it adds an AnythingLLM scheduled job with the tool `@@library-lean` (guide topic `schedules`), which you see and change under Scheduled Jobs.

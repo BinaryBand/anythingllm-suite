@@ -6,6 +6,7 @@
 //   toolkits/<service>/functions/<fn>.v<N>.json   its earlier versions, the last KEEP_VERSIONS
 //   toolkits/<service>/state/<fn>.json       what it keeps between runs (kit.state)
 //   runs/<id>.<service>.<fn>.json            each run, the last MAX_RUNS; an id sorts by time
+//   unseen/<id>                              a run whose end no answer has shown yet
 //
 // Every file is written whole (writeAtomic), so a reader never sees half of one, and a run is a file
 // of its own, so a chat and a scheduled job's process never write the same one.
@@ -72,10 +73,15 @@ export interface RunRecord {
   fn: string;
   trigger: "chat" | "job";
   workspace: string | null;
+  /** The process it runs in, and when it must have ended: while it's running. */
+  pid?: number;
+  until?: string;
   started: string;
+  /** When it ended (while it's running, when it started). */
   ended: string;
   ms: number;
-  status: "ok" | "error" | "timeout";
+  /** "interrupted": its process ended before it did (a restart, a scheduled job's time running out). */
+  status: "running" | "ok" | "error" | "timeout" | "stopped" | "interrupted";
   result?: unknown;
   error?: { name: string; message: string; line?: number };
   logs: string[];
@@ -90,6 +96,7 @@ export const statics = (): StaticFiles => staticFiles(STATIC_FILES, path.join(li
 const kitDir = (service: string) => path.join(libraryDir(), "toolkits", service);
 const fnFile = (service: string, name: string) => path.join(kitDir(service), "functions", `${name}.json`);
 const runsDir = () => path.join(libraryDir(), "runs");
+const unseenDir = () => path.join(libraryDir(), "unseen");
 
 function readJson<T>(file: string): T | null {
   try {
@@ -266,26 +273,50 @@ export const saveState = (service: string, name: string, value: unknown): void =
 /** A new run's id: r-<time>-<random>, which sorts by time. */
 export const runId = (at: Date): string => `r-${at.getTime().toString(36).padStart(9, "0")}-${Math.random().toString(36).slice(2, 8)}`;
 
-/** Keeps a run, and drops the oldest past MAX_RUNS. */
+const runFile = (run: RunRecord) => path.join(runsDir(), `${run.id}.${run.fn}.json`);
+
+/** Keeps a new run, and drops the oldest past MAX_RUNS. */
 export function record(run: RunRecord): void {
-  writeJson(path.join(runsDir(), `${run.id}.${run.fn}.json`), run);
+  rewrite(run);
   const files = namesIn(runsDir()).filter((f) => f.startsWith("r-"));
   for (const old of files.slice(0, Math.max(0, files.length - MAX_RUNS))) fs.rmSync(path.join(runsDir(), old), { force: true });
 }
 
-/** The last `n` runs, newest first, of a service's functions (`service`) or of all. */
+/** Keeps a run again, as it is now (ended, or interrupted). */
+export const rewrite = (run: RunRecord): void => writeJson(runFile(run), run);
+
+const readRun = (file: string) => readJson<RunRecord>(path.join(runsDir(), file));
+
+/** The last `n` runs, newest first, of a service's functions (`service`) or of all, as recorded. */
 export function recentRuns(n = 5, service = ""): RunRecord[] {
   const files = namesIn(runsDir()).filter((f) => f.startsWith("r-") && (!service || f.split(".")[1] === service));
   return files
     .slice(-n)
     .reverse()
-    .map((f) => readJson<RunRecord>(path.join(runsDir(), f)))
+    .map(readRun)
     .filter((r): r is RunRecord => r !== null);
 }
 
-/** A run by its id; null when it isn't kept. */
+/** A run by its id, as recorded; null when it isn't kept. */
 export function runOf(id: string): RunRecord | null {
   if (!/^r-[\w-]+$/.test(id)) return null;
   const file = namesIn(runsDir()).find((f) => f.startsWith(`${id}.`));
-  return file ? readJson<RunRecord>(path.join(runsDir(), file)) : null;
+  return file ? readRun(file) : null;
+}
+
+/** Marks a run as not shown yet: every run, as it starts, until an answer shows how it ended. One
+ *  file each, so no process writes another's. */
+export const markUnseen = (id: string): void => writeAtomic(path.join(unseenDir(), id), "", 0o600);
+
+export const markSeen = (id: string): void => fs.rmSync(path.join(unseenDir(), id), { force: true });
+
+/** The runs not shown yet, oldest first, as recorded; a mark whose run is no longer kept goes. */
+export function unseen(): RunRecord[] {
+  const files = new Map(namesIn(runsDir()).map((f) => [f.slice(0, f.indexOf(".")), f]));
+  return namesIn(unseenDir()).flatMap((id) => {
+    const file = files.get(id);
+    if (!file) markSeen(id);
+    const run = file ? readRun(file) : null;
+    return run ? [run] : [];
+  });
 }

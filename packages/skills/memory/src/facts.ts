@@ -90,8 +90,7 @@ export function factCount(value: unknown): number {
   return k;
 }
 
-/** Whether the agent asked for a change to be applied: true, or the text "true". */
-export const flag = (value: unknown): boolean => value === true || /^(true|yes|1)$/i.test(clean(value));
+export { flag } from "#shared/answer";
 
 /** The scope a call names: "global", or "workspace" for the one the call came from; null when
  *  none is named. Never taken from a workspace name the model makes up. */

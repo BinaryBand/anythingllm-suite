@@ -9,7 +9,9 @@ export const JOB_NAME_MAX = 100;
 export const MAX_PROMPT = 4000;
 const MAX_TOOLS = 50;
 const CRON_FIELD = /^[0-9A-Za-z*/,?#-]+$/;
-const TOOL_ID = /^[A-Za-z0-9_.#-]{1,120}$/;
+/** A tool id: a built-in skill (web-scraping), a sub-skill (name#sub), or an imported skill, flow or
+ *  MCP server (@@<hubId>, @@flow_<id>, @@mcp_<name>). */
+const TOOL_ID = /^(@@)?[A-Za-z0-9_.#-]{1,120}$/;
 const UTC = "the schedule is a cron expression in UTC: minute hour day-of-month month day-of-week";
 
 /** A job to add. */

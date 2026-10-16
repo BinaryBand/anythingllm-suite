@@ -198,7 +198,8 @@
     runs.replaceChildren(...(s.runs.length ? [] : [el("p", { className: "cap", textContent: "No runs yet." })]));
     for (const r of s.runs) {
       runs.append(el("details", { className: "card" },
-        el("summary", {}, el("strong", { textContent: r.fn }), " ", el("span", { className: r.status === "ok" ? "good" : "bad", textContent: r.status }), " ", el("span", { className: "cap", textContent: new Date(r.ended).toLocaleString() })),
+        el("summary", {}, el("strong", { textContent: r.fn }), " ", el("span", { className: r.status === "ok" ? "good" : r.status === "running" ? "cap" : "bad", textContent: r.status }), " ",
+          el("span", { className: "cap", textContent: `${new Date(r.ended).toLocaleString()}${r.status === "running" ? "" : `, ${(r.ms / 1000).toFixed(1)} s`}${r.trigger === "job" ? ", scheduled job" : ""}` })),
         el("pre", { textContent: r.error || r.result || "" })));
     }
   }

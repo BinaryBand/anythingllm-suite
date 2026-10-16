@@ -107,7 +107,7 @@ function scheduleTool(jobs: Jobs): Tool {
   return {
     name: "schedule",
     description:
-      "Scheduled jobs. `list`: every job with its id, name, prompt, schedule (cron, UTC), whether it is enabled, its tools, when it last ran and runs next (UTC) and how the last run ended. `add`: needs `name`, `prompt` and `cron` (UTC), and takes `tools` (ids such as web-scraping; none by default). `update`: needs `job` (its id) and changes the fields given, leaving the rest; `enabled` false switches it off without deleting it. `delete`: needs `job`; it removes the job and its runs and cannot be undone. add, update and delete are shown first: without `apply` nothing changes and the answer says what would happen, so show the user and call again with apply true only once they agree.",
+      "Scheduled jobs. `list`: every job with its id, name, prompt, schedule (cron, UTC), whether it is enabled, its tools, when it last ran and runs next (UTC) and how the last run ended. `add`: needs `name`, `prompt` and `cron` (UTC), and takes `tools` (ids such as web-scraping, or @@<hubId> for an imported skill such as @@library-lean; none by default). `update`: needs `job` (its id) and changes the fields given, leaving the rest; `enabled` false switches it off without deleting it. `delete`: needs `job`; it removes the job and its runs and cannot be undone. add, update and delete are shown first: without `apply` nothing changes and the answer says what would happen, so show the user and call again with apply true only once they agree.",
     inputSchema: input(
       {
         action: { type: "string", enum: ["list", "add", "update", "delete"] },

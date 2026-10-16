@@ -44,6 +44,12 @@ test("the preview names a job with the same name", async () => {
   assert.deepEqual(shown.same_name, [1]);
 });
 
+test("a job can name an imported skill, as AnythingLLM does: @@<hubId>", async () => {
+  const fake = new FakeAnythingLLM();
+  await jobs(fake).add({ ...NEW, tools: ["@@library-lean", "web-scraping"] }, true);
+  assert.deepEqual(JSON.parse(String(fake.jobs.get(2)?.tools)), ["@@library-lean", "web-scraping"]);
+});
+
 test("a bad job is refused before AnythingLLM", async () => {
   const bad: JobSpec[] = [
     { name: "", prompt: "p", schedule: "0 7 * * *" },
@@ -52,6 +58,8 @@ test("a bad job is refused before AnythingLLM", async () => {
     { name: "n", prompt: "p", schedule: "0 7 * *" },
     { name: "n", prompt: "p", schedule: "0 7 * * * *" },
     { name: "n", prompt: "p", schedule: "0 7 * * *", tools: ["not a tool id"] },
+    { name: "n", prompt: "p", schedule: "0 7 * * *", tools: ["@@"] },
+    { name: "n", prompt: "p", schedule: "0 7 * * *", tools: ["@library-lean"] },
     { name: "x".repeat(101), prompt: "p", schedule: "0 7 * * *" },
   ];
   for (const spec of bad) {
