@@ -110,13 +110,14 @@ function hostChecked(at: Tab, site: unknown): string {
 }
 
 /** Asks the user on the tab's page for what only they may know; the agent's turn doesn't wait: it
- *  ends with the tab's card, the user enters it there, and the skill types it into the page (page.ts). */
-async function askOnPage(self: HandlerContext, at: Tab, need: Omit<Need, "until">): Promise<string> {
+ *  ends with the tab's card, the user enters it there, and the skill types it into the page (page.ts).
+ *  `need.text` is the page's words, to the user; `told` is the agent's. */
+async function askOnPage(self: HandlerContext, at: Tab, need: Omit<Need, "until">, told: string): Promise<string> {
   at.entry.needs.set(at.key, { ...need, until: Date.now() + NEED_MS });
-  const asked = await reply(self, at, `The user is asked on the tab's page: ${need.text}. Tell them to tap the card below and enter it there: it goes into the page without you seeing it. Never ask for it in the chat. When they say they're done, read the page; it says whether it was typed.`);
+  const asked = await reply(self, at, `The user is asked on the tab's page: ${told}. Tell them to tap the card below and enter it there: it goes into the page without you seeing it. Never ask for it in the chat. When they say they're done, read the page; it says whether it was typed.`);
   if (asked.page) return asked.text;
   at.entry.needs.delete(at.key);
-  throw new BrowserError(`${need.text}, and this AnythingLLM can't show the tab's page, where the user would enter it (its public folder can't be written, or no page key can be made)`);
+  throw new BrowserError(`${told}, and this AnythingLLM can't show the tab's page, where the user would enter it (its public folder can't be written, or no page key can be made)`);
 }
 
 /** Asks the user for a code (`what`) to go into the field `ref`. */
@@ -127,7 +128,7 @@ async function askCode(self: HandlerContext, at: Tab, args: Args): Promise<strin
   if (!ref) throw new BrowserError("login with what needs ref, the field the code goes into");
   await element(at.page, ref);
   const host = hostChecked(at, args.site);
-  return askOnPage(self, at, { kind: "code", host, label, secretRef: ref, submitRef: refOf(args.submit_ref), text: `${label} for ${host}` });
+  return askOnPage(self, at, { kind: "code", host, label, secretRef: ref, submitRef: refOf(args.submit_ref), text: `For ${host}.` }, `${label} for ${host}`);
 }
 
 /** Signs in: the login saved for the site typed in, or the user asked for one on the tab's page. */
@@ -143,8 +144,10 @@ async function signIn(self: HandlerContext, at: Tab, args: Args): Promise<string
   const host = hostChecked(at, args.site);
   // A new account's password is the user's to choose, whatever is saved for the site.
   const saved = confirmRef ? null : logins.forHost(host);
-  const text = confirmRef ? `${host} needs a password for the new account, which the user chooses` : `${host} needs the user to sign in, and no login is saved for it`;
-  if (!saved) return askOnPage(self, at, { kind: "login", host, userRef, secretRef: passRef, confirmRef, submitRef, text });
+  const [text, told] = confirmRef
+    ? [`For a new account on ${host}.`, `${host} needs a password for the new account, which the user chooses`]
+    : [`No login is saved for ${host}.`, `${host} needs the user to sign in, and no login is saved for it`];
+  if (!saved) return askOnPage(self, at, { kind: "login", host, userRef, secretRef: passRef, confirmRef, submitRef, text }, told);
   self.introspect?.(`Signing in to ${host} with the saved login`);
   const missing = await typeIn(at, host, { userRef, user: saved.user, secretRef: passRef, secret: saved.pass }, submitRef);
   return answer(self, at, `Typed the login the user saved for ${saved.site} into the page${submitted(submitRef, missing)}. It's hidden from you; read the page below to see whether it worked.`);

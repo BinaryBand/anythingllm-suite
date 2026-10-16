@@ -40,9 +40,9 @@ input{font:inherit;color:var(--ink)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}.live{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.6s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){.live{animation:none}}
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:3;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:stretch;gap:10px;pointer-events:none}.dock>*{pointer-events:auto}
-.sheet{padding:16px 18px;border-radius:22px;background:var(--panel);box-shadow:var(--float);display:flex;flex-direction:column;gap:10px}.sheet b{font-size:16px;line-height:1.25}.sheet p{margin:0;font-size:14px;line-height:1.5;color:var(--ink2)}.sheet small{display:block;font:12.5px var(--mono);color:var(--muted)}
+.sheet{padding:16px 18px;border-radius:22px;background:var(--panel);box-shadow:var(--float);display:flex;flex-direction:column;gap:10px}.sheet b{font-size:16px;line-height:1.25}.sheet small{display:block;font:12.5px var(--mono);color:var(--muted)}
 .row{display:flex;gap:8px}
-.btn{flex:1;min-height:44px;padding:0 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);font-size:15px;font-weight:500;text-align:center}.pri{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}
+.btn{flex:1;min-height:44px;padding:0 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);font-size:15px;font-weight:500;text-align:center}.pri{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}.plain{flex:none;background:none;border-color:transparent;color:var(--ink2)}
 .give{background:var(--ink);border-color:var(--ink);color:var(--bg);font-weight:600}
 .hint{align-self:center;min-height:48px;display:flex;align-items:center;padding:0 16px;border-radius:99px;background:var(--panel);box-shadow:var(--float);font-size:13.5px;color:var(--ink2)}
 .wait{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -53,13 +53,14 @@ input{font:inherit;color:var(--ink)}
 .lg{display:flex;align-items:center;gap:12px;min-height:68px;border-top:1px solid var(--line2)}.lg:first-child{border-top:0}
 .lg>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.lg b{font-size:16px;font-weight:500}.lg small{font:12.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .del{flex:none;min-height:40px;padding:0 14px;border-radius:99px;color:var(--badfg)}
-.form{padding:20px;gap:12px}.ff{display:flex;flex-direction:column;gap:6px}.ff span{padding:0 8px;font-size:13px;color:var(--muted)}
+.form{padding:20px;gap:12px}.form>b{margin-bottom:-8px;font-size:17px;line-height:1.3}.form>.cap{padding:0}.thumb{display:flex;flex-direction:column;gap:6px;margin:0}.thumb img{display:block;width:100%;height:96px;object-fit:cover;object-position:top;border-radius:14px;border:1px solid var(--line2);background:#fff}.ff{display:flex;flex-direction:column;gap:6px}.ff span{padding:0 8px;font-size:13px;color:var(--muted)}
 .fld{min-height:52px;padding:0 16px;border-radius:16px;border:1px solid var(--line);background:var(--bg);font-size:16px;width:100%}.fld.ro{font:13.5px var(--mono);color:var(--muted);border-color:transparent}
 .tgl{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:15px}
 .sw{width:52px;height:44px;flex:none;display:flex;align-items:center;justify-content:center}.sw span{position:relative;width:38px;height:22px;border-radius:99px;background:var(--line)}.sw span::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--panel)}.sw[aria-checked="true"] span{background:var(--accent)}.sw[aria-checked="true"] span::after{left:18px}
 .toast{position:fixed;left:20px;right:20px;bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:5;padding:12px 16px;border-radius:16px;background:var(--ink);color:var(--bg);font-size:14px;text-align:center}
 .gone{position:fixed;inset:0;z-index:6;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center}.gone b{font-size:20px}.gone p{margin:0;color:var(--muted)}
 .side #upd{display:none!important}
+.side .dock{visibility:hidden} /* laid out still, so the tab's room stays as it is */
 </style>
 </head>
 <body>
@@ -73,13 +74,6 @@ input{font:inherit;color:var(--ink)}
 <section class="full" id="logins" hidden></section>
 <section class="full" id="needform" hidden></section>
 <footer class="dock">
-  <div class="sheet" id="need" role="group" aria-labelledby="needwhat" hidden>
-    <b id="needwhat"></b>
-    <p>The agent is waiting at the page. It never sees what you enter.</p>
-    <div class="wait"><span class="live" aria-hidden="true"></span><span id="needleft"></span></div>
-    <button class="btn pri" id="needenter"></button>
-    <div class="row"><button class="btn" id="needtake">Take over</button><button class="btn" id="needno">Not now</button></div>
-  </div>
   <div class="sheet" id="offer" hidden><div><b id="offerwhat">Save this login?</b><small id="offerwho"></small></div><div class="row"><button class="btn" id="offerno">Not now</button><button class="btn pri" id="offeryes">Save</button></div></div>
   <span class="hint" id="hint">Tap the page to take it over</span>
   <div class="row" id="mine" hidden><button class="btn" id="navback">Back</button><button class="btn" id="reload">Reload</button><button class="btn give" id="give">Hand back</button></div>
@@ -97,7 +91,7 @@ input{font:inherit;color:var(--ink)}
   const host = window.AnywhereLLMBrowser || null;
   if (host) document.body.classList.add("hosted");
   let st = null, size = { w: 430, h: 932 }, scale = 1, left = 0, top = 68, bottom = 0, view = "page", over = null, shot = 0, swiped = false;
-  let needOpen = false, dismissed = 0, skew = 0, lastText = "", shown = 0;
+  let formFor = 0, dismissed = 0, skew = 0, lastText = "", shown = 0;
   // A step posted from here: "Updating" until a newer picture than `from` comes (or a few seconds,
   // for a step that changed nothing), showing `who` as this page set it until then.
   let pending = null, pendingTimer = 0;
@@ -317,23 +311,20 @@ input{font:inherit;color:var(--ink)}
   $("tk").addEventListener("click", () => setView("logins"));
 
   // ---- What the agent asked for: a login or a code, entered here and typed into the page for it.
+  // While it's asked, the page opens on its form; `formFor` is the request the form was made for
+  // (its `until`), so a new one, or one asked again, gets a form of its own.
   const remaining = () => (st && st.need ? Math.round((st.need.until - (Date.now() + skew)) / 1000) : 0);
   const asking = () => !!(st && st.need) && st.need.until !== dismissed && remaining() > 0;
   let ticker = 0;
   function tick() {
-    if (!asking() || $("need").hidden) return;
+    if (!asking()) return paint();
     const s = remaining();
-    $("needleft").textContent = "Waiting · " + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " left";
+    $("needleft").textContent = "The agent is waiting · " + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " left";
   }
-  $("needenter").addEventListener("click", () => ((needOpen = true), needForm(), paint()));
-  $("needno").addEventListener("click", () => ((dismissed = st.need.until), post("need-cancel", { reason: "later" }), paint()));
-  $("needtake").addEventListener("click", () => {
-    dismissed = st.need.until;
-    post("need-cancel", { reason: "takeover" });
-    takeOver();
-  });
+  /** Builds the form for the request now asked; returns its first field. */
   function needForm() {
     const need = st.need;
+    formFor = need.until;
     const login = need.kind === "login";
     // The words for what's asked: a new account's password (the user chooses it), a login, a code.
     const says = login && need.confirm ? { title: "Choose a password for " + need.host, secret: "New password", go: "Create" }
@@ -346,7 +337,10 @@ input{font:inherit;color:var(--ink)}
     sw.setAttribute("aria-checked", "true");
     sw.setAttribute("aria-label", "Save this login for next time");
     sw.onclick = () => sw.setAttribute("aria-checked", String((keep = !keep)));
-    const no = el("button", { className: "btn", textContent: "Cancel", onclick: () => ((needOpen = false), paint()) });
+    // Answered, turned down or taken over: this request is done here, and doesn't come back.
+    const done = () => (dismissed = need.until);
+    const no = el("button", { className: "btn", textContent: "Cancel", onclick: () => (done(), post("need-cancel", { reason: "later" }), paint()) });
+    const take = el("button", { className: "btn plain", id: "needtake", textContent: "Take over instead", onclick: () => (done(), post("need-cancel", { reason: "takeover" }), takeOver()) });
     const go = el("button", { className: "btn pri", textContent: says.go });
     go.onclick = async () => {
       if (user && !user.value.trim()) return toast("Give the username");
@@ -357,19 +351,23 @@ input{font:inherit;color:var(--ink)}
       } catch (e) {
         return toast(e.message);
       }
-      dismissed = need.until;
-      needOpen = false;
+      done();
       post("need-answer", fields);
       paint();
     };
-    $("needform").replaceChildren(el("div", { className: "card form" }, el("b", { textContent: says.title }),
+    // The tab, small: for a code, the site often says there where it sent it.
+    const thumb = el("figure", { className: "thumb" }, el("img", { id: "needshot", alt: "" }), el("figcaption", { className: "cap", textContent: "The tab" }));
+    const live = el("span", { className: "live" });
+    live.setAttribute("aria-hidden", "true");
+    $("needform").replaceChildren(el("div", { className: "card form" }, thumb, el("b", { textContent: says.title }), el("p", { className: "cap", textContent: need.text }),
       field("Site", el("input", { className: "fld ro", value: need.host, readOnly: true })),
       ...(user ? [field("Username or email", user)] : []),
       field(says.secret, secret),
       ...(user ? [el("div", { className: "tgl" }, el("span", { textContent: "Save this login for next time" }), sw)] : []),
-      el("p", { className: "cap", style: "padding:0", textContent: login ? "Sealed on this device before it's sent, and typed into the page for the agent, which never sees it." : "Typed into the page for the agent, which never sees it." }),
-      el("div", { className: "row" }, no, go)));
-    (user || secret).focus();
+      el("p", { className: "cap", textContent: login ? "Sealed on this device before it's sent, and typed into the page for the agent, which never sees it." : "Typed into the page for the agent, which never sees it." }),
+      el("div", { className: "wait" }, live, el("span", { id: "needleft" })),
+      el("div", { className: "row" }, no, go), take));
+    return user || secret;
   }
   $("offerno").addEventListener("click", () => (($("offer").hidden = true), post("offer", { save: false })));
   $("offeryes").addEventListener("click", () => (($("offer").hidden = true), post("offer", { save: true })));
@@ -377,7 +375,6 @@ input{font:inherit;color:var(--ink)}
   // ---- Saved logins and passkeys, by site and username; never their passwords.
   function setView(v) {
     view = v;
-    needOpen = false;
     closeField(true);
     paint();
   }
@@ -404,7 +401,21 @@ input{font:inherit;color:var(--ink)}
     if (!st) return;
     const held = mine();
     document.body.classList.toggle("mine", held);
-    document.body.classList.toggle("side", view !== "page" || needOpen);
+    // The request's form, over the page view; Logins come first.
+    if (formFor && !asking()) {
+      if (formFor !== dismissed) toast("That request is over");
+      formFor = 0;
+    }
+    const ask = asking() && view === "page";
+    $("needform").hidden = !ask;
+    if (ask) {
+      const first = formFor !== st.need.until && needForm();
+      $("needshot").src = $("shot").src;
+      tick();
+      if (first) first.focus();
+    }
+    if (ask !== !!ticker) ticker = ask ? setInterval(tick, 1000) : (clearInterval(ticker), 0);
+    document.body.classList.toggle("side", view !== "page" || ask);
     $("who").textContent = held ? "You" : "Agent";
     $("addr").textContent = (st.url || "").replace(/^https?:\/\//, "");
     $("where").setAttribute("aria-label", (held ? "You have the tab" : "The agent has the tab") + ": " + (st.title || st.url));
@@ -412,15 +423,6 @@ input{font:inherit;color:var(--ink)}
     $("mine").hidden = !held || view !== "page";
     $("hint").hidden = held || view !== "page";
     tell(st.who);
-    const ask = asking() && !needOpen && view === "page";
-    $("need").hidden = !ask;
-    if (ask !== !!ticker) ticker = ask ? setInterval(tick, 1000) : (clearInterval(ticker), 0);
-    if (ask) {
-      $("needwhat").textContent = st.need.text;
-      $("needenter").textContent = st.need.kind === "login" ? "Enter a login" : "Enter the code";
-      tick();
-    }
-    $("needform").hidden = !needOpen;
     $("offer").hidden = !st.offer || view !== "page" || ask;
     if (st.offer) {
       const passkey = st.offer.kind === "passkey";
@@ -473,9 +475,9 @@ input{font:inherit;color:var(--ink)}
     }
     const was = st.who;
     if (pending && pending.who) st.who = pending.who; // taken or handed back here; the state file catches up
-    if (needOpen && !asking()) (needOpen = false), toast("That request is over");
-    // What a field being typed into or the request's form would lose is drawn once they close.
-    if ((!same || st.who !== was) && !over && !needOpen) (lastText = text), paint();
+    // What a field being typed into would lose is drawn once it closes; the request's form is kept
+    // while its request is.
+    if ((!same || st.who !== was) && !over) (lastText = text), paint();
   }
   let pollTimer = 0;
   function loop() {

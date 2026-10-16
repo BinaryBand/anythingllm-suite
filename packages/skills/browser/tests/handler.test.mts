@@ -71,7 +71,7 @@ test("a login with none saved is asked for on the tab's page, sealed, typed in, 
   const asked = await call({ action: "login", user_ref: "e1", pass_ref: "e2", submit_ref: "e3" });
   assert.match(asked, /^The user is asked on the tab's page: login\.example needs the user to sign in, and no login is saved for it\. Tell them to tap the card below/);
   assert.match(asked, /Never ask for it in the chat/);
-  assert.deepEqual(tabState().need, { kind: "login", host: "login.example", text: "login.example needs the user to sign in, and no login is saved for it", label: null, hasUser: true, confirm: false, until: tabState().need.until });
+  assert.deepEqual(tabState().need, { kind: "login", host: "login.example", text: "No login is saved for login.example.", label: null, hasUser: true, confirm: false, until: tabState().need.until });
 
   post({ ev: "need-answer", user: "ada@example.com", sealed: seal("pw-s3cret-1"), save: true });
   const after = await call({ action: "read" });
@@ -93,6 +93,7 @@ test("a code is asked for on the tab's page; an event without the tab's secret, 
   const call = (args: Record<string, unknown>) => called(args, { workspace: "codes" });
   await call({ action: "open", url: LOGIN });
   assert.match(await call({ action: "login", what: "authenticator", ref: "e4" }), /asked on the tab's page: The code from your authenticator app for login\.example/);
+  assert.equal(tabState("codes").need.text, "For login.example.", "the page's words, under a title that is already the code's");
   assert.match(await call({ action: "login", what: "pigeon", ref: "e4" }), /what: code, authenticator, sms, email/);
   const opts = { workspace: "codes" };
   post({ ev: "need-answer", text: "999999", secret: "not-the-tab's" }, opts);
@@ -256,6 +257,7 @@ test("a new account's password is asked for with confirm_ref and typed into both
   assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", confirm_ref: "e5", submit_ref: "e4" }), /e5 isn't a password field; confirm_ref is a new account's "Confirm password"/);
   assert.match(await call({ action: "login", user_ref: "e1", pass_ref: "e2", confirm_ref: "e3", submit_ref: "e4" }), /^The user is asked on the tab's page: signup\.example needs a password for the new account, which the user chooses\./);
   assert.equal(tabState("signup").need.confirm, true);
+  assert.equal(tabState("signup").need.text, "For a new account on signup.example.");
   const page = lastPage();
   post({ ev: "need-answer", user: "dana@example.com", sealed: seal("pw-new-1", tabConfig("signup").pub), save: true }, { workspace: "signup" });
   assert.match(await call({ action: "read" }), /it was typed into the page and e4 clicked/);
